@@ -64,6 +64,7 @@ dsh plugin --profile web add @summerscar/dsh-factory
 ## 主要限制
 
 - **绝不自动执行 git 操作。** 没有人在卡片上按下批准控件，插件就不会 commit、push、开 PR 或合并。
+- **暂停与接管目前只能走 HTTP。** 引擎可全局暂停（`POST /api/dsh-factory/engine/pause`，用 `.../resume` 恢复，已在跑的会话不会被打断），单张卡可从引擎手里接管（`POST /api/dsh-factory/cards/<卡片 id>/takeover`——是 `takeover`，不是 `take-over`）。这两项在界面上都还没有入口。
 - **没有 webhook。** 走 `gh` 与轮询，所以 issue 变化不是实时的，取决于轮询间隔。
 - **只支持 GitHub。** GitLab 的评审流程尚未实现。
 - **单机。** 面向在本机运行的 DSH，不提供多副本协调。
