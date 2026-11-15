@@ -3,15 +3,22 @@
  *
  * The remote forge is the source of truth for facts (a PR merged is a fact), so
  * sync derives the *suggested* card column from the remote PR state rather than
- * trusting local state. But some columns are human-only (Done, and Review→Build),
- * so sync never force-moves those: it records a suggestion and leaves the move to
- * a person. Only edges that are legal for the `autoRule` actor are auto-applied.
+ * trusting local state. But a fact is NOT an approval: under L1 every suggestion
+ * is recorded for a human and NONE is auto-applied.
+ *
+ * This used to decide auto-apply by `canTransition(..., 'autoRule')`. That was a
+ * real privilege hole: `autoRule` is legal on `plan-review->build` (reserved for
+ * the L2 engine), and a "PR closed without merge" suggestion targets `build`, so
+ * a single remote sync could push a card waiting for plan approval into build —
+ * bypassing the gate, the engine and `assertDispatchable`. Sync now consults its
+ * own narrow `SYNC_AUTO_EDGES` set and applies with the `syncRule` actor, never
+ * `autoRule`. At L1 that set is empty, so every suggestion needs a human.
  *
  *   PR MERGED          → suggest Done          (human confirms; Done is human-only)
  *   PR CLOSED unmerged → suggest Build (退回)   (Review→Build is human-only)
  *   PR OPEN            → no column change
  */
-import { canTransition } from './state.js'
+import { SYNC_RULE_ACTOR, canSyncAutoApply } from './state.js'
 
 /** Suggested target column from a remote PR snapshot, or null. */
 export function deriveRemoteTarget(remote) {
@@ -23,17 +30,19 @@ export function deriveRemoteTarget(remote) {
   return null
 }
 
-/** Resolve a suggestion and whether the auto-rule actor may apply it unaided. */
+/** Resolve a suggestion and whether sync's own narrow rule may apply it unaided. */
 export function resolveSync(card, remote) {
   const suggestion = deriveRemoteTarget(remote)
   if (suggestion === null || suggestion.target === card.status) return { suggestion: null }
-  const autoApplicable = canTransition(card.status, suggestion.target, 'autoRule')
+  const autoApplicable = canSyncAutoApply(card.status, suggestion.target)
   return { suggestion: { ...suggestion, autoApplicable, requiresHuman: !autoApplicable } }
 }
 
 /**
- * Apply remote reconciliation to one card. Auto-applies only edges the auto-rule
- * actor may take; otherwise it records a suggestion and reports `needsHuman`.
+ * Apply remote reconciliation to one card. Auto-applies only edges sync's own
+ * narrow rule permits (none at L1); otherwise it records a suggestion and reports
+ * `needsHuman`. `assertTransition` re-checks the same set as a second gate, so a
+ * future widening of the engine's `autoRule` can never reopen this path by itself.
  */
 export function applyRemoteSync({ store, cardId, remote } = {}) {
   const card = store.getCard(cardId)
@@ -41,7 +50,7 @@ export function applyRemoteSync({ store, cardId, remote } = {}) {
   const { suggestion } = resolveSync(card, remote)
   if (suggestion === null) return { changed: false }
   if (suggestion.autoApplicable) {
-    store.transitionCard(cardId, suggestion.target, 'autoRule', suggestion.reason)
+    store.transitionCard(cardId, suggestion.target, SYNC_RULE_ACTOR, suggestion.reason)
     return { changed: true, target: suggestion.target }
   }
   store.recordSyncSuggestion(cardId, suggestion)

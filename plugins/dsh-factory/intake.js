@@ -57,7 +57,7 @@ export function selectNewIssues(issues, existingSourceKeys) {
  * Poll one repo and turn new issues into Inbox cards.
  * @returns {{ created: string[], skipped: number }}
  */
-export async function intakeIssues({ store, projectId, boardId, repo, ghPort } = {}) {
+export async function intakeIssues({ store, projectId, boardId, repo, ghPort, origin } = {}) {
   if (typeof repo !== 'string' || repo.trim() === '') throw new Error('intakeIssues 需要 repo')
   if (typeof boardId !== 'string' || boardId === '') throw new Error('intakeIssues 需要 boardId')
   const existing = projectId === undefined ? store.listCards({}) : store.listCards({ projectId })
@@ -67,7 +67,9 @@ export async function intakeIssues({ store, projectId, boardId, repo, ghPort } =
   const fresh = selectNewIssues(issues, existingKeys)
   const created = []
   for (const issue of fresh) {
-    const card = store.createCard({ boardId, title: issue.title, body: issue.body, source: issue.key, repo })
+    // `origin` is supplied by the engine so auto-discovered cards are auditable;
+    // a person calling the HTTP intake route passes none (defaults to `system`).
+    const card = store.createCard({ boardId, title: issue.title, body: issue.body, source: issue.key, repo, origin })
     created.push(card.id)
   }
   return { created, skipped: issues.length - fresh.length }

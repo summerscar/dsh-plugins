@@ -1,6 +1,6 @@
 ---
 name: dsh-plugin-live-verification
-description: 在真机（装了 DSH 宿主的环境）上验证一个插件是否真的能用时使用。凡出现「插件装了但 agent 没有工具」「命令说成功了却没反应」「skill 注册不上」「工具调用报 output.render / lossless JSON / source must be a string」「改完代码要在真机跑一遍全链」都走这个流程，即使作业者没说「验证」二字；只写代码或只跑单元测试、不打算在宿主里实测的任务不要用它。
+description: 在真机（装了 DSH 宿主的环境）上验证一个插件是否真的能用时使用。凡出现「插件装了但 agent 没有工具」「命令说成功了却没反应」「插件所有路由突然 404 / 整个插件加载失败」「cannot get property "xxx" without inject」「skill 注册不上」「工具调用报 output.render / lossless JSON / source must be a string」「离线测试全绿但真机一加载就挂」「改完代码要在真机跑一遍全链」都走这个流程，即使作业者没说「验证」二字；只写代码或只跑单元测试、不打算在宿主里实测的任务不要用它。
 ---
 
 # 在真机上验证一个 DSH 插件
@@ -74,6 +74,28 @@ return { id, ...(maybeWarning ? { warning: maybeWarning } : {}) }
 
 同理，注册技能的条数、HTTP 路由是否挂上，都应该有一个可读的计数或布尔，而不是只能从日志里猜。
 
+### 假 ctx 测不出 inject 违规——这是离线全绿与真机可用的那道缝
+
+写测试时用普通对象冒充 `ctx`（`{ get: () => ..., effect: (fn) => fn(), inject: () => {} }`）是常态，但它**结构上不可能复现宿主 ctx 的约束**。宿主的 ctx 是 Proxy：服务不是普通属性，而是通过 `ctx.mixin()` 注册的 **accessor**，读它会进 `get` 陷阱。
+
+实测三种读法（同一段代码，普通对象 vs 真 ctx）：
+
+| 读法 | 假 ctx（普通对象） | 真 ctx，未声明该服务依赖 |
+| --- | --- | --- |
+| `typeof ctx.interval` | `'function'`（骗过判断） | **抛 `cannot get property "timer" without inject`** |
+| `ctx.get('timer')` | 看假对象怎么编的 | 正常返回服务对象 |
+| `ctx.interval`（声明过依赖后） | `'function'` | `'function'` |
+
+所以**`typeof ctx.xxx` 这种探测在假 ctx 上永远为真、在真 ctx 上可能直接抛**——离线测试会稳定通过，真机一加载就整个插件 `apply` 失败。而 `apply` 抛错的后果不是「这个功能不可用」，是**插件所有路由、所有工具、所有技能一个都没注册**，界面上表现为整片 404，很容易被误判成「宿主没加载新代码」。
+
+几条实操结论：
+
+- **探测可选服务用 `ctx.get(name)`，不要用 `typeof ctx.name`。** `get` 是 reflect 服务的普通方法，返回 `undefined` 而不抛。
+- **要等某个服务就绪，用 `ctx.inject([name], (scope) => ...)`**，回调里的 `scope` 已经声明了依赖，此时读 `scope.name` 合法。
+- **`ctx.effect` 不需要 inject**（它是 fiber mixin，任何 ctx 都有）；但**通过服务方法拿到的能力，作用域归谁要想清楚**。timer 这类服务返回的 disposer 会在它自己的 fiber 卸载时自动清掉，所以「我拿 disposer 手动释放」和「等宿主卸载」是两条路，两条都要能走通。
+- **别把「探测失败」写成静默 `catch` 之后继续跑**：`try { typeof ctx.x } catch {}` 会把这个违规吞掉，让插件带着半死的状态启动。要么用 `ctx.get` 明确判空并写下状态原因，要么让它响亮地失败。
+- **补一条能复现代理约束的用例**：用真 Cordis `Context` 加最小插件构造，而不是手搓普通对象；至少有一条断言「未声明依赖读服务属性会抛」。没有这条，187 条全绿也不能证明插件在真机上能加载。
+
 ## 四、路径判断必须走环境变量
 
 开源产物里**不能出现本机绝对路径**。数据根这类宿主既有概念，要从宿主自己的环境变量派生（如 `DSH_HOME`），其余路径用自己的配置项 + 中性缺省（临时目录之类）。
@@ -115,6 +137,8 @@ return { id, ...(maybeWarning ? { warning: maybeWarning } : {}) }
 - [ ] 技能注册带了非空 `source`。
 - [ ] 输出 schema 的 object 节点都显式写了 `additionalProperties`。
 - [ ] 有一个可被外部读到的状态字段，能证明「工具/技能到底注册上没有」。
+- [ ] 可选服务一律用 `ctx.get(name)` 探测，没有用 `typeof ctx.xxx` 直接读属性。
+- [ ] 至少一条用例用真 Cordis `Context` 构造，能复现「未声明依赖读服务属性会抛」。
 - [ ] 代码里没有任何本机绝对路径；路径从环境变量派生、惰性求值、`~` 用 `homedir()` 展开且先展开后 `resolve`。
 - [ ] 每条验收判据都写成了可客观核对的数字或命令输出。
 - [ ] 异步操作是等它跑完再读的计数，不是命令一返回就下的结论。

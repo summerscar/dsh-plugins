@@ -22,6 +22,7 @@
     "tools.js",
     "session-context.js",
     "dispatch.js",
+    "autonomy.js",
     "skills.js",
     "git-exec.js",
     "git-env.js",

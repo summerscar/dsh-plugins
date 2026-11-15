@@ -74,7 +74,7 @@ function resolveTargets({ store, cardId }) {
  *   { createWorktree, removeWorktree, prepareWorktree?, createSession,
  *     disposeSession, isSessionActive? }
  */
-export async function dispatchCard({ store, cardId, port, baseBranch = 'main' } = {}) {
+export async function dispatchCard({ store, cardId, port, baseBranch = 'main', transitionActor = 'human', transitionMeta = undefined } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
   const gate = assertDispatchable(card)
   if (gate.ok !== true) throw new Error(`该卡当前不可派发：${gate.reason}`)
@@ -145,7 +145,10 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main' } 
     store.setWorktree(cardId, { worktreePath, branch, baseBranch, sessionId: created.sessionId })
     store.clearDispatchFailures(cardId)
     const fresh = store.getCard(cardId)
-    if (fresh.status === 'inbox') store.transitionCard(cardId, 'triage', 'human')
+    // G2: a person pressing "start" dispatches as `human`; the L1 engine passes
+    // `autoRule` (plus tier/rule/channel) so audits can tell the two apart. The
+    // actor is validated by assertTransition against `inbox->triage`.
+    if (fresh.status === 'inbox') store.transitionCard(cardId, 'triage', transitionActor, undefined, transitionMeta)
     return { sessionId: created.sessionId, worktreePath, mode: 'created' }
   } catch (error) {
     // Roll back everything we created; the card stays as it was (never transitioned).

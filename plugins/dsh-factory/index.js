@@ -17,6 +17,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { createEngineStatus, defaultEngineDeps, startEngine } from './autonomy.js'
 import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
 import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
@@ -28,6 +29,7 @@ import { FactoryStore } from './store.js'
 
 export { FactoryStore } from './store.js'
 export { createApi } from './api.js'
+export * as autonomy from './autonomy.js'
 export { dispatchCard, continueCard, createHostPort } from './dispatch.js'
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
@@ -36,7 +38,7 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-15.23'
+export const BUILD = 'factory-2026-11-15.24'
 
 export const name = 'dsh-factory'
 
@@ -88,8 +90,13 @@ export function apply(ctx, config = {}) {
   // Mutable runtime signal, read fresh on every `status` request: the model-facing
   // tools either all registered or none did, and that fact must be observable
   // instead of hidden behind a swallowed import error.
-  const runtime = { toolsRegistered: false }
+  const runtime = { toolsRegistered: false, engine: createEngineStatus() }
   const handleApi = createApi({ store, build: BUILD, runtime })
+
+  // L1 autonomy engine: ONE plugin-level timer, owned by a ctx.effect. A missing
+  // host timer service leaves `runtime.engine.timerReason` readable instead of
+  // silently not running (P1 lesson / PRD §3, Chief hard constraint #2).
+  startEngine({ ctx, store, status: runtime.engine, deps: defaultEngineDeps({ ctx, ghPort: createGhPort() }), config: config.engine })
   // /factory slash command. `ctx.inject` waits for the commands service to be
   // ready instead of racing apply(): a profile that loads commands later still
   // gets the command, and a profile without it just skips registration while

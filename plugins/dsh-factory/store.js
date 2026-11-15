@@ -65,6 +65,19 @@ function normalizeUsage(usage) {
 }
 
 /**
+ * Pick only the string audit fields actually supplied, so history entries never
+ * carry `undefined` members (the host's lossless-JSON check rejects those).
+ */
+function auditFields(meta) {
+  const out = {}
+  if (!meta || typeof meta !== 'object') return out
+  for (const key of ['actor', 'tier', 'rule', 'channel']) {
+    if (typeof meta[key] === 'string' && meta[key] !== '') out[key] = meta[key]
+  }
+  return out
+}
+
+/**
  * Project-level worktree preparation config. Paths are validated at creation
  * time (an invalid config is a bad project, not a failed dispatch); old state
  * files without these fields fall back to the no-op defaults.
@@ -101,8 +114,32 @@ function normalizeAutonomy(input, current = {}) {
   return { autonomy, autoStart, autoApprove }
 }
 
+/**
+ * Project-level, explicitly opted-in intake config (PRD §10 / G1+G3). The engine
+ * must NOT guess a GitHub repo from the local path, read `git remote`, or create a
+ * board: a missing field means "skip this project, visibly". `maxActiveSessions`
+ * is the per-project concurrency cap; null means "use the plugin default".
+ */
+function normalizeIntake(input, current = {}) {
+  const pick = (key) => {
+    if (!(key in input)) return current[key] ?? null
+    const value = input[key]
+    if (value === null || value === undefined || value === '') return null
+    return typeof value === 'string' ? value.trim() : value
+  }
+  const repo = pick('issueRepo')
+  if (repo !== null && (typeof repo !== 'string' || repo === '')) throw new Error('issueRepo 必须是字符串')
+  const boardId = pick('intakeBoardId')
+  if (boardId !== null && (typeof boardId !== 'string' || boardId === '')) throw new Error('intakeBoardId 必须是字符串')
+  const maxActive = pick('maxActiveSessions')
+  if (maxActive !== null && (!Number.isInteger(maxActive) || maxActive < 1)) {
+    throw new Error('maxActiveSessions 必须是正整数或 null')
+  }
+  return { issueRepo: repo, intakeBoardId: boardId, maxActiveSessions: maxActive }
+}
+
 export function emptyState() {
-  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [] }
+  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [] }
 }
 
 export class FactoryStore {
@@ -179,6 +216,10 @@ export class FactoryStore {
       autonomy: input.autonomy === 'L1' || input.autonomy === 'L2' ? input.autonomy : DEFAULT_AUTONOMY,
       autoStart: input.autoStart === true,
       autoApprove: input.autoApprove === true,
+      ...normalizeIntake(input),
+      // Project-level pause gate. Persisted so a reload keeps the gate closed;
+      // the engine checks it every tick rather than dropping the timer (PRD §8).
+      paused: false,
       warning: rootCheck.warning ?? null,
       createdAt: new Date().toISOString(),
     }
@@ -216,6 +257,51 @@ export class FactoryStore {
     Object.assign(project, patch)
     this._commit()
     return clone(project)
+  }
+
+  /**
+   * Update the opt-in intake config. A THIRD disjoint write, kept separate from
+   * preparation and autonomy (api.js splits the PATCH shapes accordingly). Only
+   * these three fields are mutable; identity / paths stay immutable.
+   */
+  updateIntake(id, input = {}) {
+    const project = this._project(id)
+    const patch = normalizeIntake(input, project)
+    Object.assign(project, patch)
+    this._commit()
+    return clone(project)
+  }
+
+  /** Set/unset the project pause gate. Returns the project; logs a governance event. */
+  setProjectPaused(id, paused, actor = 'human') {
+    const project = this._project(id)
+    project.paused = paused === true
+    // recordEvent persists the whole state (including project.paused) in one write.
+    this.recordEvent({ type: 'engine-pause', scope: 'project', targetId: id, actor, decision: paused ? 'paused' : 'resumed' })
+    return clone(project)
+  }
+
+  /**
+   * Take a single card out of the engine's control (PRD §8 接管). Persisted on the
+   * card (`takenOver`) so a reload cannot put it back on auto-dispatch. This is
+   * deliberately per-card, never a project-wide pause.
+   */
+  takeOverCard(id, actor = 'human') {
+    const card = this._card(id)
+    card.takenOver = true
+    card.history.push({ type: 'takeover', actor, at: new Date().toISOString() })
+    // recordEvent persists both the card flag/history and the event in one write.
+    this.recordEvent({ type: 'engine-takeover', scope: 'card', targetId: id, actor, decision: 'taken-over' })
+    return clone(card)
+  }
+
+  /** Record a governance event on the state-wide stream (see collectAudit). */
+  recordEvent({ type, scope, targetId = null, actor = 'autoRule', decision = type, rule = null, channel = null, tier = null, note = null } = {}) {
+    const entry = { type, scope, targetId, actor, decision, rule, channel, tier, note, at: new Date().toISOString() }
+    if (!Array.isArray(this.state.events)) this.state.events = []
+    this.state.events.push(entry)
+    this._commit()
+    return clone(entry)
   }
 
   /** Delete a project and everything under it, leaving other projects untouched. */
@@ -299,6 +385,9 @@ export class FactoryStore {
       // Single-slot gate: set by a Review-time human authorization, consumed by
       // the matching git action. Its presence is what makes a git write legal.
       pendingAuthorization: null,
+      // Set when a person takes this card out of the engine's control. Persisted
+      // so a plugin reload cannot silently put it back on auto-dispatch (PRD §8).
+      takenOver: false,
       // Concurrency lock token while a dispatch is in flight (see claimForDispatch).
       pendingDispatch: null,
       // Consecutive dispatch failures. Reset on a successful dispatch; a card
@@ -308,7 +397,9 @@ export class FactoryStore {
       // the board can show why instead of silently doing nothing.
       stalled: false,
       usage: normalizeUsage(input.usage),
-      history: [{ type: 'created', to: STATUS.INBOX, at: new Date().toISOString() }],
+      // `origin` marks an auto-discovered card (issue intake) so the audit stream
+      // can tell it from a card a person created. Human creates pass no origin.
+      history: [{ type: 'created', to: STATUS.INBOX, ...auditFields(input.origin), at: new Date().toISOString() }],
       createdAt: new Date().toISOString(),
     }
     this.state.cards.push(card)
@@ -317,13 +408,13 @@ export class FactoryStore {
   }
 
   /** Move a card along a legal edge, recording who did it (C3/C4 + audit). */
-  transitionCard(id, to, actor, note = undefined) {
+  transitionCard(id, to, actor, note = undefined, meta = undefined) {
     const card = this._card(id)
     if (!isStatus(to)) throw new Error(`未知状态：${to}`)
     assertTransition(card.status, to, actor)
     const from = card.status
     card.status = to
-    card.history.push({ type: 'transition', from, to, actor, note: optionalString(note), at: new Date().toISOString() })
+    card.history.push({ type: 'transition', from, to, actor, note: optionalString(note), ...auditFields(meta), at: new Date().toISOString() })
     this._commit()
     return clone(card)
   }

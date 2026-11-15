@@ -23,6 +23,24 @@ export function collectAudit(store, { actor, decision, cardId, since } = {}) {
       })
     }
   }
+  // Governance events have no single card (global/project pause, take-over,
+  // config skips). Merge them into the same stream so `actor=autoRule` and the
+  // scope of every automatic action stay answerable (PRD §7/§8).
+  for (const entry of store.state.events ?? []) {
+    events.push({
+      at: entry.at ?? null,
+      cardId: entry.scope === 'card' ? entry.targetId : null,
+      scope: entry.scope ?? null,
+      targetId: entry.targetId ?? null,
+      actor: entry.actor ?? 'autoRule',
+      decision: entry.decision ?? entry.type,
+      type: entry.type,
+      action: null,
+      tier: entry.tier ?? null,
+      rule: entry.rule ?? null,
+      channel: entry.channel ?? null,
+    })
+  }
   let result = events
   if (actor !== undefined) result = result.filter((event) => event.actor === actor)
   if (decision !== undefined) result = result.filter((event) => event.decision === decision || event.type === decision)

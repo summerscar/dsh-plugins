@@ -35,6 +35,10 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           // either all registered or none did. A silent import failure must never
           // again look like "the command worked but the agent has no tools".
           toolsRegistered: runtime.toolsRegistered === true,
+          // L1 engine state, readable at any time: why nothing is happening is
+          // never hidden. `permissionEnforced` stays false until the host really
+          // wires the permission level into sessions (PRD §9.2, no false claim).
+          engine: engineStatus(runtime.engine),
           counts: {
             projects: store.state.projects.length,
             boards: store.state.boards.length,
@@ -74,19 +78,27 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           } })
         }
         if (method === 'GET' && seg.length === 2) return ok({ project: store.getProject(seg[1]) })
-        // Two disjoint PATCH shapes on purpose: preparation (copyFiles/postCreate)
-        // and autonomy (L0/L1/L2 + the two switches) are separate concerns, and a
-        // single handler that accepted both could silently retarget a project
-        // while the caller thought it only changed a switch. Identity and rootPath
-        // are never writable here.
+        // THREE disjoint PATCH shapes on purpose: preparation, autonomy, and the
+        // explicit opt-in intake config (G1/G3) are separate concerns. A single
+        // handler accepting two of them could silently retarget a project while
+        // the caller thought it only changed a switch. Identity and rootPath are
+        // never writable here. Pause/resume/takeover are separate actions below.
         if (method === 'PATCH' && seg.length === 2) {
           const wantsAutonomy = ['autonomy', 'autoStart', 'autoApprove'].some((key) => key in body)
           const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
-          if (wantsAutonomy && wantsPreparation) {
-            return { status: 400, body: { error: 'autonomy 与 preparation 字段不能在同一次 PATCH 里混改' } }
+          const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions'].some((key) => key in body)
+          const kinds = [wantsAutonomy, wantsPreparation, wantsIntake].filter(Boolean).length
+          if (kinds > 1) {
+            return { status: 400, body: { error: 'autonomy / preparation / intake 字段不能在同一次 PATCH 里混改' } }
           }
           if (wantsAutonomy) return ok({ project: store.updateAutonomy(seg[1], body) })
+          if (wantsIntake) return ok({ project: store.updateIntake(seg[1], body) })
           return ok({ project: store.updatePreparation(seg[1], body) })
+        }
+        // Pause / resume are a project-level gate, a distinct action from intake
+        // config or autonomy (PRD §8: two actions, never one boolean meaning both).
+        if (method === 'POST' && seg.length === 3 && (seg[2] === 'pause' || seg[2] === 'resume')) {
+          return ok({ project: store.setProjectPaused(seg[1], seg[2] === 'pause', 'human') })
         }
         if (method === 'DELETE' && seg.length === 2) return ok({ deleted: store.deleteProject(seg[1]) })
       }
@@ -114,6 +126,24 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'POST' && seg.length === 3 && seg[2] === 'authorize') {
           return ok({ authorization: store.authorize(seg[1], body.action) })
         }
+        // Take-over removes ONE card from the engine's control, persisted so a
+        // reload cannot put it back (PRD §8). Never a project-wide pause.
+        if (method === 'POST' && seg.length === 3 && seg[2] === 'takeover') {
+          return ok({ card: store.takeOverCard(seg[1], 'human') })
+        }
+      }
+
+      // Global pause is a gate on new dispatches for ALL projects; running
+      // sessions are never interrupted. The timer keeps ticking (PRD §8).
+      if (method === 'POST' && seg.length === 2 && seg[0] === 'engine' && (seg[1] === 'pause' || seg[1] === 'resume')) {
+        const paused = seg[1] === 'pause'
+        const engine = runtime.engine
+        if (engine === undefined || engine === null) {
+          return { status: 400, body: { error: 'engine state unavailable' } }
+        }
+        engine.paused = paused
+        store.recordEvent({ type: 'engine-pause', scope: 'global', actor: 'human', decision: paused ? 'paused' : 'resumed' })
+        return ok({ engine: { paused } })
       }
 
       return { status: 404, body: { error: `未知路由：${method} ${path}` } }
@@ -125,4 +155,21 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
 
 function ok(body, status = 200) {
   return { status, body }
+}
+
+/** Copy the observable engine state without leaking references to the caller. */
+function engineStatus(engine) {
+  if (engine === undefined || engine === null) return null
+  return {
+    timerActive: engine.timerActive === true,
+    timerReason: engine.timerReason ?? null,
+    paused: engine.paused === true,
+    singleFlight: engine.singleFlight === true,
+    ticks: engine.ticks ?? 0,
+    lastTickAt: engine.lastTickAt ?? null,
+    lastError: engine.lastError ?? null,
+    projects: Array.isArray(engine.projects) ? engine.projects.map((entry) => ({ ...entry })) : [],
+    orphans: Array.isArray(engine.orphans) ? engine.orphans.map((entry) => ({ ...entry })) : [],
+    permissionEnforced: engine.permissionEnforced === true,
+  }
 }
