@@ -99,8 +99,14 @@ test('an already-dispatched card is reused, not spawned twice', async () => {
     const { port, calls } = makePort()
     await dispatchCard({ store, cardId: card.id, port })
     const again = await dispatchCard({ store, cardId: card.id, port })
-    assert.deepEqual(again, { reused: true, sessionId: 'sess-1' })
+    // Contract changed (BUILD .16): a second dispatch no longer says 'reused'; it
+    // reports what already exists and leaves the choice to the caller.
+    assert.equal(again.mode, 'already-dispatched')
+    assert.equal(again.sessionId, 'sess-1', 'the original session is reported, not replaced')
+    assert.equal(typeof again.worktreePath, 'string')
+    assert.match(again.hint, /continue/)
     assert.equal(calls.session.length, 1, 'only one session ever created')
+    assert.equal(calls.worktree.length, 1, 'only one worktree ever created')
   } finally {
     cleanup()
   }

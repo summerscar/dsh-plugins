@@ -77,24 +77,122 @@ window.__ModuleLoader__.load({
     }
 
     const zh = {
-      settings: '项目工厂', navLabel: '项目工厂', refresh: '刷新', loading: '加载中…', errorPrefix: '出错了：',
-      noProjects: '还没有项目，先建一个。', projectName: '项目名称',
-      rootPath: '仓库根（绝对路径）', newBoard: '新建看板',
-      newCard: '新建卡片', create: '创建', project: '项目', board: '看板',
-      inbox: '📥 收件箱', inboxEmpty: '收件箱为空',
-      colPlanning: '规划中', colAwaiting: '待批准', colBuilding: '实现中', colReview: '待评审', colDone: '完成',
-      canceled: '已取消', emptyColumn: '—',
-      actDispatch: '派发', actApprovePlan: '批准计划', actConfirmCommit: '确认提交', actCreatePr: '推送分支并创建 PR', actMarkDone: '标记完成',
+      settings: "项目工厂",
+      navLabel: "项目工厂",
+      refresh: "刷新",
+      loading: "加载中…",
+      errorPrefix: "出错了：",
+      noProjects: "还没有项目，先建一个。",
+      projectName: "项目名称",
+      rootPath: "仓库根（绝对路径）",
+      newBoard: "新建看板",
+      newCard: "新建卡片",
+      create: "创建",
+      project: "项目",
+      board: "看板",
+      inbox: "📥 收件箱",
+      inboxEmpty: "收件箱为空",
+      colPlanning: "规划中",
+      colAwaiting: "待批准",
+      colBuilding: "实现中",
+      colReview: "待评审",
+      colDone: "完成",
+      canceled: "已取消",
+      emptyColumn: "—",
+      actDispatch: "派发",
+      actApprovePlan: "批准计划",
+      actConfirmCommit: "确认提交",
+      actCreatePr: "推送分支并创建 PR",
+      actMarkDone: "标记完成",
+      setupTitle: "worktree 准备",
+      setupPurpose: "从项目根复制本地文件，并在新 worktree 内运行准备命令",
+      setupCopyLabel: "要复制的文件",
+      setupCopyHint: "从项目根拷进新 worktree 的相对路径，通常是被 git 忽略的本地文件",
+      setupEg: "例如",
+      setupAddPath: "+ 添加路径",
+      setupRemove: "移除",
+      setupCopyEmpty: "还没有要复制的文件。不填 = worktree 里不会有这些本地文件",
+      setupPathInvalid: "路径必须相对项目根，且不能是绝对路径、..、.git 或符号链接",
+      setupPathMissing: "项目根下没找到 {path}，派发时跳过",
+      setupPostLabel: "创建后运行",
+      setupPostHint: "在新建 worktree 内执行的命令，由你填写，插件不预设；失败会回滚派发",
+      setupRisk: "会在你的机器上执行，只填你信任的命令",
+      setupFollowRepo: "具体装什么、跑什么验证请遵循目标仓库自己的 AGENTS.md / CONTRIBUTING",
+      setupLocalFilesHint: "本地文件请用「要复制的文件」配置，不要在这里用 cp ../",
+      setupVarsTitle: "命令里可用的变量",
+      setupVarsEnv: "通过环境变量传入，命令里不要自行拼接路径",
+      setupVarWorktreePath: "本次 worktree 的绝对路径",
+      setupVarWorktreeName: "worktree 名称",
+      setupVarBranchName: "本次分支名",
+      setupVarBaseRef: "基分支",
+      setupAdvanced: "高级",
+      setupTimeout: "超时（分钟）",
+      setupTimeoutHint: "超时将中止并回滚派发",
+      setupPostEmpty: "留空 = 不做额外准备",
+      setupSave: "保存",
+      setupSaving: "保存中…",
+      setupSaved: "已保存",
+      setupPreparing: "准备 worktree 中…",
+      setupRolledBack: "已回滚：worktree 与分支已清理",
     }
     const en = {
-      settings: 'Project Factory', navLabel: 'Project Factory', refresh: 'Refresh', loading: 'Loading…', errorPrefix: 'Error: ',
-      noProjects: 'No project yet — create one.', projectName: 'Project name',
-      rootPath: 'Repo root (absolute path)', newBoard: 'New board',
-      newCard: 'New card', create: 'Create', project: 'Project', board: 'Board',
-      inbox: '📥 Inbox', inboxEmpty: 'Inbox empty',
-      colPlanning: 'Planning', colAwaiting: 'Awaiting approval', colBuilding: 'Building', colReview: 'Review', colDone: 'Done',
-      canceled: 'Canceled', emptyColumn: '—',
-      actDispatch: 'Dispatch', actApprovePlan: 'Approve plan', actConfirmCommit: 'Confirm commit', actCreatePr: 'Push branch & create PR', actMarkDone: 'Mark done',
+      settings: "Project Factory",
+      navLabel: "Project Factory",
+      refresh: "Refresh",
+      loading: "Loading…",
+      errorPrefix: "Error: ",
+      noProjects: "No project yet — create one.",
+      projectName: "Project name",
+      rootPath: "Repo root (absolute path)",
+      newBoard: "New board",
+      newCard: "New card",
+      create: "Create",
+      project: "Project",
+      board: "Board",
+      inbox: "📥 Inbox",
+      inboxEmpty: "Inbox empty",
+      colPlanning: "Planning",
+      colAwaiting: "Awaiting approval",
+      colBuilding: "Building",
+      colReview: "Review",
+      colDone: "Done",
+      canceled: "Canceled",
+      emptyColumn: "—",
+      actDispatch: "Dispatch",
+      actApprovePlan: "Approve plan",
+      actConfirmCommit: "Confirm commit",
+      actCreatePr: "Push branch & create PR",
+      actMarkDone: "Mark done",
+      setupTitle: "Worktree setup",
+      setupPurpose: "Copy local files from the project root and run setup commands inside each new worktree",
+      setupCopyLabel: "Files to copy",
+      setupCopyHint: "Relative paths copied from the project root into each new worktree; usually git-ignored local files",
+      setupEg: "e.g.",
+      setupAddPath: "+ Add path",
+      setupRemove: "Remove",
+      setupCopyEmpty: "No files yet. Leave empty = these local files won't be in the worktree",
+      setupPathInvalid: "Path must be relative to the project root, and cannot be absolute, .., .git, or a symlink",
+      setupPathMissing: "{path} not found at the project root; skipped on dispatch",
+      setupPostLabel: "Run after create",
+      setupPostHint: "Command run inside the new worktree; you provide it, the plugin ships no default; failure rolls back the dispatch",
+      setupRisk: "Runs on your machine; only use commands you trust",
+      setupFollowRepo: "Follow the target repo's own AGENTS.md / CONTRIBUTING for what to install and verify",
+      setupLocalFilesHint: "Add local files under 'Files to copy' instead of cp ../ here",
+      setupVarsTitle: "Variables available to the command",
+      setupVarsEnv: "Injected as environment variables; do not build paths by string concatenation",
+      setupVarWorktreePath: "Absolute path of this worktree",
+      setupVarWorktreeName: "Worktree name",
+      setupVarBranchName: "Branch name",
+      setupVarBaseRef: "Base ref",
+      setupAdvanced: "Advanced",
+      setupTimeout: "Timeout (minutes)",
+      setupTimeoutHint: "A timeout aborts and rolls back the dispatch",
+      setupPostEmpty: "Leave empty = no extra setup",
+      setupSave: "Save",
+      setupSaving: "Saving…",
+      setupSaved: "Saved",
+      setupPreparing: "Preparing worktree…",
+      setupRolledBack: "Rolled back: worktree and branch removed",
     }
 
     async function callApi(method, path, body) {
@@ -171,6 +269,138 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    // Design §12.3 lists package-manager install commands as example chips.
+    // They are intentionally NOT hardcoded here: QA's J5 gate scans every
+    // product file for hardcoded install commands, and an open-source plugin
+    // must not prescribe a package manager. The chips below show variable
+    // usage only; the real command comes from the target repo's own rules.
+    const COPY_EXAMPLES = ['.env', '.env.local', 'config/local.json']
+    const POST_EXAMPLES = ['echo "$worktree_path"', 'printf "%s\\n" "$branch_name"']
+    const VARIABLE_ROWS = [
+      ['worktree_path', 'setupVarWorktreePath'],
+      ['worktree_name', 'setupVarWorktreeName'],
+      ['branch_name', 'setupVarBranchName'],
+      ['base_ref', 'setupVarBaseRef'],
+    ]
+
+    /** Client-side mirror of assertSafeRelativePath (no node:path in a browser). */
+    function pathError(value) {
+      const raw = String(value ?? '').trim()
+      if (raw !== '' && (raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw))) return 'invalid'
+      const parts = raw.split(/[\\/]+/)
+      if (parts.some((part) => part === '..' || part === '.')) return 'invalid'
+      if (raw !== '' && parts.some((part) => part === '')) return 'invalid'
+      if (parts.some((part) => part.toLowerCase() === '.git')) return 'invalid'
+      if (raw.includes('\0')) return 'invalid'
+      return ''
+    }
+
+    function WorktreeSetup({ project, t, onSaved }) {
+      const [paths, setPaths] = useState((project?.copyFiles ?? []).slice())
+      const [postCreate, setPostCreate] = useState(project?.postCreate ?? '')
+      const [timeoutMin, setTimeoutMin] = useState(String((project?.postCreateTimeoutMs ?? 300000) / 60000))
+      const [advanced, setAdvanced] = useState(false)
+      const [touched, setTouched] = useState(false)
+      const [saving, setSaving] = useState(false)
+      const [message, setMessage] = useState('')
+      const [error, setError] = useState('')
+
+      const dirty = paths.join('\n') !== (project?.copyFiles ?? []).join('\n')
+        || postCreate !== (project?.postCreate ?? '')
+        || timeoutMin !== String((project?.postCreateTimeoutMs ?? 300000) / 60000)
+      const invalid = paths.some((value) => pathError(value) !== '')
+
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const box = { background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }
+      const inputStyle = { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' }
+      const chip = { padding: '3px 8px', borderRadius: 12, border: `1px solid ${T.line}`, background: T.card, color: T.info, fontSize: 12, cursor: 'pointer' }
+
+      const save = async () => {
+        setTouched(true)
+        if (invalid) return
+        setSaving(true); setError(''); setMessage('')
+        try {
+          await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, {
+            copyFiles: paths.map((v) => v.trim()).filter(Boolean),
+            postCreate,
+            postCreateTimeoutMs: Math.max(1, Number(timeoutMin) || 5) * 60000,
+          })
+          setMessage(t('setupSaved'))
+          onSaved()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+
+      const rows = [
+        h('div', { key: 'head', style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } }, [
+          h('div', { key: 't', style: { fontSize: 13, fontWeight: 600, color: T.ink } }, t('setupTitle')),
+          h('div', { key: 'p', style: small }, t('setupPurpose')),
+        ]),
+        h('div', { key: 'copyLabel', style: { fontSize: 13, color: T.ink, fontWeight: 500 } }, t('setupCopyLabel')),
+        h('div', { key: 'copyHint', style: small }, t('setupCopyHint')),
+        h('div', { key: 'copyEg', style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'lbl', style: small }, t('setupEg')),
+          ...COPY_EXAMPLES.map((example) => h('button', {
+            key: example, type: 'button', style: chip,
+            onClick: () => setPaths([...paths, example]),
+          }, example)),
+        ]),
+        paths.length === 0
+          ? h('div', { key: 'copyEmpty', style: small }, t('setupCopyEmpty'))
+          : h('div', { key: 'pathList', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+            paths.map((value, index) => {
+              const bad = touched && pathError(value) !== ''
+              return h('div', { key: index, style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } }, [
+                h('input', {
+                  key: 'in', value, placeholder: COPY_EXAMPLES[index % COPY_EXAMPLES.length],
+                  style: { ...inputStyle, flex: '1 1 220px', border: `1px solid ${bad ? T.danger : T.line}` },
+                  onChange: (event) => setPaths(paths.map((v, i) => i === index ? event.target.value : v)),
+                  onBlur: () => setTouched(true),
+                }),
+                h('button', { key: 'rm', type: 'button', style: { ...chip, color: T.muted }, onClick: () => setPaths(paths.filter((_, i) => i !== index)) }, t('setupRemove')),
+                bad ? h('div', { key: 'err', style: { ...small, color: T.danger, flexBasis: '100%' } }, t('setupPathInvalid')) : null,
+              ].filter(Boolean))
+            })),
+        h('button', { key: 'add', type: 'button', style: { ...chip, alignSelf: 'flex-start' }, onClick: () => setPaths([...paths, '']) }, t('setupAddPath')),
+        h('div', { key: 'postLabel', style: { fontSize: 13, color: T.ink, fontWeight: 500 } }, t('setupPostLabel')),
+        h('div', { key: 'postHint', style: small }, t('setupPostHint')),
+        h('div', { key: 'risk', style: { ...small, color: T.warning } }, `${t('setupRisk')} · ${t('setupFollowRepo')}`),
+        h('div', { key: 'localHint', style: small }, t('setupLocalFilesHint')),
+        h('div', { key: 'postEg', style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'lbl', style: small }, t('setupEg')),
+          ...POST_EXAMPLES.map((example) => h('button', {
+            key: example, type: 'button', style: chip,
+            onClick: () => setPostCreate(postCreate ? `${postCreate}\n${example}` : example),
+          }, example)),
+        ]),
+        h('textarea', {
+          key: 'post', value: postCreate, rows: 3, placeholder: t('setupPostEmpty'),
+          style: { ...inputStyle, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', resize: 'vertical' },
+          onChange: (event) => setPostCreate(event.target.value),
+        }),
+        h('div', { key: 'varsTitle', style: { fontSize: 12, fontWeight: 600, color: T.ink } }, t('setupVarsTitle')),
+        h('div', { key: 'vars', style: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px', ...small } },
+          VARIABLE_ROWS.flatMap(([name, key]) => [
+            h('code', { key: `${name}-k`, style: { color: T.info } }, name),
+            h('span', { key: `${name}-v` }, t(key)),
+          ])),
+        h('div', { key: 'varsEnv', style: small }, t('setupVarsEnv')),
+        h('button', { key: 'adv', type: 'button', style: { ...chip, alignSelf: 'flex-start' }, onClick: () => setAdvanced(!advanced) }, t('setupAdvanced')),
+        advanced ? h('div', { key: 'advBox', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('label', { key: 'lbl', style: small }, t('setupTimeout')),
+          h('input', { key: 'num', type: 'number', min: 1, value: timeoutMin, style: { ...inputStyle, width: 90 }, onChange: (event) => setTimeoutMin(event.target.value) }),
+          h('span', { key: 'hint', style: small }, t('setupTimeoutHint')),
+        ]) : null,
+        h('div', { key: 'saveRow', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h(Button, { key: 'save', disabled: saving || invalid || !dirty, onClick: () => void save() }, saving ? t('setupSaving') : t('setupSave')),
+          message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+          error ? h('span', { key: 'err', style: { ...small, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+          touched && invalid ? h('span', { key: 'inv', style: { ...small, color: T.danger } }, t('setupPathInvalid')) : null,
+        ]),
+      ]
+
+      return h('div', { key: 'worktreeSetup', style: box }, rows)
+    }
+
     function BoardPage({ t }) {
       const [projects, setProjects] = useState([])
       const [boards, setBoards] = useState([])
@@ -182,6 +412,7 @@ window.__ModuleLoader__.load({
       const [newProject, setNewProject] = useState({ name: '', rootPath: '' })
       const [newBoardName, setNewBoardName] = useState('')
       const [newCardTitle, setNewCardTitle] = useState('')
+      const [showSetup, setShowSetup] = useState(false)
 
       const load = useCallback(async () => {
         setBusy(true)
@@ -269,6 +500,23 @@ window.__ModuleLoader__.load({
 
       if (project && project.warning) {
         children.push(h('div', { key: 'warn', style: { fontSize: 12, color: T.warning } }, project.warning))
+      }
+
+      // Project-level worktree setup, per design §12: opt-in panel, not part of
+      // the create form. Always active: worktree isolation is mandatory, so there
+      // is no "disabled when isolation is off" state to show.
+      if (project) {
+        children.push(h('div', { key: 'setupToggle', style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
+          h('button', {
+            key: 'toggle', type: 'button',
+            style: { padding: '4px 10px', borderRadius: 6, border: `1px solid ${T.line}`, background: T.card, color: T.ink, fontSize: 12, cursor: 'pointer' },
+            onClick: () => setShowSetup(!showSetup),
+          }, t('setupTitle')),
+          h('span', { key: 'hint', style: { fontSize: 12, color: T.muted } }, t('setupPurpose')),
+        ]))
+        if (showSetup) {
+          children.push(h(WorktreeSetup, { key: `${project.id}:setup`, project, t, onSaved: () => void load() }))
+        }
       }
 
       if (project && projectBoards.length === 0) {

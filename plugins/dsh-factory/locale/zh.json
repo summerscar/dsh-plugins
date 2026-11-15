@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "项目工厂",
-    "description": "面向 DSH 的多项目开发工厂：以看板管理项目，每张卡派发到独立会话与 git worktree，随包提供六个阶段 skill，commit/push 与生成 PR 前必须人工批准。"
+    "description": "面向 DSH 的多项目开发工厂：以看板管理项目，每张卡派发到独立会话与 git worktree，随包提供六个阶段 skill 和一个添加项目的 skill，commit/push 与生成 PR 前必须人工批准。"
   },
   "settings": "项目工厂",
   "navLabel": "项目工厂",
@@ -29,5 +29,35 @@
   "actApprovePlan": "批准计划",
   "actConfirmCommit": "确认提交",
   "actCreatePr": "推送分支并创建 PR",
-  "actMarkDone": "标记完成"
+  "actMarkDone": "标记完成",
+  "setupTitle": "worktree 准备",
+  "setupPurpose": "从项目根复制本地文件，并在新 worktree 内运行准备命令",
+  "setupCopyLabel": "要复制的文件",
+  "setupCopyHint": "从项目根拷进新 worktree 的相对路径，通常是被 git 忽略的本地文件",
+  "setupEg": "例如",
+  "setupAddPath": "+ 添加路径",
+  "setupRemove": "移除",
+  "setupCopyEmpty": "还没有要复制的文件。不填 = worktree 里不会有这些本地文件",
+  "setupPathInvalid": "路径必须相对项目根，且不能是绝对路径、..、.git 或符号链接",
+  "setupPathMissing": "项目根下没找到 {path}，派发时跳过",
+  "setupPostLabel": "创建后运行",
+  "setupPostHint": "在新建 worktree 内执行的命令，由你填写，插件不预设；失败会回滚派发",
+  "setupRisk": "会在你的机器上执行，只填你信任的命令",
+  "setupFollowRepo": "具体装什么、跑什么验证请遵循目标仓库自己的 AGENTS.md / CONTRIBUTING",
+  "setupLocalFilesHint": "本地文件请用「要复制的文件」配置，不要在这里用 cp ../",
+  "setupVarsTitle": "命令里可用的变量",
+  "setupVarsEnv": "通过环境变量传入，命令里不要自行拼接路径",
+  "setupVarWorktreePath": "本次 worktree 的绝对路径",
+  "setupVarWorktreeName": "worktree 名称",
+  "setupVarBranchName": "本次分支名",
+  "setupVarBaseRef": "基分支",
+  "setupAdvanced": "高级",
+  "setupTimeout": "超时（分钟）",
+  "setupTimeoutHint": "超时将中止并回滚派发",
+  "setupPostEmpty": "留空 = 不做额外准备",
+  "setupSave": "保存",
+  "setupSaving": "保存中…",
+  "setupSaved": "已保存",
+  "setupPreparing": "准备 worktree 中…",
+  "setupRolledBack": "已回滚：worktree 与分支已清理"
 }

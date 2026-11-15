@@ -19,11 +19,15 @@ import { randomUUID } from 'node:crypto'
 
 import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus } from './state.js'
 import { DEFAULT_WORKTREE_ROOT, assertWorktreeRoot, checkProjectRoot } from './worktree.js'
+import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 
 export const SCHEMA_VERSION = 1
 
 export const DEFAULT_PERMISSION = 'workspace-write'
 export const DEFAULT_AUTONOMY = 'L0'
+
+/** Consecutive failed dispatches before a card stops being re-dispatched. */
+export const DEFAULT_DISPATCH_FAILURE_LIMIT = 3
 export const DEFAULT_COLUMNS = ['planning', 'awaiting-approval', 'building', 'review', 'done']
 
 function clone(value) {
@@ -58,6 +62,43 @@ function normalizeRepos(repos) {
 function normalizeUsage(usage) {
   const tokens = usage && Number.isFinite(usage.tokens) ? usage.tokens : 0
   return { tokens }
+}
+
+/**
+ * Project-level worktree preparation config. Paths are validated at creation
+ * time (an invalid config is a bad project, not a failed dispatch); old state
+ * files without these fields fall back to the no-op defaults.
+ */
+function normalizePreparation(input) {
+  const copyFiles = normalizeCopyFiles(input.copyFiles)
+  const postCreate = optionalString(input.postCreate)
+  const rawTimeout = input.postCreateTimeoutMs
+  const postCreateTimeoutMs = rawTimeout === undefined || rawTimeout === null
+    ? DEFAULT_POST_CREATE_TIMEOUT_MS
+    : rawTimeout
+  if (!Number.isFinite(postCreateTimeoutMs) || postCreateTimeoutMs <= 0) {
+    throw new Error('postCreateTimeoutMs 必须是正数')
+  }
+  return { copyFiles, postCreate, postCreateTimeoutMs }
+}
+
+/**
+ * Project-level autonomy config. Only the three values the engine reads are
+ * mutable after creation; identity and paths deliberately are not.
+ *
+ * Values are validated, never silently rewritten: `L0` with a switch left on is
+ * the caller's stored choice, and the engine simply does nothing at `L0`. Quietly
+ * flipping switches would edit data the user did not touch.
+ */
+function normalizeAutonomy(input, current = {}) {
+  const raw = input.autonomy === undefined ? current.autonomy : input.autonomy
+  if (raw !== undefined && raw !== 'L0' && raw !== 'L1' && raw !== 'L2') {
+    throw new Error(`autonomy 只能是 L0 / L1 / L2：${String(raw)}`)
+  }
+  const autonomy = raw === undefined ? DEFAULT_AUTONOMY : raw
+  const autoStart = input.autoStart === undefined ? current.autoStart === true : input.autoStart === true
+  const autoApprove = input.autoApprove === undefined ? current.autoApprove === true : input.autoApprove === true
+  return { autonomy, autoStart, autoApprove }
 }
 
 export function emptyState() {
@@ -134,6 +175,7 @@ export class FactoryStore {
       defaultModel: optionalString(input.defaultModel),
       defaultPermission: optionalString(input.defaultPermission) || DEFAULT_PERMISSION,
       worktreeRoot,
+      ...normalizePreparation(input),
       autonomy: input.autonomy === 'L1' || input.autonomy === 'L2' ? input.autonomy : DEFAULT_AUTONOMY,
       autoStart: input.autoStart === true,
       autoApprove: input.autoApprove === true,
@@ -141,6 +183,37 @@ export class FactoryStore {
       createdAt: new Date().toISOString(),
     }
     this.state.projects.push(project)
+    this._commit()
+    return clone(project)
+  }
+
+  /**
+   * Update a project's worktree preparation config. Only these three fields are
+   * mutable here: identity / paths / autonomy are intentionally left alone so a
+   * settings form cannot silently retarget a project's repository.
+   */
+  updatePreparation(id, input = {}) {
+    const project = this._project(id)
+    const patch = normalizePreparation({
+      copyFiles: input.copyFiles === undefined ? project.copyFiles : input.copyFiles,
+      postCreate: input.postCreate === undefined ? project.postCreate : input.postCreate,
+      postCreateTimeoutMs: input.postCreateTimeoutMs === undefined ? project.postCreateTimeoutMs : input.postCreateTimeoutMs,
+    })
+    Object.assign(project, patch)
+    this._commit()
+    return clone(project)
+  }
+
+  /**
+   * Update a project's autonomy config. Identity and paths stay immutable here
+   * for the same reason as `updatePreparation`: a settings write must never
+   * retarget a project's repository. Values are validated, not silently
+   * rewritten — see `normalizeAutonomy`.
+   */
+  updateAutonomy(id, input = {}) {
+    const project = this._project(id)
+    const patch = normalizeAutonomy(input, project)
+    Object.assign(project, patch)
     this._commit()
     return clone(project)
   }
@@ -228,6 +301,12 @@ export class FactoryStore {
       pendingAuthorization: null,
       // Concurrency lock token while a dispatch is in flight (see claimForDispatch).
       pendingDispatch: null,
+      // Consecutive dispatch failures. Reset on a successful dispatch; a card
+      // that reaches the limit is not re-dispatched automatically any more.
+      dispatchFailures: 0,
+      // Set when the automatic engine has stopped re-dispatching this card, so
+      // the board can show why instead of silently doing nothing.
+      stalled: false,
       usage: normalizeUsage(input.usage),
       history: [{ type: 'created', to: STATUS.INBOX, at: new Date().toISOString() }],
       createdAt: new Date().toISOString(),
@@ -345,19 +424,29 @@ export class FactoryStore {
   /**
    * Atomically reserve a card for dispatch — the concurrency lock (#9).
    *
-   * Dispatch is async (it awaits session creation), so a plain "check sessionId
-   * then create" has a race window: two callers both see null and both spawn a
-   * session. Every store mutation here is synchronous (in-memory + atomic file
-   * rename) and this runs before the first await, so the claim is atomic within
-   * this process — the first caller arms `pendingDispatch`, the second is refused
-   * as busy. (One plugin process owns the store; cross-process locking is out of
-   * scope.)
+   * Two distinct guards, deliberately kept separate:
+   *
+   *  - `pendingDispatch` is the CONCURRENCY lock. Dispatch is async (it awaits
+   *    session creation), so a plain "check then create" has a race window: two
+   *    callers both see null and both spawn a session. Every store mutation here
+   *    is synchronous (in-memory + atomic file rename) and this runs before the
+   *    first await, so the claim is atomic within this process — the first caller
+   *    arms `pendingDispatch`, the second is refused as `busy`. (One plugin
+   *    process owns the store; cross-process locking is out of scope.)
+   *
+   *  - A non-empty `sessionId` is NOT a refusal any more. It used to be, which
+   *    made a card dispatchable exactly once in its lifetime and deadlocked every
+   *    later stage (a session ends when its turn ends; the next stage then had no
+   *    way in). It now only records "who did the last turn".
+   *
+   * Whether a live session still occupies the card is a runtime fact only the
+   * host knows, and it is NOT a claim-level refusal: a live session is exactly
+   * what a continuation wants to reuse. `continueCard` therefore decides with
+   * `port.isSessionActive()` whether to reuse it (and never to open a second one
+   * while it lives) — see that function for the rule.
    */
   claimForDispatch(id) {
     const card = this._card(id)
-    if (typeof card.sessionId === 'string' && card.sessionId !== '') {
-      return { claimed: false, reason: 'already-dispatched', sessionId: card.sessionId }
-    }
     if (card.pendingDispatch !== null && card.pendingDispatch !== undefined) {
       return { claimed: false, reason: 'busy' }
     }
@@ -365,6 +454,69 @@ export class FactoryStore {
     card.pendingDispatch = token
     this._commit()
     return { claimed: true, token }
+  }
+
+  /**
+   * Record one dispatch attempt that failed. Consecutive failures arm the
+   * circuit breaker so a card that keeps breaking is not re-dispatched forever.
+   * `sessionTurn` is deliberately untouched here: it counts successful turns.
+   */
+  recordDispatchFailure(id, { reason = '', limit = DEFAULT_DISPATCH_FAILURE_LIMIT } = {}) {
+    const card = this._card(id)
+    card.dispatchFailures = (card.dispatchFailures ?? 0) + 1
+    const tripped = card.dispatchFailures >= limit
+    if (tripped) card.stalled = true
+    card.history.push({
+      type: 'dispatch-failed',
+      attempt: card.dispatchFailures,
+      reason: optionalString(reason),
+      tripped,
+      at: new Date().toISOString(),
+    })
+    this._commit()
+    return { failures: card.dispatchFailures, tripped }
+  }
+
+  /**
+   * Record that a continuation obtained a session, and how. `mode` is the level
+   * of the fallback chain that answered: 'followup' | 'resumed' | 'created'.
+   */
+  recordContinuation(id, { sessionId, mode } = {}) {
+    const card = this._card(id)
+    card.history.push({
+      type: 'continuation',
+      sessionId: optionalString(sessionId),
+      mode: optionalString(mode) || 'unknown',
+      at: new Date().toISOString(),
+    })
+    this._commit()
+    return clone(card)
+  }
+
+  /**
+   * Record that a continuation could not rebuild the previous session and fell
+   * back to a fresh one. This is a hard requirement, not diagnostics: without it
+   * "the agent suddenly does not know the context" becomes an unexplainable bug.
+   */
+  recordContinuationFallback(id, { from, reason = '' } = {}) {
+    const card = this._card(id)
+    card.history.push({
+      type: 'continuation-fallback',
+      fromSessionId: optionalString(from),
+      reason: optionalString(reason),
+      at: new Date().toISOString(),
+    })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Clear the failure streak after a dispatch succeeded. */
+  clearDispatchFailures(id) {
+    const card = this._card(id)
+    card.dispatchFailures = 0
+    card.stalled = false
+    this._commit()
+    return clone(card)
   }
 
   /** Release a dispatch claim after a failure so the card can be retried. */

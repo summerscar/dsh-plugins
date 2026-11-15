@@ -18,15 +18,17 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { createApi } from './api.js'
-import { createHostPort, dispatchCard } from './dispatch.js'
+import { registerFactoryCommands } from './commands.js'
+import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
 import { commitCard, createGitPort, createPrForCard } from './git-exec.js'
 import { createGhPort, intakeIssues } from './intake.js'
+import { inspectRepo } from './project-proposal.js'
 import { registerFactorySkills } from './skills.js'
 import { FactoryStore } from './store.js'
 
 export { FactoryStore } from './store.js'
 export { createApi } from './api.js'
-export { dispatchCard, createHostPort } from './dispatch.js'
+export { dispatchCard, continueCard, createHostPort } from './dispatch.js'
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
 export { buildSessionContext, attachSessionContext } from './session-context.js'
@@ -34,7 +36,7 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-15.6'
+export const BUILD = 'factory-2026-11-15.16'
 
 export const name = 'dsh-factory'
 
@@ -84,6 +86,13 @@ async function readJsonBody(req) {
 export function apply(ctx, config = {}) {
   const store = new FactoryStore({ file: resolveDataFile(config) })
   const handleApi = createApi({ store, build: BUILD })
+  // /factory slash command. `ctx.inject` waits for the commands service to be
+  // ready instead of racing apply(): a profile that loads commands later still
+  // gets the command, and a profile without it just skips registration while
+  // the board/API keep working. Same optional-service pattern as tools/skills.
+  ctx.inject(['commands'], (scope) => {
+    scope.effect(() => registerFactoryCommands({ ctx: scope, inspect: (args) => inspectRepo(args) }) ?? (() => {}), 'dsh-factory: slash command')
+  })
 
   // Admit only requests the host's connection service vouches for — these routes
   // read and write project/card state, so an unauthenticated local request must
@@ -175,6 +184,27 @@ export function apply(ctx, config = {}) {
         const message = error instanceof Error ? error.message : String(error)
         console.error('[dsh-factory] dispatch failed:', message)
         sendJson(res, 400, { error: message || 'dispatch failed' })
+      }
+      return
+    }
+
+    // Continuation: the card already has a worktree; only a session is obtained.
+    // Three-level chain inside continueCard (followup → resume → fresh + record).
+    const continuation = /^\/cards\/([^/?]+)\/continue(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && continuation !== null) {
+      try {
+        const port = createHostPort({ ctx })
+        const result = await continueCard({
+          store,
+          cardId: decodeURIComponent(continuation[1]),
+          port,
+          message: typeof body.message === 'string' ? body.message : undefined,
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[dsh-factory] continuation failed:', message)
+        sendJson(res, 400, { error: message || 'continuation failed' })
       }
       return
     }

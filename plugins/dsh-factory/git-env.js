@@ -5,7 +5,8 @@
  * `GIT_INDEX_FILE`, …) into hook and CI child processes. Those OVERRIDE `-C`:
  * a `git -C <temp repo> status` launched from a pre-commit hook still targets
  * the hook's repo, failing with `.git/index: index file open failed: Not a
- * directory`. Found for real when husky ran `pnpm check` on a commit.
+ * directory`. Found for real when a project's pre-commit hook ran its test
+ * suite: the hook's own repository leaked into every child git call.
  *
  * Every git/gh child of this plugin must run with these stripped, so the path
  * we pass is the repo it actually touches. Keep the list to *redirecting* vars:

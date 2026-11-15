@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Project Factory",
-    "description": "A multi-project development factory for DSH: manage projects on kanban boards, dispatch each card into its own session and git worktree, ship six phase skills with the package, and require human approval before any commit, push or PR."
+    "description": "A multi-project development factory for DSH: manage projects on kanban boards, dispatch each card into its own session and git worktree, ship six phase skills plus a skill that adds a repository as a project, and require human approval before any commit, push or PR."
   },
   "settings": "Project Factory",
   "navLabel": "Project Factory",
@@ -29,5 +29,35 @@
   "actApprovePlan": "Approve plan",
   "actConfirmCommit": "Confirm commit",
   "actCreatePr": "Push branch & create PR",
-  "actMarkDone": "Mark done"
+  "actMarkDone": "Mark done",
+  "setupTitle": "Worktree setup",
+  "setupPurpose": "Copy local files from the project root and run setup commands inside each new worktree",
+  "setupCopyLabel": "Files to copy",
+  "setupCopyHint": "Relative paths copied from the project root into each new worktree; usually git-ignored local files",
+  "setupEg": "e.g.",
+  "setupAddPath": "+ Add path",
+  "setupRemove": "Remove",
+  "setupCopyEmpty": "No files yet. Leave empty = these local files won't be in the worktree",
+  "setupPathInvalid": "Path must be relative to the project root, and cannot be absolute, .., .git, or a symlink",
+  "setupPathMissing": "{path} not found at the project root; skipped on dispatch",
+  "setupPostLabel": "Run after create",
+  "setupPostHint": "Command run inside the new worktree; you provide it, the plugin ships no default; failure rolls back the dispatch",
+  "setupRisk": "Runs on your machine; only use commands you trust",
+  "setupFollowRepo": "Follow the target repo's own AGENTS.md / CONTRIBUTING for what to install and verify",
+  "setupLocalFilesHint": "Add local files under 'Files to copy' instead of cp ../ here",
+  "setupVarsTitle": "Variables available to the command",
+  "setupVarsEnv": "Injected as environment variables; do not build paths by string concatenation",
+  "setupVarWorktreePath": "Absolute path of this worktree",
+  "setupVarWorktreeName": "Worktree name",
+  "setupVarBranchName": "Branch name",
+  "setupVarBaseRef": "Base ref",
+  "setupAdvanced": "Advanced",
+  "setupTimeout": "Timeout (minutes)",
+  "setupTimeoutHint": "A timeout aborts and rolls back the dispatch",
+  "setupPostEmpty": "Leave empty = no extra setup",
+  "setupSave": "Save",
+  "setupSaving": "Saving…",
+  "setupSaved": "Saved",
+  "setupPreparing": "Preparing worktree…",
+  "setupRolledBack": "Rolled back: worktree and branch removed"
 }

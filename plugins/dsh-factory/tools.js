@@ -14,9 +14,12 @@
  * Done or approving a plan, so the same check that guards the UI guards the model.
  */
 import { STATUSES } from './state.js'
+import { assertRepoRoot, inspectRepo } from './project-proposal.js'
 
 const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review', 'canceled']
 const ATTENTION_STATUSES = ['inbox', 'plan-review', 'review']
+
+const stringArray = () => ({ type: 'array', items: { type: 'string' } })
 
 // A card summary is a closed object (no extra keys), so every object schema below
 // sets `additionalProperties: false` — the schema compiler rejects an open default.
@@ -28,7 +31,7 @@ const CARD_SCHEMA = {
 const cardsArray = () => ({ type: 'array', items: CARD_SCHEMA })
 const cardsListSchema = (key) => ({ type: 'object', additionalProperties: false, properties: { [key]: cardsArray() } })
 
-export function factoryToolSpecs({ store } = {}) {
+export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot } = {}) {
   if (store === undefined || store === null) throw new Error('factoryToolSpecs needs a store')
 
   return [
@@ -100,6 +103,79 @@ export function factoryToolSpecs({ store } = {}) {
           .filter((card) => wanted.has(card.status))
           .map((card) => ({ id: card.id, title: card.title, status: card.status }))
         return { attention }
+      },
+    },
+    {
+      name: 'factory_inspect_repo',
+      description: 'READ-ONLY. Inspect a repository and return RAW FACTS about it: the root file names, the root subdirectory names, the contents of any ignore files (.gitignore/.dockerignore/…), the packageManager field if package.json declares one, and which well-known manifests exist. This tool does NOT classify the project and returns no command to run — the list of project types is endless, so YOU decide what the project is from these files (pom.xml means Maven, Cargo.toml means Rust, go.mod means Go, and so on), and decide the setup command and which local files to copy from the target repository\'s own AGENTS.md / CONTRIBUTING, never from a hardcoded default. Show the facts and your proposal to the user, then create the project with factory_create_project once they agree.',
+      parameters: {
+        rootPath: { type: 'string', required: true, description: 'Absolute path to an existing git repository, outside the DSH data root.' },
+      },
+      output: {
+        schema: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            rootPath: { type: 'string' },
+            packageManager: { type: 'string' },
+            rootFiles: stringArray(),
+            rootDirectories: stringArray(),
+            ignoreFiles: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+            manifestFiles: stringArray(),
+            notes: stringArray(),
+          },
+        },
+        render: (args, value) => {
+          const ignore = Object.entries(value.ignoreFiles ?? {})
+            .map(([name, entries]) => `${name}: ${entries.join(', ') || '(empty)'}`)
+          return [
+            `Repository: ${value.rootPath}`,
+            `packageManager: ${value.packageManager || '(none declared)'}`,
+            `root files: ${value.rootFiles.join(', ') || '(none)'}`,
+            `root directories: ${value.rootDirectories.join(', ') || '(none)'}`,
+            `manifests worth a look: ${value.manifestFiles.join(', ') || '(none)'}`,
+            ...ignore,
+            ...value.notes,
+          ].join('\n')
+        },
+      },
+      execute: async (args = {}) => {
+        const signals = inspect({ rootPath: args.rootPath })
+        return {
+          rootPath: signals.rootPath,
+          packageManager: signals.packageManager,
+          rootFiles: signals.rootFiles,
+          rootDirectories: signals.rootDirectories,
+          ignoreFiles: signals.ignoreFiles,
+          manifestFiles: signals.manifestFiles,
+          notes: signals.notes,
+        }
+      },
+    },
+    {
+      name: 'factory_create_project',
+      description: 'Create a factory project directly in this session: register an absolute repository root with optional copyFiles (relative local file paths) and postCreate (a setup command you author). Creating a project is local and reversible — it does not commit, push, or open a PR; those still require the human approval gates. Validate rootPath is an absolute path to an existing git repository before calling. Show the name, rootPath, copyFiles and postCreate to the user before creating.',
+      parameters: {
+        name: { type: 'string', required: true, description: 'Project name.' },
+        rootPath: { type: 'string', required: true, description: 'Absolute repository root; must exist and be a git repository.' },
+        copyFiles: { ...stringArray(), description: 'Relative local file paths to copy into each new worktree.' },
+        postCreate: { type: 'string', description: 'Setup command run inside each new worktree; provided by the user, never a plugin default.' },
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' } } },
+        render: (args, value) => `Created project ${value.name} (${value.id}).`,
+      },
+      execute: async (args = {}) => {
+        // Creating a project is local and reversible, but it must still point at
+        // a real git repository. Without this, an agent could register /etc or a
+        // path that does not exist (QA finding, 2026-11-15).
+        const rootPath = assertRoot(args.rootPath)
+        const project = store.createProject({
+          name: args.name,
+          rootPath,
+          copyFiles: args.copyFiles ?? [],
+          postCreate: args.postCreate ?? '',
+        })
+        return { id: project.id, name: project.name }
       },
     },
   ]

@@ -15,8 +15,9 @@
  */
 
 import { collectAudit } from './audit.js'
+import { inspectRepo } from './project-proposal.js'
 
-export function createApi({ store, build = 'unknown' }) {
+export function createApi({ store, build = 'unknown', inspect = inspectRepo }) {
   return function handle(input = {}) {
     const method = String(input.method ?? 'GET').toUpperCase()
     const rawRoute = String(input.route ?? '/')
@@ -52,7 +53,36 @@ export function createApi({ store, build = 'unknown' }) {
       if (seg[0] === 'projects') {
         if (method === 'GET' && seg.length === 1) return ok({ projects: store.listProjects() })
         if (method === 'POST' && seg.length === 1) return ok({ project: store.createProject(body) }, 201)
+        // Read-only inspection for the UI's "propose config" step. The UI cannot
+        // call the model-facing factory_inspect_repo tool, so it needs its own
+        // read-only HTTP entry. Issues NO token and writes NOTHING.
+        if (method === 'POST' && seg.length === 2 && seg[1] === 'inspect') {
+          const signals = inspect({ rootPath: body.rootPath })
+          return ok({ signals: {
+            rootPath: signals.rootPath,
+            packageManager: signals.packageManager,
+            rootFiles: signals.rootFiles,
+            rootDirectories: signals.rootDirectories,
+            ignoreFiles: signals.ignoreFiles,
+            manifestFiles: signals.manifestFiles,
+            notes: signals.notes,
+          } })
+        }
         if (method === 'GET' && seg.length === 2) return ok({ project: store.getProject(seg[1]) })
+        // Two disjoint PATCH shapes on purpose: preparation (copyFiles/postCreate)
+        // and autonomy (L0/L1/L2 + the two switches) are separate concerns, and a
+        // single handler that accepted both could silently retarget a project
+        // while the caller thought it only changed a switch. Identity and rootPath
+        // are never writable here.
+        if (method === 'PATCH' && seg.length === 2) {
+          const wantsAutonomy = ['autonomy', 'autoStart', 'autoApprove'].some((key) => key in body)
+          const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
+          if (wantsAutonomy && wantsPreparation) {
+            return { status: 400, body: { error: 'autonomy 与 preparation 字段不能在同一次 PATCH 里混改' } }
+          }
+          if (wantsAutonomy) return ok({ project: store.updateAutonomy(seg[1], body) })
+          return ok({ project: store.updatePreparation(seg[1], body) })
+        }
         if (method === 'DELETE' && seg.length === 2) return ok({ deleted: store.deleteProject(seg[1]) })
       }
 

@@ -66,3 +66,76 @@ test('an illegal transition and an out-of-Review authorization both return 400',
     cleanup()
   }
 })
+
+test('POST /projects/inspect is read-only, returns signals, and writes nothing', () => {
+  const { store, api, cleanup } = setup()
+  try {
+    // A fake inspect port keeps the test offline; the route must pass rootPath through.
+    const fake = ({ rootPath }) => ({
+      rootPath,
+      packageManager: 'example@1',
+      rootFiles: ['example.lock', 'main.py'],
+      rootDirectories: ['src'],
+      ignoreFiles: { '.gitignore': ['local.ini'] },
+      manifestFiles: ['example.lock'],
+      notes: ['raw facts only'],
+    })
+    const readOnly = createApi({ store, inspect: fake })
+    const before = JSON.stringify(store.state)
+    const res = readOnly({ method: 'POST', route: '/projects/inspect', body: { rootPath: '/workspace/repo' } })
+    assert.equal(res.status, 200)
+    assert.equal(res.body.signals.packageManager, 'example@1')
+    assert.deepEqual(res.body.signals.rootFiles, ['example.lock', 'main.py'])
+    assert.deepEqual(res.body.signals.rootDirectories, ['src'])
+    assert.deepEqual(res.body.signals.ignoreFiles, { '.gitignore': ['local.ini'] })
+    assert.equal('lockFiles' in res.body.signals, false, 'the old Node-only field must be gone')
+    assert.equal('confirmToken' in res.body, false, 'inspection must NOT mint a token')
+    assert.equal(JSON.stringify(store.state), before, 'inspection must not write anything')
+  } finally {
+    cleanup()
+  }
+})
+
+test('POST /projects/inspect reports an illegal rootPath clearly without writing', () => {
+  const { store, cleanup } = setup()
+  try {
+    const readOnly = createApi({ store, inspect: ({ rootPath }) => {
+      throw new Error(`rootPath 不存在：${rootPath}`)
+    } })
+    const before = JSON.stringify(store.state)
+    const res = readOnly({ method: 'POST', route: '/projects/inspect', body: { rootPath: '/nope' } })
+    assert.equal(res.status, 400)
+    assert.match(res.body.error, /不存在/)
+    assert.equal(JSON.stringify(store.state), before)
+  } finally {
+    cleanup()
+  }
+})
+
+test('PATCH /projects/:id writes autonomy separately from preparation', () => {
+  const { store, api, cleanup } = setup()
+  try {
+    const created = api({ method: 'POST', route: '/projects', body: { name: 'auto', rootPath: '/workspace/dsh-plugins' } })
+    const id = created.body.project.id
+    assert.equal(created.body.project.autonomy, 'L0', 'a new project starts with the engine off')
+
+    const patched = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L1', autoStart: true } })
+    assert.equal(patched.status, 200)
+    assert.equal(patched.body.project.autonomy, 'L1')
+    assert.equal(patched.body.project.autoStart, true)
+    assert.equal(patched.body.project.autoApprove, false)
+
+    // Identity and rootPath are not writable through this route.
+    const attempt = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L2', rootPath: '/etc' } })
+    assert.equal(attempt.body.project.rootPath, '/workspace/dsh-plugins', 'rootPath must stay put')
+
+    // Dirty values are refused, never normalised into "running".
+    const bad = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L9' } })
+    assert.equal(bad.status, 400)
+    assert.match(String(bad.body.error), /autonomy/)
+
+    // Mixing the two concerns in one PATCH is refused.
+    const mixed = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L1', copyFiles: ['a'] } })
+    assert.equal(mixed.status, 400)
+  } finally { cleanup() }
+})
