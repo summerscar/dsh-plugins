@@ -26,6 +26,14 @@
         "publishedAt": "2026-11-13T22:02:00.760Z",
         "integrity": "sha512-6A1m4mcQ8XJ2efNrPL9R7BQl/k2wHEHrCxl4Mrfxvp+kb9e3zwbmFU/jKRV3+JHidxdK4+iaI4QenhQioj7OMA=="
       }
+    },
+    {
+      "name": "@summerscar/dsh-factory",
+      "state": "draft",
+      "reason": {
+        "zh": "新插件，源码已入库但尚未发布 npm；首次发布前保持草稿状态。",
+        "en": "New plugin; the source is in the repository but not yet published to npm. Stays in draft until the first release."
+      }
     }
   ]
 }

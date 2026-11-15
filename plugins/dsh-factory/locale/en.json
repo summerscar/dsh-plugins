@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "title": "Project Factory",
+    "description": "A multi-project development factory for DSH: manage projects on kanban boards, dispatch each card into its own session and git worktree, ship six phase skills with the package, and require human approval before any commit, push or PR."
+  },
+  "settings": "Project Factory",
+  "navLabel": "Project Factory",
+  "refresh": "Refresh",
+  "loading": "Loading…",
+  "errorPrefix": "Error: ",
+  "noProjects": "No project yet — create one.",
+  "projectName": "Project name",
+  "rootPath": "Repo root (absolute path)",
+  "newBoard": "New board",
+  "newCard": "New card",
+  "create": "Create",
+  "project": "Project",
+  "board": "Board",
+  "inbox": "📥 Inbox",
+  "inboxEmpty": "Inbox empty",
+  "colPlanning": "Planning",
+  "colAwaiting": "Awaiting approval",
+  "colBuilding": "Building",
+  "colReview": "Review",
+  "colDone": "Done",
+  "canceled": "Canceled",
+  "emptyColumn": "—",
+  "actDispatch": "Dispatch",
+  "actApprovePlan": "Approve plan",
+  "actConfirmCommit": "Confirm commit",
+  "actCreatePr": "Push branch & create PR",
+  "actMarkDone": "Mark done"
+}

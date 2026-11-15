@@ -212,6 +212,8 @@ importers:
 
   plugins/dsh-connect-agentscope-platform: {}
 
+  plugins/dsh-factory: {}
+
   plugins/dsh-mnemon-sync: {}
 
 packages:

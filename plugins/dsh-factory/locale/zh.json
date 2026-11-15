@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "title": "项目工厂",
+    "description": "面向 DSH 的多项目开发工厂：以看板管理项目，每张卡派发到独立会话与 git worktree，随包提供六个阶段 skill，commit/push 与生成 PR 前必须人工批准。"
+  },
+  "settings": "项目工厂",
+  "navLabel": "项目工厂",
+  "refresh": "刷新",
+  "loading": "加载中…",
+  "errorPrefix": "出错了：",
+  "noProjects": "还没有项目，先建一个。",
+  "projectName": "项目名称",
+  "rootPath": "仓库根（绝对路径）",
+  "newBoard": "新建看板",
+  "newCard": "新建卡片",
+  "create": "创建",
+  "project": "项目",
+  "board": "看板",
+  "inbox": "📥 收件箱",
+  "inboxEmpty": "收件箱为空",
+  "colPlanning": "规划中",
+  "colAwaiting": "待批准",
+  "colBuilding": "实现中",
+  "colReview": "待评审",
+  "colDone": "完成",
+  "canceled": "已取消",
+  "emptyColumn": "—",
+  "actDispatch": "派发",
+  "actApprovePlan": "批准计划",
+  "actConfirmCommit": "确认提交",
+  "actCreatePr": "推送分支并创建 PR",
+  "actMarkDone": "标记完成"
+}

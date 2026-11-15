@@ -1,0 +1,5 @@
+# Host entry: HTTP routes, board store, git execution and the model-facing
+# tools. The board page and its sidebar row are contributed by client.js.
+- insert:
+    - id: dsh-factory
+      name: '@summerscar/dsh-factory'
