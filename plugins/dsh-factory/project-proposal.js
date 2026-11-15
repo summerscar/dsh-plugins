@@ -18,9 +18,9 @@
  *    commit / push / PR, not to registering a project.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
 
-import { isInsideDataRoot } from './worktree.js'
+import { checkProjectRoot } from './worktree.js'
 
 /**
  * Ignore files worth reading. These are FACTS the agent may need (which local
@@ -66,11 +66,14 @@ function ignoreEntries(text, limit = 50) {
  * @param {{ rootPath: string, fsPort?: object }} args
  */
 export function assertRepoRoot(rootPath, fsPort = defaultInspectPort()) {
-  if (typeof rootPath !== 'string' || rootPath.trim() === '' || !isAbsolute(rootPath.trim())) {
-    throw new Error('rootPath 必须是绝对路径')
-  }
+  // Registration and inspection share one judgement with the store's project-root
+  // check: a git repo under the DSH data root is a valid project to register. It
+  // is reported with a warning (never used as a session cwd, worktree forced out),
+  // not rejected — otherwise the agent's `/factory add` cannot register repos that
+  // legitimately live in the data root (user requirement, 2026-11-15).
+  const check = checkProjectRoot(rootPath)
+  if (!check.ok) throw new Error(check.error)
   const root = rootPath.trim()
-  if (isInsideDataRoot(root)) throw new Error(`rootPath 不得位于数据根内：${root}`)
   if (!fsPort.exists(root)) throw new Error(`rootPath 不存在：${root}`)
   if (!fsPort.isDirectory(root)) throw new Error(`rootPath 不是目录：${root}`)
   if (!fsPort.exists(join(root, '.git'))) throw new Error(`rootPath 不是 git 仓库（缺少 .git）：${root}`)
@@ -123,7 +126,12 @@ export function inspectRepo({ rootPath, fsPort = defaultInspectPort() } = {}) {
     notes.push('The repository root listing came back empty; inspect the path directly before proposing a config.')
   }
 
-  return { rootPath: root, packageManager, rootFiles, rootDirectories, ignoreFiles, manifestFiles, notes }
+  // A data-root repo is registrable, but the agent must see the constraint: it can
+  // never be a session cwd and its worktree is forced outside the data root.
+  const warning = checkProjectRoot(root).warning ?? null
+  if (warning !== null) notes.push(warning)
+
+  return { rootPath: root, warning, packageManager, rootFiles, rootDirectories, ignoreFiles, manifestFiles, notes }
 }
 
 /**

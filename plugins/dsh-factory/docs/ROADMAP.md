@@ -56,8 +56,10 @@ A card that fails dispatch repeatedly up to the threshold (currently 3) is marke
 ### 2.6 Project creation assistant
 
 - A read-only analysis tool: it reports objective facts about the target repository (root files, directories, ignore rules, manifest files, the declared package manager) and **returns no conclusion about which command to run**.
-- A creation tool: registers a project directly. Creating one is local, reversible configuration — it performs no git write.
+- A creation tool: registers a project directly. Creating one is local, reversible configuration — it performs no git write. It **drops any `copyFiles` entry the git index already tracks** — a tracked file is already in a fresh worktree, so copying it is redundant; this is a deterministic guard, not a matter of model judgement.
 - The `/factory add [path]` command is only a **trigger**: it hands the intent to the agent, and the `factory-add-project` skill guides the agent to analyse the repository, propose a configuration, and then create the project. Without a path it uses the current session's working directory.
+- A project root **may** live inside the data root (some of the user's repositories do): it is registered with a warning, but it is **never** used as a session cwd, and its worktree is forced outside. Verified on a real machine (V2b).
+- `GET /api/dsh-factory/status` exposes `toolsRegistered`: tool registration used to degrade silently (the command and the API both succeeded while the agent had no tools to call), and this is now an objectively readable signal.
 
 ### 2.7 Skills
 
@@ -76,12 +78,24 @@ Seven: six phase skills (triage / plan / build / self-review / review / rereview
 
 ## 4. What comes next (in priority order)
 
-### P1 — End-to-end verification on a real machine (not done; blocks the release decision)
+### P1 — End-to-end verification on a real machine (**done**, 2026-11-15)
 
-The full `/factory add` chain has only been verified offline: command → agent → skill → tools → the project appears on the board. **It has not been run once on a real machine.**
+The full `/factory add` chain — command → agent → skill → tools → the project appears on the board — **has been run on a real machine and converged in six rounds.**
 
-- Acceptance: a bare `add` produces a project whose root path equals that session's working directory; an `add` with a path equals the path given; you can see the agent actually calling the analysis tool and the creation tool (rather than the command creating the project itself); the proposed configuration is justified and contains no command baked into the plugin; the project appears on the board, and the repository files are still there after deleting it.
+- Acceptance (final form, seven groups): **V0** tools are registered (read `toolsRegistered` from `GET /api/dsh-factory/status`, never the agent's own account); **V1** bare `add` (the session cwd must be a real git root **outside** the data root — an environment constraint, not a plugin policy); **V2a** `add` with a path outside the data root; **V2b** `add` with a repository **inside** the data root (registered + a `warning` + the worktree lands outside the data root); **V3** the agent really called the tools **and the calls succeeded** (not the command creating the project itself, and not the agent falling back to something else after an error); **V4** the proposal is justified, every `copyFiles` entry is untracked, and no command is baked into the plugin; **V5** the project appears on the board and the repository files survive deletion.
 - Evidence: judge "it really got created" by the project count going from 0 to 1, not by the agent's own account; force-refresh before screenshotting so stale front-end assets cannot fool you.
+- Six-round ledger (the first five were all real failures; none was a problem with the tests):
+
+| Round | What blocked it |
+|---|---|
+| 1 | `package.json` declared no `@deepseek-ai/dsh-tools` peer → the host loader never injected it, the `import` always failed, and all six tools were unregistered |
+| 2 | Tools returned `warning: undefined` → failed the host's lossless-JSON check, so every call on a repository outside the data root failed |
+| 3 | All six tools' `render` returned a string → violated the `ContentBlock[]` contract, `content.some` crashed downstream, all six tools were unusable |
+| 4 | `copyFiles` listed files already tracked by git → model judgement drift; replaced with a deterministic guard that drops tracked entries by git index |
+| 5 | Packaged skills passed no `source` → the host does not fill it in, so all seven skills failed to register on a real machine |
+| 6 | All green: the skill genuinely took effect (the trace showed the skill loading, and the agent ran `git check-ignore` itself), and all seven acceptance groups passed |
+
+The first four (peer / serialization / render / skill `source`) were each "the plugin is simply unusable on a real machine" level and are all fixed. Round 4 no longer relies on the agent behaving: `factory_create_project` drops `copyFiles` entries that the git index already tracks, and round 5 proved the guard fires (the agent passed four tracked files, all were dropped, and the stored `copyFiles` was empty).
 
 ### P2 — Autonomy engine (not implemented)
 
@@ -109,12 +123,16 @@ Settings page, status badge, pause/take-over. **Prerequisite**: the engine behav
 
 | Gap | Impact | Note |
 |---|---|---|
+| **No transaction boundary between a write and its receipt** | A tool runs `execute` (the write has already landed) and only afterwards snapshots, lossless-checks and renders; a failure in any of those steps becomes "the write happened but the call errored", and the receipt is lost. On a real machine this showed up as duplicate same-named projects, with the agent correctly not retrying and the user never learning the project exists | Not fixed in P1 (fixing `render` removes the symptom, not the structure). Two options: evaluate `render` **before** the write, or roll the write back on failure. **Must be faced before P2 dispatch** — dispatching is far heavier than creating a project, and the same window would leave worktrees and sessions behind |
+| **Agent behaviour drift (under observation)** | In rounds 5 and 6 the agent asked for confirmation on a card before creating the project; in rounds 1–3 it created directly. No acceptance criterion forbids asking, and the project was created either way | Read as normal behaviour once the skill takes effect (the skill body says to show the config first), not a defect. Recorded here for observation so P2 does not discover an agent that asks about everything |
 | GitHub only | The GitLab skills are not implemented | Add them when there is a concrete need |
 | No webhooks | Issues are discovered by polling | Good enough for a single machine |
 | Single machine, no multi-replica coordination | The concurrency lock is only valid inside one process | Not a problem for the current use case |
 | The session permission level does not actually apply | A permission is passed at dispatch, but the host side is not wired up yet | Write restriction in the worktree is currently by convention, not enforced |
 | Branch names are bare identifiers | Harder to read during a human review | A pure improvement, not a blocker |
 | Inbox discovery is manually triggered | Scheduling belongs to P2 | — |
+| No interface entry point to delete a project | Deleting requires the HTTP endpoint (`client.js` makes no DELETE call) | Belongs to the P4 interface |
+| Deleting a project leaves its worktree behind | `deleteProject` removes the registration only; the directory stays under the worktree root | Low impact; handle it with P4 |
 
 ## 6. Research basis (summary, so it is not researched twice)
 
@@ -131,3 +149,4 @@ Conclusion: **take the skeleton from A** (card = own session, worktree isolation
 - Before changing anything, confirm which priority it belongs to; until P1 is done, new features queue behind it.
 - Any change that performs a git write must go through the human approval gate; tests must not bypass it.
 - Tests are maintained by a dedicated owner and are not self-certified; numbers come from an actual run, never from "it looks like it runs".
+- **Any test that touches the data root injects a temporary `DSH_HOME`**: point it at a directory under `tmpdir()`, then restore the original value and delete it. Never write the real data root, and never sidestep with `skip` — the data-root lookup is lazy, so changing the environment variable inside the process takes effect immediately; the cases really run, which covers more than skipping them would.

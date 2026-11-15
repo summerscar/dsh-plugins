@@ -23,6 +23,8 @@ import {
   handleFactoryCommand, parseFactoryLine, registerFactoryCommands, runInspect, triggerAgentAdd,
 } from '../commands.js'
 import { FactoryStore } from '../store.js'
+import { isInsideDataRoot } from '../worktree.js'
+import { withTempDataRoot } from './qa-helpers.mjs'
 
 const VALID_ROOT = (raw) => {
   const p = String(raw ?? '').trim()
@@ -184,7 +186,6 @@ test('K3: illegal inspect paths are refused with a clear reason and never throw'
     ['relative/path', /绝对路径/],
     ['/workspace/qa-no-such-dir', /不存在/],
     ['/etc', /不是 git 仓库/],
-    ['/data/dsh/inside', /数据根内/],
   ]) {
     let out
     assert.doesNotThrow(() => {
@@ -194,6 +195,42 @@ test('K3: illegal inspect paths are refused with a clear reason and never throw'
     assert.match(out.text, reason)
   }
 })
+
+test('K3b: a git repo inside the data root is inspectable, not hard-refused', () => withTempDataRoot((dataRoot) => {
+  // Behaviour change 2026-11-15 (user requirement): repos under the DSH data root
+  // are legitimately registrable — the old "数据根内 → 硬拒" rule blocked the
+  // agent's own /factory add path. This asserts the NEW behaviour rather than
+  // deleting the old assertion, so the case keeps catching a regression back to
+  // a blanket refusal.
+  //
+  // runInspect runs the REAL assertRepoRoot before delegating, so the fixture must
+  // be a real git repo inside the data root. The root is INJECTED (a throwaway
+  // DSH_HOME) rather than borrowed from the machine: writing fixtures into a live
+  // harness home is not the test's business, and skipping when it is unwritable
+  // would leave the behaviour unverified. resolveDataRoot() is lazy, so the
+  // injected value is in force for every call inside this block.
+  const tmp = mkdtempSync(join(dataRoot, 'qa-cmd-inside-'))
+  const root = join(tmp, 'repo')
+  try {
+    mkdirSync(join(root, '.git'), { recursive: true })
+    assert.equal(isInsideDataRoot(root), true, 'the fixture really is inside the data root')
+    const seen = []
+    const out = runInspect({
+      parsed: { action: 'inspect', rootPath: root },
+      inspect: (args) => {
+        seen.push(args.rootPath)
+        return {
+          rootPath: args.rootPath, packageManager: '', rootFiles: ['AGENTS.md'],
+          rootDirectories: ['.git'], ignoreFiles: {}, manifestFiles: ['AGENTS.md'],
+          notes: ['facts only'],
+        }
+      },
+    })
+    assert.deepEqual(seen, [root], 'the data-root path reaches inspect instead of being refused')
+    assert.equal(out.kind, 'success', out.text)
+    assert.match(out.text, /Repository: .*repo/, 'renders the data-root repo it inspected')
+  } finally { rmSync(tmp, { recursive: true, force: true }) }
+}))
 
 // --- registration ------------------------------------------------------------
 

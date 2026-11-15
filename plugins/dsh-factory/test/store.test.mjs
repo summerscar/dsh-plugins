@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { FactoryStore } from '../store.js'
+import { withTempDataRoot } from './qa-helpers.mjs'
 
 function withStore(fn) {
   const tmp = mkdtempSync(join(tmpdir(), 'factory-store-'))
@@ -97,12 +98,15 @@ test('a created PR keeps the card in Review; Done is still a separate human step
   assert.equal(store.transitionCard(card.id, 'done', 'human').status, 'done')
 }))
 
-test('a project under the data root is accepted with a warning; defaults are sane (E4/F1)', () => withStore((file) => {
+test('a project under the data root is accepted with a warning; defaults are sane (E4/F1)', () => withTempDataRoot((dataRoot) => withStore((file) => {
   const store = new FactoryStore({ file })
-  const project = store.createProject({ name: 'under-data', rootPath: '/data/dsh/home/default/repo' })
+  // The data root is INJECTED, not borrowed: a literal /data/dsh would pass on this
+  // machine and fail wherever DSH_HOME points elsewhere, and using the machine's
+  // real root would make the case depend on that root being writable.
+  const project = store.createProject({ name: 'under-data', rootPath: join(dataRoot, 'home', 'default', 'repo') })
   assert.match(project.warning, /数据根/)
   assert.equal(project.defaultPermission, 'workspace-write')
   assert.equal(project.autonomy, 'L0')
   assert.equal(project.autoStart, false)
   assert.equal(project.autoApprove, false)
-}))
+})))

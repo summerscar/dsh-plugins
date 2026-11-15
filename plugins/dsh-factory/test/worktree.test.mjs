@@ -14,11 +14,12 @@ import test from 'node:test'
 
 import { cleanGitEnv } from '../git-env.js'
 import {
-  DEFAULT_WORKTREE_ROOT,
   checkProjectRoot,
   createWorktree,
+  defaultWorktreeRoot,
   isInsideDataRoot,
   removeWorktree,
+  resolveDataRoot,
   worktreePathFor,
   worktreeStatus,
 } from '../worktree.js'
@@ -27,7 +28,7 @@ test('worktree path is <root>/<projectId>/<cardId> and defaults outside the data
   const project = { id: 'proj-1' }
   assert.equal(
     worktreePathFor(project, 'card-9'),
-    join(DEFAULT_WORKTREE_ROOT, 'proj-1', 'card-9'),
+    join(defaultWorktreeRoot(), 'proj-1', 'card-9'),
   )
   // A custom root is honoured.
   assert.equal(
@@ -37,14 +38,18 @@ test('worktree path is <root>/<projectId>/<cardId> and defaults outside the data
 })
 
 test('a worktree root inside the data root is refused', () => {
-  assert.equal(isInsideDataRoot('/data/dsh/worktrees'), true)
+  // Both sides are derived, never hard-coded: the data root follows DSH_HOME
+  // (falling back to the host default ~/.dsh), so a literal /data/dsh would
+  // assert the old behaviour and break on any machine that sets DSH_HOME.
+  assert.equal(isInsideDataRoot(join(resolveDataRoot(), 'worktrees')), true)
   assert.equal(isInsideDataRoot('/workspace/.dsh-worktrees'), false)
-  assert.throws(() => worktreePathFor({ id: 'p', worktreeRoot: '/data/dsh/wt' }, 'c'), /数据根/)
+  assert.throws(() => worktreePathFor({ id: 'p', worktreeRoot: join(resolveDataRoot(), 'wt') }, 'c'), /数据根/)
 })
 
 test('project root under the data root is allowed but warned; relative is an error', () => {
+  const inside = join(resolveDataRoot(), 'home', 'default', 'repo')
   assert.deepEqual(
-    { ok: checkProjectRoot('/data/dsh/home/default/repo').ok, warned: Boolean(checkProjectRoot('/data/dsh/home/default/repo').warning) },
+    { ok: checkProjectRoot(inside).ok, warned: Boolean(checkProjectRoot(inside).warning) },
     { ok: true, warned: true },
   )
   assert.equal(checkProjectRoot('/workspace/example-repo').ok, true)

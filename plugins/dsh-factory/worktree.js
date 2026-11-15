@@ -4,7 +4,7 @@
  * Per Research's verification, DSH's native worktree service only accepts a
  * *relative* `directory` and defaults to `<repo>/.agents/worktrees` — it cannot
  * give a centralised absolute root, and for repos living under the data root it
- * would land the worktree inside `/data/dsh`. So we run `git worktree add`
+ * would land the worktree inside the data root. So we run `git worktree add`
  * ourselves, exactly like kanban's `createTaskWorktree`.
  *
  * The path/containment checks are pure and unit-tested; the create/remove
@@ -14,15 +14,58 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { cleanGitEnv } from './git-env.js'
 
-/** DSH data root: a worktree must never be created inside it (PRD §7/§9.2). */
-export const DATA_ROOT = '/data/dsh'
+/**
+ * Expand a leading `~` / `~/` / `~\` against the OS home directory. Uses
+ * `homedir()` rather than `process.env.HOME`: Windows does not define `HOME`
+ * (it uses `USERPROFILE`), so reading the variable yields `undefined`,
+ * `join('', …)` degrades to a relative path and `resolve()` then anchors it to
+ * the process cwd — which in a packaged desktop profile points at a directory
+ * that holds no user data.
+ */
+export function expandHome(value) {
+  if (typeof value !== 'string') return value
+  if (value === '~') return homedir()
+  if (value.startsWith('~/') || value.startsWith('~\\')) return join(homedir(), value.slice(2))
+  return value
+}
 
-/** Centralised worktree root, per project + card. Deliberately outside DATA_ROOT. */
-export const DEFAULT_WORKTREE_ROOT = '/workspace/.dsh-worktrees'
+/**
+ * DSH data root: a project may be registered inside it, but a worktree must
+ * never be created there (PRD §7/§9.2).
+ *
+ * Precedence mirrors the host's own `resolveDshHome` in
+ * `@deepseek-ai/dsh-home-paths` (explicit config → `$DSH_HOME` → `~/.dsh`), so
+ * this plugin follows the host layout. That package is deliberately NOT imported:
+ * it is a host peer, resolvable only when the loader injects it, and a path
+ * helper is not worth another failure mode. A blank or whitespace-only value is
+ * treated as unset so the root can never collapse onto the cwd.
+ *
+ * Note: with `DSH_HOME` unset the root is `~/.dsh`, the host default — not any
+ * machine-specific directory this plugin used to assume.
+ *
+ * Resolved on every call, never captured at module load, so the answer reflects
+ * the environment at the moment of the check.
+ */
+export function resolveDataRoot(env = process.env) {
+  const raw = typeof env?.DSH_HOME === 'string' ? env.DSH_HOME.trim() : ''
+  return resolve(raw !== '' ? expandHome(raw) : join(homedir(), '.dsh'))
+}
+
+/**
+ * Centralised worktree root, per project + card, deliberately outside the data
+ * root. `DSH_FACTORY_WORKTREE_ROOT` overrides it; the neutral default is a temp
+ * directory so no host-private absolute path ships with the plugin. Also resolved
+ * per call rather than at module load.
+ */
+export function defaultWorktreeRoot(env = process.env) {
+  const raw = typeof env?.DSH_FACTORY_WORKTREE_ROOT === 'string' ? env.DSH_FACTORY_WORKTREE_ROOT.trim() : ''
+  return resolve(raw !== '' ? expandHome(raw) : join(tmpdir(), 'dsh-factory-worktrees'))
+}
 
 /** True when `child` is `parent` itself or lives beneath it (separator-safe). */
 export function isPathInside(parent, child) {
@@ -34,12 +77,12 @@ export function isPathInside(parent, child) {
 }
 
 export function isInsideDataRoot(target) {
-  return isPathInside(DATA_ROOT, target)
+  return isPathInside(resolveDataRoot(), target)
 }
 
 export function worktreeRootOf(project) {
   const root = project?.worktreeRoot
-  return resolve(typeof root === 'string' && root.trim() !== '' ? root : DEFAULT_WORKTREE_ROOT)
+  return resolve(typeof root === 'string' && root.trim() !== '' ? root : defaultWorktreeRoot())
 }
 
 /** Throw unless the worktree root is an absolute path outside the data root. */
@@ -48,7 +91,7 @@ export function assertWorktreeRoot(root) {
     throw new Error('worktreeRoot 必须是绝对路径')
   }
   if (isInsideDataRoot(root)) {
-    throw new Error(`worktreeRoot 不得位于数据根 ${DATA_ROOT} 内`)
+    throw new Error(`worktreeRoot 不得位于数据根 ${resolveDataRoot()} 内`)
   }
   return resolve(root)
 }
@@ -60,13 +103,14 @@ export function assertWorktreeRoot(root) {
  * (PRD E4: "被拒绝/告警").
  */
 export function checkProjectRoot(rootPath) {
-  if (typeof rootPath !== 'string' || rootPath.trim() === '' || !isAbsolute(rootPath)) {
+  const root = typeof rootPath === 'string' ? rootPath.trim() : rootPath
+  if (typeof root !== 'string' || root === '' || !isAbsolute(root)) {
     return { ok: false, error: '项目根必须是绝对路径' }
   }
-  if (isInsideDataRoot(rootPath)) {
+  if (isInsideDataRoot(root)) {
     return {
       ok: true,
-      warning: `项目根位于数据根 ${DATA_ROOT} 内：会话 cwd 不得使用它，worktree 强制外置（PRD E4）`,
+      warning: `项目根位于数据根 ${resolveDataRoot()} 内：会话 cwd 不得使用它，worktree 强制外置（PRD E4）`,
     }
   }
   return { ok: true }

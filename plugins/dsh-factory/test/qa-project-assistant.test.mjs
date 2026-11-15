@@ -20,6 +20,8 @@ import { factoryToolSpecs } from '../tools.js'
 import { inspectRepo } from '../project-proposal.js'
 import { loadSkillDirectory } from '../skills.js'
 import { dispatchCard } from '../dispatch.js'
+import { isInsideDataRoot } from '../worktree.js'
+import { withTempDataRoot } from './qa-helpers.mjs'
 
 const PLUGIN_ROOT = new URL('..', import.meta.url).pathname
 const HARD_CODED_COMMANDS = ['pnpm install', 'npm ci', 'bun install', 'yarn install']
@@ -103,7 +105,6 @@ test('J2: illegal rootPath is refused with a clear reason, zero writes', () => {
     const bad = [
       ['relative/path', /绝对路径/], ['', /绝对路径/],
       ['/workspace/definitely-not-there-qa', /不存在/],
-      ['/data/dsh/inside', /数据根内/],
     ]
     for (const [rootPath, reason] of bad) {
       assert.throws(() => inspectRepo({ rootPath }), reason, `must refuse ${JSON.stringify(rootPath)}`)
@@ -111,6 +112,39 @@ test('J2: illegal rootPath is refused with a clear reason, zero writes', () => {
     }
   } finally { cleanup() }
 })
+
+test('J2b: a git repo inside the data root is accepted with a warning, not refused', () => withTempDataRoot((dataRoot) => {
+  // Behaviour change 2026-11-15 (user requirement): the agent's own /factory add
+  // must be able to register repos living under the DSH data root. The surviving
+  // constraint is narrower — never a session cwd, worktree forced outside — and it
+  // is reported as a warning. Asserting the new behaviour keeps this case able to
+  // catch a regression back to the old blanket refusal.
+  //
+  // The root is INJECTED, not borrowed from the machine: a fixture written into a
+  // live harness home is not the test's business, and skipping when it is
+  // unwritable would leave the behaviour unverified. resolveDataRoot() is lazy, so
+  // the injected value is in force for every call inside this block; cleanup of the
+  // root itself belongs to the helper.
+  const root = join(dataRoot, 'repo')
+  mkdirSync(join(root, '.git'), { recursive: true })
+  writeFileSync(join(root, 'package.json'), '{}')
+  assert.equal(isInsideDataRoot(root), true, 'the fixture really is inside the data root')
+  const signals = inspectRepo({ rootPath: root })
+  assert.equal(signals.rootPath, root)
+  assert.equal(typeof signals.warning, 'string', 'a data-root repo must carry a warning')
+  assert.match(signals.warning, /数据根/)
+  assert.match(signals.warning, /worktree 强制外置/)
+  assert.equal(signals.notes.includes(signals.warning), true, 'the warning is also visible in notes')
+}))
+
+test('J2c: a data-root repo with no .git is still refused (the warning is not a bypass)', () => withTempDataRoot((dataRoot) => {
+  // No mkdtemp needed: any directory under the injected root without a .git does
+  // the job, and the helper removes the root afterwards.
+  const plain = join(dataRoot, 'plain-dir')
+  mkdirSync(plain, { recursive: true })
+  assert.equal(isInsideDataRoot(plain), true, 'the fixture really is inside the data root')
+  assert.throws(() => inspectRepo({ rootPath: plain }), /不是 git 仓库/, 'warning never replaces the git check')
+}))
 
 // --- direct create (new contract): path validation is the safety gate --------
 
@@ -144,6 +178,76 @@ test('direct create: a non-existent / non-git path is refused with ZERO writes',
     assert.equal(store.state.projects.length, 0)
     assert.equal(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).projects.length : 0, 0)
   } finally { cleanup() }
+})
+
+// --- tool output must survive the host's lossless-JSON boundary ----------------
+
+test('tool outputs carry no undefined values (the host rejects them as "not lossless JSON")', async () => {
+  // Real-machine bug 2026-11-15: both factory_inspect_repo and
+  // factory_create_project returned `warning: undefined` for a repo outside the
+  // data root. dsh-tools detaches every tool result through a lossless-JSON
+  // boundary and refuses an `undefined` member outright, so the tool call failed
+  // with `value is not lossless JSON` EVEN THOUGH the write had already happened.
+  // The agent then had to fall back to bash and re-derive the signals by hand.
+  //
+  // Asserting on the raw execute() return — not on JSON.stringify(), which
+  // silently drops undefined members and would hide exactly this bug.
+  const repo = makeRepo()
+  const { store, specs, cleanup } = setup()
+  const assertLossless = (label, value) => {
+    const stack = [['', value]]
+    while (stack.length > 0) {
+      const [path, node] = stack.pop()
+      assert.notEqual(node, undefined, `${label}: ${path || '<root>'} must not be undefined`)
+      if (node === null || typeof node !== 'object') continue
+      for (const [key, child] of Object.entries(node)) stack.push([`${path}.${key}`, child])
+    }
+  }
+  try {
+    const inspected = await specs.get('factory_inspect_repo').execute({ rootPath: repo.root })
+    assertLossless('factory_inspect_repo', inspected)
+
+    const created = await specs.get('factory_create_project').execute({
+      name: 'QA-lossless', rootPath: repo.root, copyFiles: [], postCreate: '',
+    })
+    assertLossless('factory_create_project', created)
+  } finally { repo.cleanup(); cleanup() }
+})
+
+test('every tool render() returns a ContentBlock array, not a string', async () => {
+  // Real-machine bug 2026-11-15 (second round): every factory tool returned a
+  // plain string from output.render(). The host contract is
+  // `render(args, value): ContentBlock[]` (dsh-tools ToolOutputDefinition), and
+  // defineTool passes it through untouched. The string then became the tool
+  // result's `content`, and the host's image walk called `content.some(...)` on
+  // it — surfacing as `content.some is not a function` and failing EVERY factory
+  // tool on a real machine, not just inspect.
+  //
+  // Asserting the shape here keeps this contract from regressing silently: a
+  // string render looks fine in a unit test that only reads the text.
+  const repo = makeRepo()
+  const { store, specs, cleanup } = setup()
+  const assertBlocks = (label, rendered) => {
+    assert.equal(Array.isArray(rendered), true, `${label}: render must return an array, got ${typeof rendered}`)
+    for (const block of rendered) {
+      assert.equal(typeof block, 'object', `${label}: each block must be an object`)
+      assert.equal(typeof block?.type, 'string', `${label}: each block needs a type`)
+      if (block.type === 'text') assert.equal(typeof block.text, 'string', `${label}: a text block needs text`)
+    }
+  }
+  try {
+    const cases = [
+      ['factory_list_work_items', {}],
+      ['factory_list_attention', {}],
+      ['factory_inspect_repo', { rootPath: repo.root }],
+      ['factory_create_project', { name: 'QA-render', rootPath: repo.root, copyFiles: [], postCreate: '' }],
+    ]
+    for (const [name, args] of cases) {
+      const spec = specs.get(name)
+      const value = await spec.execute(args)
+      assertBlocks(name, spec.output.render(args, value))
+    }
+  } finally { repo.cleanup(); cleanup() }
 })
 
 // --- J5 / J6 / W-13 ----------------------------------------------------------

@@ -18,7 +18,7 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus } from './state.js'
-import { DEFAULT_WORKTREE_ROOT, assertWorktreeRoot, checkProjectRoot } from './worktree.js'
+import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot } from './worktree.js'
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 
 export const SCHEMA_VERSION = 1
@@ -165,7 +165,7 @@ export class FactoryStore {
     const rootPath = reqString(input.rootPath, 'rootPath')
     const rootCheck = checkProjectRoot(rootPath)
     if (!rootCheck.ok) throw new Error(rootCheck.error)
-    const worktreeRoot = input.worktreeRoot ? reqString(input.worktreeRoot, 'worktreeRoot') : DEFAULT_WORKTREE_ROOT
+    const worktreeRoot = input.worktreeRoot ? reqString(input.worktreeRoot, 'worktreeRoot') : defaultWorktreeRoot()
     assertWorktreeRoot(worktreeRoot)
     const project = {
       id: optionalString(input.id) || randomUUID(),
