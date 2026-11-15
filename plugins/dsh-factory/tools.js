@@ -15,11 +15,18 @@
  */
 import { STATUSES } from './state.js'
 import { assertRepoRoot, inspectRepo } from './project-proposal.js'
+import { defaultLsFilesPort, dropTrackedCopyFiles } from './worktree-setup.js'
 
 const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review', 'canceled']
 const ATTENTION_STATUSES = ['inbox', 'plan-review', 'review']
 
 const stringArray = () => ({ type: 'array', items: { type: 'string' } })
+
+// Host contract: `output.render(args, value)` must return `ContentBlock[]`. A bare
+// string becomes the tool result's `content`, and the host then calls `.some()` on
+// it while checking for images — every tool call fails at that point. One text
+// block keeps the original display text and satisfies the contract.
+const textBlock = (text) => [{ type: 'text', text }]
 
 // A card summary is a closed object (no extra keys), so every object schema below
 // sets `additionalProperties: false` — the schema compiler rejects an open default.
@@ -31,7 +38,7 @@ const CARD_SCHEMA = {
 const cardsArray = () => ({ type: 'array', items: CARD_SCHEMA })
 const cardsListSchema = (key) => ({ type: 'object', additionalProperties: false, properties: { [key]: cardsArray() } })
 
-export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot } = {}) {
+export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort() } = {}) {
   if (store === undefined || store === null) throw new Error('factoryToolSpecs needs a store')
 
   return [
@@ -45,7 +52,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       },
       output: {
         schema: cardsListSchema('cards'),
-        render: (args, value) => (value.cards.length === 0
+        render: (args, value) => textBlock(value.cards.length === 0
           ? 'No cards.'
           : value.cards.map((card) => `- ${card.id} [${card.status}] ${card.title}`).join('\n')),
       },
@@ -64,7 +71,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       },
       output: {
         schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, status: { type: 'string' } } },
-        render: (args, value) => `Card ${value.id} is now ${value.status}.`,
+        render: (args, value) => textBlock(`Card ${value.id} is now ${value.status}.`),
       },
       execute: async (args) => {
         const card = store.transitionCard(args.cardId, args.to, 'agent', args.note)
@@ -80,7 +87,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       },
       output: {
         schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, reports: { type: 'integer' } } },
-        render: (args, value) => `Recorded a report on ${value.id} (${value.reports} total).`,
+        render: (args, value) => textBlock(`Recorded a report on ${value.id} (${value.reports} total).`),
       },
       execute: async (args) => {
         const { count } = store.appendReport(args.cardId, args.report, 'agent')
@@ -93,7 +100,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       parameters: {},
       output: {
         schema: cardsListSchema('attention'),
-        render: (args, value) => (value.attention.length === 0
+        render: (args, value) => textBlock(value.attention.length === 0
           ? 'Nothing needs a human right now.'
           : value.attention.map((card) => `- [${card.status}] ${card.title} (${card.id})`).join('\n')),
       },
@@ -109,7 +116,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       name: 'factory_inspect_repo',
       description: 'READ-ONLY. Inspect a repository and return RAW FACTS about it: the root file names, the root subdirectory names, the contents of any ignore files (.gitignore/.dockerignore/…), the packageManager field if package.json declares one, and which well-known manifests exist. This tool does NOT classify the project and returns no command to run — the list of project types is endless, so YOU decide what the project is from these files (pom.xml means Maven, Cargo.toml means Rust, go.mod means Go, and so on), and decide the setup command and which local files to copy from the target repository\'s own AGENTS.md / CONTRIBUTING, never from a hardcoded default. Show the facts and your proposal to the user, then create the project with factory_create_project once they agree.',
       parameters: {
-        rootPath: { type: 'string', required: true, description: 'Absolute path to an existing git repository, outside the DSH data root.' },
+        rootPath: { type: 'string', required: true, description: 'Absolute path to an existing git repository. A repo inside the DSH data root is accepted and registered with a warning (never a session cwd; its worktree is forced outside).' },
       },
       output: {
         schema: {
@@ -119,15 +126,19 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
             packageManager: { type: 'string' },
             rootFiles: stringArray(),
             rootDirectories: stringArray(),
-            ignoreFiles: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+            // dsh-tools' schema compiler only accepts a boolean
+            // `additionalProperties`, so a typed object map cannot be expressed
+            // here — `json` keeps the raw ignore-file entries intact.
+            ignoreFiles: { type: 'json' },
             manifestFiles: stringArray(),
             notes: stringArray(),
+            warning: { type: 'string' },
           },
         },
         render: (args, value) => {
           const ignore = Object.entries(value.ignoreFiles ?? {})
             .map(([name, entries]) => `${name}: ${entries.join(', ') || '(empty)'}`)
-          return [
+          return textBlock([
             `Repository: ${value.rootPath}`,
             `packageManager: ${value.packageManager || '(none declared)'}`,
             `root files: ${value.rootFiles.join(', ') || '(none)'}`,
@@ -135,7 +146,8 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
             `manifests worth a look: ${value.manifestFiles.join(', ') || '(none)'}`,
             ...ignore,
             ...value.notes,
-          ].join('\n')
+            ...(value.warning ? [`Warning: ${value.warning}`] : []),
+          ].join('\n'))
         },
       },
       execute: async (args = {}) => {
@@ -148,6 +160,9 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
           ignoreFiles: signals.ignoreFiles,
           manifestFiles: signals.manifestFiles,
           notes: signals.notes,
+          // Omit the key entirely when there is no warning: the host's lossless-JSON
+          // check rejects `undefined` (and `null` would fail the string schema).
+          ...(signals.warning ? { warning: signals.warning } : {}),
         }
       },
     },
@@ -161,21 +176,49 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         postCreate: { type: 'string', description: 'Setup command run inside each new worktree; provided by the user, never a plugin default.' },
       },
       output: {
-        schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, name: { type: 'string' } } },
-        render: (args, value) => `Created project ${value.name} (${value.id}).`,
+        schema: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            warning: { type: 'string' },
+            droppedCopyFiles: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        render: (args, value) => textBlock([
+          `Created project ${value.name} (${value.id}).`,
+          ...(value.warning ? [`Warning: ${value.warning}`] : []),
+          ...(value.droppedCopyFiles?.length
+            ? [`Dropped from copyFiles (already tracked by git, so a new worktree has them): ${value.droppedCopyFiles.join(', ')}`]
+            : []),
+        ].join('\n')),
       },
       execute: async (args = {}) => {
         // Creating a project is local and reversible, but it must still point at
         // a real git repository. Without this, an agent could register /etc or a
         // path that does not exist (QA finding, 2026-11-15).
         const rootPath = assertRoot(args.rootPath)
+        // Deterministic guard: whatever the agent proposed, only untracked local
+        // files reach the store. The agent's copyFiles judgement varies between
+        // runs; the git index does not.
+        const cleaned = dropTrackedCopyFiles({
+          repoPath: rootPath,
+          files: Array.isArray(args.copyFiles) ? args.copyFiles : [],
+          port: lsFilesPort,
+        })
         const project = store.createProject({
           name: args.name,
           rootPath,
-          copyFiles: args.copyFiles ?? [],
+          copyFiles: cleaned.files,
           postCreate: args.postCreate ?? '',
         })
-        return { id: project.id, name: project.name }
+        const droppedPaths = cleaned.dropped.map((entry) => entry.path)
+        return {
+          id: project.id,
+          name: project.name,
+          ...(project.warning ? { warning: project.warning } : {}),
+          ...(droppedPaths.length ? { droppedCopyFiles: droppedPaths } : {}),
+        }
       },
     },
   ]

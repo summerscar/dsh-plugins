@@ -59,6 +59,53 @@ export function normalizeCopyFiles(value, field = 'copyFiles') {
   return value.map((entry) => assertSafeRelativePath(entry))
 }
 
+/** Real git-index port. `lsFiles` is injectable so callers can fake the index. */
+export function defaultLsFilesPort() {
+  return {
+    lsFiles: (repoPath) => {
+      const result = spawnSync('git', ['-C', repoPath, 'ls-files', '-z'], {
+        encoding: 'utf8', env: cleanGitEnv(), windowsHide: true,
+      })
+      if (result.error || result.status !== 0) {
+        throw new Error(result.error?.message || `git ls-files 失败（exit ${result.status}）`)
+      }
+      return String(result.stdout ?? '').split('\0').filter(Boolean)
+    },
+  }
+}
+
+/**
+ * Drop `copyFiles` entries that are already tracked in the source repository: a
+ * fresh worktree carries every tracked file, so copying one is pure redundancy.
+ * This is a deterministic guard — the agent's judgement varies run to run, the
+ * git index does not. A failure to read the index keeps the input unchanged: a
+ * redundant entry is preferable to a failed project creation.
+ *
+ * @returns {{ files: string[], dropped: Array<{path: string, reason: string}> }}
+ */
+export function dropTrackedCopyFiles({ repoPath, files = [], port = defaultLsFilesPort() } = {}) {
+  const requested = Array.isArray(files) ? files.slice() : []
+  let tracked
+  try {
+    tracked = port.lsFiles(repoPath)
+  } catch {
+    return { files: requested, dropped: [] }
+  }
+  if (!Array.isArray(tracked)) return { files: requested, dropped: [] }
+  const trackedSet = new Set(tracked)
+  const kept = []
+  const dropped = []
+  for (const entry of requested) {
+    const rel = typeof entry === 'string' ? entry.trim().replace(/\\/g, '/') : entry
+    if (trackedSet.has(rel)) {
+      dropped.push({ path: rel, reason: '已被 git 跟踪，新 worktree 自带，无需复制' })
+    } else {
+      kept.push(entry)
+    }
+  }
+  return { files: kept, dropped }
+}
+
 /** Real filesystem port; keep the surface minimal so a fake can replace it. */
 export function defaultFsPort() {
   return {

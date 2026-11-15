@@ -17,7 +17,7 @@
 import { collectAudit } from './audit.js'
 import { inspectRepo } from './project-proposal.js'
 
-export function createApi({ store, build = 'unknown', inspect = inspectRepo }) {
+export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {} }) {
   return function handle(input = {}) {
     const method = String(input.method ?? 'GET').toUpperCase()
     const rawRoute = String(input.route ?? '/')
@@ -31,6 +31,10 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo }) {
       if (method === 'GET' && seg.length === 1 && seg[0] === 'status') {
         return ok({
           build,
+          // Objective signal for the real-machine check: the model-facing tools
+          // either all registered or none did. A silent import failure must never
+          // again look like "the command worked but the agent has no tools".
+          toolsRegistered: runtime.toolsRegistered === true,
           counts: {
             projects: store.state.projects.length,
             boards: store.state.boards.length,
@@ -66,6 +70,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo }) {
             ignoreFiles: signals.ignoreFiles,
             manifestFiles: signals.manifestFiles,
             notes: signals.notes,
+            warning: signals.warning,
           } })
         }
         if (method === 'GET' && seg.length === 2) return ok({ project: store.getProject(seg[1]) })

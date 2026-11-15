@@ -39,6 +39,16 @@ export function defaultSkillsDir() {
 }
 
 /**
+ * Where a packaged skill comes from, as the host records it. The host fills in
+ * `provider` itself but never `source`, and both are validated as strings before
+ * the skill becomes loadable — so every registration must carry this. One format
+ * for the whole package: `<plugin name>:<skill name>`.
+ */
+export function skillSourceOf(name) {
+  return `dsh-factory:${name}`
+}
+
+/**
  * Read `dir/<name>/SKILL.md` for every subdirectory. A skill without a
  * `description` is skipped: a routing description is what makes it discoverable.
  */
@@ -78,6 +88,9 @@ export function registerFactorySkills({ ctx, skillsDir } = {}) {
     ctx.effect(() => skills.register({
       name: skill.name,
       description: skill.description,
+      // Required by the host validator; `provider` is left alone so the host's
+      // own default ('runtime') applies and no candidate/provider mismatch occurs.
+      source: skillSourceOf(skill.name),
       content: skill.content,
       ...(skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse }),
       invocation: { modelInvocable: true, userInvocable: true },

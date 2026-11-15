@@ -59,6 +59,18 @@
     "node": ">=22.16",
     "dsh": ">=0.2.2-rc.1"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },

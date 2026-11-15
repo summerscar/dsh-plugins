@@ -36,7 +36,7 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-15.16'
+export const BUILD = 'factory-2026-11-15.23'
 
 export const name = 'dsh-factory'
 
@@ -85,7 +85,11 @@ async function readJsonBody(req) {
 
 export function apply(ctx, config = {}) {
   const store = new FactoryStore({ file: resolveDataFile(config) })
-  const handleApi = createApi({ store, build: BUILD })
+  // Mutable runtime signal, read fresh on every `status` request: the model-facing
+  // tools either all registered or none did, and that fact must be observable
+  // instead of hidden behind a swallowed import error.
+  const runtime = { toolsRegistered: false }
+  const handleApi = createApi({ store, build: BUILD, runtime })
   // /factory slash command. `ctx.inject` waits for the commands service to be
   // ready instead of racing apply(): a profile that loads commands later still
   // gets the command, and a profile without it just skips registration while
@@ -150,12 +154,27 @@ export function apply(ctx, config = {}) {
           for (const spec of factoryToolSpecs({ store })) {
             disposers.push(toolsService.register(defineTool(spec)))
           }
+          runtime.toolsRegistered = true
         } catch (error) {
-          console.error('[dsh-factory] tools not registered:', error instanceof Error ? error.message : String(error))
+          // All-or-nothing: undo every tool registered before the failure, then
+          // flip the signal. A partial set with toolsRegistered=false is worse
+          // than none — it hides which tools are actually live. Splice so the
+          // teardown below cannot dispose the same tools a second time.
+          for (const dispose of disposers.splice(0)) {
+            if (typeof dispose !== 'function') continue
+            try { dispose() } catch { /* best-effort rollback */ }
+          }
+          runtime.toolsRegistered = false
+          // Loud, greppable warning: a swallowed import used to leave the command
+          // and API working while the agent silently had no factory_* tools at all.
+          console.error('[dsh-factory] !!! MODEL-FACING TOOLS NOT REGISTERED — agents have NO factory_* tools.')
+          console.error('[dsh-factory] !!! Ensure package.json declares @deepseek-ai/dsh-tools as an optional peer and the host loader injects it.')
+          console.error('[dsh-factory] !!! cause:', error instanceof Error ? error.message : String(error))
         }
       })()
       return () => {
         cancelled = true
+        runtime.toolsRegistered = false
         for (const dispose of disposers) if (typeof dispose === 'function') dispose()
       }
     }, 'dsh-factory: tools')
