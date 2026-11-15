@@ -90,27 +90,16 @@ export function worktreePathFor(project, cardId) {
 }
 
 /**
- * Git environment with the repository-location variables removed.
- *
- * Inside a git hook (`husky`, CI) `GIT_DIR`, `GIT_WORK_TREE` and
- * `GIT_INDEX_FILE` point at the repository that is committing. They override
- * `-C`, so every git call made here would silently target that repository
- * instead of the card's own worktree — and a test that runs `git init` in a
- * temp directory would commit into the host repository. Strip them.
+ * Git environment with the repository-location variables removed. Delegates to
+ * the shared helper so worktree.js, git-exec.js and intake.js all strip the same
+ * set — a hook/CI parent exporting GIT_DIR or GIT_INDEX_FILE would otherwise
+ * override `-C` and silently target the committing repository instead of the
+ * card's worktree.
  */
-export function gitEnv(processEnv = process.env) {
-  const env = { ...processEnv }
-  delete env.GIT_DIR
-  delete env.GIT_WORK_TREE
-  delete env.GIT_INDEX_FILE
-  delete env.GIT_OBJECT_DIRECTORY
-  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES
-  delete env.GIT_COMMON_DIR
-  return env
-}
+export const gitEnv = cleanGitEnv
 
 function git(cwd, args) {
-  const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', env: gitEnv() })
+  const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', env: cleanGitEnv() })
   if (result.error) throw result.error
   return result
 }

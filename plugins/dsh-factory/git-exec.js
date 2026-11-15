@@ -15,6 +15,8 @@
  */
 import { spawnSync } from 'node:child_process'
 
+import { cleanGitEnv } from './git-env.js'
+
 export async function commitCard({ store, cardId, port, message = 'factory: implement card' } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
@@ -103,7 +105,9 @@ export async function createPrForCard({ store, cardId, port, title, body, protec
  * @param {{ credentialToken?: string, ghLoggedIn?: boolean }} [options]
  */
 export function buildGitEnv(processEnv = process.env, { credentialToken, ghLoggedIn = false } = {}) {
-  const env = { ...processEnv }
+  // A hook/CI parent may export GIT_DIR / GIT_INDEX_FILE etc.; those override
+  // `-C` and would redirect every child git call to the committing repository.
+  const env = cleanGitEnv(processEnv)
   if (typeof credentialToken === 'string' && credentialToken !== '') {
     delete env.GITHUB_TOKEN
     env.GH_TOKEN = credentialToken
@@ -129,7 +133,7 @@ export function buildGitEnv(processEnv = process.env, { credentialToken, ghLogge
  * Exposes `processEnv` so the decision is unit-testable.
  */
 export function probeEnv(processEnv = process.env) {
-  const probeEnvOut = { ...processEnv }
+  const probeEnvOut = cleanGitEnv(processEnv)
   delete probeEnvOut.GH_TOKEN
   delete probeEnvOut.GITHUB_TOKEN
   return probeEnvOut
@@ -148,8 +152,6 @@ export function probeGhLogin(processEnv = process.env) {
 export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
   const loggedIn = typeof ghLoggedIn === 'boolean' ? ghLoggedIn : probeGhLogin()
   const env = buildGitEnv(process.env, { credentialToken, ghLoggedIn: loggedIn })
-  // Inside a git hook these point at the committing repository and override cwd.
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR']) delete env[key]
   const run = (command, args, cwd) => {
     const result = spawnSync(command, args, { cwd, encoding: 'utf8', env })
     if (result.error) throw result.error

@@ -13,6 +13,8 @@
  */
 import { spawnSync } from 'node:child_process'
 
+import { cleanGitEnv } from './git-env.js'
+
 /** Stable identity for an issue, used both as the card source and the dedupe key. */
 export function issueSourceKey(repo, issue) {
   return `issue:${repo}#${Number(issue?.number)}`
@@ -78,7 +80,7 @@ export function createGhPort() {
       const result = spawnSync('gh', [
         'issue', 'list', '--repo', repo, '--state', 'open', '--limit', '100',
         '--json', 'number,title,body,url,labels',
-      ], { encoding: 'utf8' })
+      ], { encoding: 'utf8', env: cleanGitEnv() })
       if (result.error) throw result.error
       if (result.status !== 0) throw new Error(`gh issue list 失败：${(result.stderr || '').trim()}`)
       return result.stdout

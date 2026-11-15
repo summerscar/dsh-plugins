@@ -23,6 +23,7 @@
     "dispatch.js",
     "skills.js",
     "git-exec.js",
+    "git-env.js",
     "intake.js",
     "sync.js",
     "audit.js",

@@ -7,19 +7,12 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-
-// Git hooks export GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE, which override -C and
-// would make these temp-repo commands hit the host repository. Strip them.
-const CLEAN_ENV = (() => {
-  const env = { ...process.env }
-  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR']) delete env[k]
-  return env
-})()
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { cleanGitEnv } from '../git-env.js'
 import {
   DEFAULT_WORKTREE_ROOT,
   checkProjectRoot,
@@ -64,8 +57,8 @@ test('real git: create a worktree, detect dirt, refuse unforced remove, force-re
   const repo = join(tmp, 'repo')
   const worktreePath = join(tmp, 'worktrees', 'proj-1', 'card-1')
   try {
-    execFileSync('git', ['init', '-b', 'main', repo], { env: CLEAN_ENV })
-    execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { env: CLEAN_ENV })
+    execFileSync('git', ['init', '-b', 'main', repo], { env: cleanGitEnv() })
+    execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { env: cleanGitEnv() })
 
     const created = createWorktree({ repoPath: repo, worktreePath, branch: 'factory/card-1', baseBranch: 'main' })
     assert.equal(created.branch, 'factory/card-1')
@@ -94,12 +87,12 @@ test('a leftover branch from a failed dispatch does not block a retry; force-rem
   const worktreePath = join(tmp, 'worktrees', 'proj-1', 'card-2')
   const branch = 'factory/card-2'
   try {
-    execFileSync('git', ['init', '-b', 'main', repo], { env: CLEAN_ENV })
-    execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { env: CLEAN_ENV })
+    execFileSync('git', ['init', '-b', 'main', repo], { env: cleanGitEnv() })
+    execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { env: cleanGitEnv() })
 
     // Simulate the wreckage a failed dispatch used to leave: an orphan branch with
     // no worktree. `worktree add -b` would fail on this — createWorktree must clear it.
-    execFileSync('git', ['-C', repo, 'branch', branch], { env: CLEAN_ENV })
+    execFileSync('git', ['-C', repo, 'branch', branch], { env: cleanGitEnv() })
 
     const created = createWorktree({ repoPath: repo, worktreePath, branch, baseBranch: 'main' })
     assert.equal(created.branch, branch)
@@ -109,7 +102,7 @@ test('a leftover branch from a failed dispatch does not block a retry; force-rem
     // create (the retry) starts clean instead of hitting "already exists".
     removeWorktree({ repoPath: repo, worktreePath, force: true, branch })
     assert.equal(
-      execFileSync('git', ['-C', repo, 'branch', '--list', branch], { encoding: 'utf8', env: CLEAN_ENV }).trim(),
+      execFileSync('git', ['-C', repo, 'branch', '--list', branch], { encoding: 'utf8', env: cleanGitEnv() }).trim(),
       '',
       'branch deleted together with the worktree',
     )
@@ -120,31 +113,55 @@ test('a leftover branch from a failed dispatch does not block a retry; force-rem
   }
 })
 
-test('a git hook environment cannot redirect worktree git calls (GIT_DIR leak)', () => {
-  // Inside husky the committing repository is exported; without stripping it,
-  // every `git -C <temp repo>` below would target the host repository instead.
+test('a git hook environment cannot redirect worktree git calls (GIT_DIR leak)', { concurrency: false }, () => {
+  // husky exports the committing repository's GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+  // into the child process; they override `-C` and would make every git call here
+  // target that repository instead of our temp one. This test POLLUTES process.env
+  // for real (the production code reads process.env), so a regression in
+  // cleanGitEnv / worktree.git() actually fails.
   const tmp = mkdtempSync(join(tmpdir(), 'factory-wt-hook-'))
   const repo = join(tmp, 'repo')
   const worktreePath = join(tmp, 'worktrees', 'proj-1', 'card-hook')
   const polluted = {
-    ...process.env,
     GIT_DIR: '/nonexistent/host.git',
     GIT_WORK_TREE: '/nonexistent/host',
     GIT_INDEX_FILE: '/nonexistent/host.git/index',
+    GIT_OBJECT_DIRECTORY: '/nonexistent/host.git/objects',
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: '/nonexistent/host.git/objects',
+    GIT_COMMON_DIR: '/nonexistent/host.git',
   }
-  // The setup itself must run clean: even `git init` is redirected otherwise.
-  const run = (args) => execFileSync('git', args, { encoding: 'utf8', env: CLEAN_ENV })
+  const saved = {}
+  for (const key of Object.keys(polluted)) {
+    saved[key] = process.env[key]
+    process.env[key] = polluted[key]
+  }
+  // Setup must run clean (even `git init` is otherwise redirected), but the
+  // production paths under test must run with the polluted process.env.
+  const run = (args) => execFileSync('git', args, { encoding: 'utf8', env: cleanGitEnv() })
   try {
     run(['init', '-b', 'main', repo])
     run(['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])
+
+    // Control: with the hook variables intact, `git -C <temp repo>` really is
+    // redirected and fails. Without this assertion the test could pass vacuously.
+    assert.throws(
+      () => execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8', env: { ...process.env } }),
+      /index file open failed|not a git repository|Not a directory/i,
+      'the polluted env must genuinely break an uncleaned git call',
+    )
+
     // createWorktree strips the hook variables itself, so this must succeed even
-    // though the caller's environment points somewhere that does not exist.
+    // though process.env points at a repository that does not exist.
     const created = createWorktree({ repoPath: repo, worktreePath, branch: 'factory/card-hook', baseBranch: 'main' })
     assert.equal(created.branch, 'factory/card-hook')
-    assert.ok(existsSync(worktreePath), 'worktree created despite the polluted environment')
+    assert.ok(existsSync(worktreePath), 'worktree created despite the polluted process.env')
     removeWorktree({ repoPath: repo, worktreePath, force: true, branch: 'factory/card-hook' })
     assert.equal(existsSync(worktreePath), false)
   } finally {
+    for (const key of Object.keys(polluted)) {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    }
     rmSync(tmp, { recursive: true, force: true })
   }
 })
