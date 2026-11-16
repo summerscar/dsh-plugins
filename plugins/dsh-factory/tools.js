@@ -16,6 +16,7 @@
 import { STATUSES } from './state.js'
 import { assertRepoRoot, inspectRepo } from './project-proposal.js'
 import { defaultLsFilesPort, dropTrackedCopyFiles } from './worktree-setup.js'
+import { precheckReceipt } from './receipt.js'
 
 const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review', 'canceled']
 const ATTENTION_STATUSES = ['inbox', 'plan-review', 'review']
@@ -38,7 +39,7 @@ const CARD_SCHEMA = {
 const cardsArray = () => ({ type: 'array', items: CARD_SCHEMA })
 const cardsListSchema = (key) => ({ type: 'object', additionalProperties: false, properties: { [key]: cardsArray() } })
 
-export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort() } = {}) {
+export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort(), receiptPorts = {} } = {}) {
   if (store === undefined || store === null) throw new Error('factoryToolSpecs needs a store')
 
   // Per-session, per-card, per-target counter for no-op transitions. An agent
@@ -48,6 +49,38 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
   // lives in this factory's closure, so each test/get of specs starts clean.
   const noopTransitions = new Map()
   const noopKey = (exec, cardId, to) => `${exec?.agent?.id ?? '__sessionless__'}:${cardId}:${to}`
+
+  // Shared receipt definitions: the SAME schema + render object is used by the
+  // tool output and by the pre-write precheck, so the two can never drift (PRD §3.2).
+  const TRANSITION_OUTPUT = {
+    schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, status: { type: 'string' }, notice: { type: 'string' } } },
+    render: (args, value) => textBlock(value.notice ?? `Card ${value.id} is now ${value.status}.`),
+  }
+  const REPORT_OUTPUT = {
+    schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, reports: { type: 'integer' } } },
+    render: (args, value) => textBlock(`Recorded a report on ${value.id} (${value.reports} total).`),
+  }
+  const CREATE_OUTPUT = {
+    schema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        id: { type: 'string' },
+        name: { type: 'string' },
+        warning: { type: 'string' },
+        droppedCopyFiles: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    render: (args, value) => textBlock([
+      `Created project ${value.name} (${value.id}).`,
+      ...(value.warning ? [`Warning: ${value.warning}`] : []),
+      ...(value.droppedCopyFiles?.length
+        ? [`Dropped from copyFiles (already tracked by git, so a new worktree has them): ${value.droppedCopyFiles.join(', ')}`]
+        : []),
+    ].join('\n')),
+  }
+  const precheck = (name, output, args, value) => precheckReceipt({
+    name, schema: output.schema, render: output.render, args, value, ports: receiptPorts,
+  })
 
   return [
     {
@@ -77,10 +110,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         to: { type: 'string', required: true, enum: AGENT_TARGETS, description: 'Target status.' },
         note: { type: 'string', description: 'Short reason, recorded in the card log.' },
       },
-      output: {
-        schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, status: { type: 'string' }, notice: { type: 'string' } } },
-        render: (args, value) => textBlock(value.notice ?? `Card ${value.id} is now ${value.status}.`),
-      },
+      output: TRANSITION_OUTPUT,
       execute: async (args, exec) => {
         const card = store.getCard(args.cardId)
         if (card !== undefined && card !== null && card.status === args.to) {
@@ -93,12 +123,18 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
           const notice = seen > 2
             ? `Card ${args.cardId} is already ${args.to}. You have repeated this call ${seen} times — STOP calling factory_transition_work_item for this card and report your current status with factory_report instead.`
             : `Card ${args.cardId} is already ${args.to}; no transition needed. Do NOT repeat this call — do the work this stage requires instead.`
+          // Precheck the exact value the host will receipt, before returning it.
+          precheck('factory_transition_work_item', TRANSITION_OUTPUT, args, { id: args.cardId, status: args.to, notice })
           return { id: args.cardId, status: args.to, notice }
         }
         // A real state change resets the no-op counter for this card/target.
-        const moved = store.transitionCard(args.cardId, args.to, 'agent', args.note)
+        // Precheck the value BEFORE the write; if the receipt would fail, throw
+        // here so the store is never touched (write/receipt window closed).
+        const next = { id: args.cardId, status: args.to }
+        precheck('factory_transition_work_item', TRANSITION_OUTPUT, args, next)
+        store.transitionCard(args.cardId, args.to, 'agent', args.note)
         noopTransitions.delete(noopKey(exec, args.cardId, args.to))
-        return { id: moved.id, status: moved.status }
+        return next
       },
     },
     {
@@ -108,11 +144,12 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         cardId: { type: 'string', required: true, description: 'Card id.' },
         report: { type: 'string', required: true, description: 'The report text.' },
       },
-      output: {
-        schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, reports: { type: 'integer' } } },
-        render: (args, value) => textBlock(`Recorded a report on ${value.id} (${value.reports} total).`),
-      },
+      output: REPORT_OUTPUT,
       execute: async (args) => {
+        // Precheck a same-shape probe BEFORE the write: `reports` is an integer
+        // supplied by the store at write time, so 0 stands in for it — the
+        // schema and render only depend on its type, not its exact value.
+        precheck('factory_report', REPORT_OUTPUT, args, { id: args.cardId, reports: 0 })
         const { count } = store.appendReport(args.cardId, args.report, 'agent')
         return { id: args.cardId, reports: count }
       },
@@ -198,24 +235,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         copyFiles: { ...stringArray(), description: 'Relative local file paths to copy into each new worktree.' },
         postCreate: { type: 'string', description: 'Setup command run inside each new worktree; provided by the user, never a plugin default.' },
       },
-      output: {
-        schema: {
-          type: 'object', additionalProperties: false,
-          properties: {
-            id: { type: 'string' },
-            name: { type: 'string' },
-            warning: { type: 'string' },
-            droppedCopyFiles: { type: 'array', items: { type: 'string' } },
-          },
-        },
-        render: (args, value) => textBlock([
-          `Created project ${value.name} (${value.id}).`,
-          ...(value.warning ? [`Warning: ${value.warning}`] : []),
-          ...(value.droppedCopyFiles?.length
-            ? [`Dropped from copyFiles (already tracked by git, so a new worktree has them): ${value.droppedCopyFiles.join(', ')}`]
-            : []),
-        ].join('\n')),
-      },
+      output: CREATE_OUTPUT,
       execute: async (args = {}) => {
         // Creating a project is local and reversible, but it must still point at
         // a real git repository. Without this, an agent could register /etc or a
@@ -229,13 +249,20 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
           files: Array.isArray(args.copyFiles) ? args.copyFiles : [],
           port: lsFilesPort,
         })
+        const droppedPaths = cleaned.dropped.map((entry) => entry.path)
+        // Precheck BEFORE the write. The exact id/warning come from the store at
+        // write time, so use a same-shape probe with the fullest branch set
+        // (both optional fields present): if schema+render+lossless pass for
+        // this shape, the real value (a subset) passes the host receipt too.
+        precheck('factory_create_project', CREATE_OUTPUT, args, {
+          id: 'probe', name: args.name, warning: 'probe', droppedCopyFiles: droppedPaths.length ? droppedPaths : ['probe'],
+        })
         const project = store.createProject({
           name: args.name,
           rootPath,
           copyFiles: cleaned.files,
           postCreate: args.postCreate ?? '',
         })
-        const droppedPaths = cleaned.dropped.map((entry) => entry.path)
         return {
           id: project.id,
           name: project.name,

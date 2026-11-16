@@ -38,7 +38,7 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-16.36'
+export const BUILD = 'factory-2026-11-16.37'
 
 export const name = 'dsh-factory'
 
@@ -153,12 +153,23 @@ export function apply(ctx, config = {}) {
       const disposers = []
       void (async () => {
         try {
-          const [{ defineTool }, { factoryToolSpecs }] = await Promise.all([
+          const [{ defineTool, validateJsonSchemaValue }, { factoryToolSpecs }] = await Promise.all([
             import('@deepseek-ai/dsh-tools'),
             import('./tools.js'),
           ])
           if (cancelled) return
-          for (const spec of factoryToolSpecs({ store })) {
+          // Inject the host's PUBLIC schema validator into the write-before-
+          // receipt precheck so it is the EXACT function the host will run on
+          // the receipt (zero semantic drift). lossless checking uses the
+          // repo's default predicate — the host's snapshot helper is not a
+          // declared peer export. Precheck failures are logged, never silent.
+          const receiptPorts = {
+            ...(typeof validateJsonSchemaValue === 'function' ? { validateSchema: validateJsonSchemaValue } : {}),
+            onFailure: ({ tool, stage, reason }) => {
+              console.error(`[dsh-factory] receipt precheck blocked ${tool} (${stage}) before write: ${reason}`)
+            },
+          }
+          for (const spec of factoryToolSpecs({ store, receiptPorts })) {
             disposers.push(toolsService.register(defineTool(spec)))
           }
           runtime.toolsRegistered = true

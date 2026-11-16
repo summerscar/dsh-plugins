@@ -20,6 +20,7 @@
     "api.js",
     "commands.js",
     "tools.js",
+    "receipt.js",
     "session-context.js",
     "dispatch.js",
     "autonomy.js",
