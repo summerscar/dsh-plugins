@@ -66,6 +66,7 @@ References: [authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/
 
 - **No automatic git.** Without a person pressing the approval control on a card, the plugin never commits, pushes, opens a pull request or merges.
 - **Pausing and taking over are HTTP-only for now.** The engine can be paused globally (`POST /api/dsh-factory/engine/pause`, resumed with `.../resume`; running sessions are not interrupted), and a single card can be taken out of the engine's control (`POST /api/dsh-factory/cards/<card id>/takeover` — `takeover`, not `take-over`). Neither has a control in the interface yet.
+- **Remote status is suggestion-only.** `POST /api/dsh-factory/cards/<card id>/remote-sync` accepts a remote PR snapshot and only records a suggestion for a human: it never changes the card's column or approves its plan for you.
 - **No webhooks.** It uses `gh` and polling, so issue changes are not live; freshness follows the poll interval.
 - **GitHub only.** The GitLab review flow is not implemented.
 - **Single machine.** Built for a DSH running locally; it provides no multi-replica coordination.

@@ -16,6 +16,7 @@
 
 import { collectAudit } from './audit.js'
 import { inspectRepo } from './project-proposal.js'
+import { applyRemoteSync } from './sync.js'
 
 export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {} }) {
   return function handle(input = {}) {
@@ -137,6 +138,29 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         // reload cannot put it back (PRD §8). Never a project-wide pause.
         if (method === 'POST' && seg.length === 3 && seg[2] === 'takeover') {
           return ok({ card: store.takeOverCard(seg[1], 'human') })
+        }
+        // AE-2b remote-snapshot injection (controlled product entry). Feeds a
+        // remote PR fact to the EXISTING applyRemoteSync, which only records a
+        // suggestion and never changes the card's status. HARD CONSTRAINTS:
+        //   - Only `remote` is forwarded. `actor` / `status` / `target` / `to`
+        //     in the body are deliberately NOT read, so the caller cannot pick
+        //     an actor (fake autoRule) or a target column — deriveRemoteTarget
+        //     owns the target and sync.js owns the syncRule actor.
+        //   - pr.state is restricted to the known snapshot states; anything
+        //     else is a 400, not a silent suggestion. Errors are rethrown so the
+        //     outer catch returns the backend reason verbatim.
+        // Auth is inherited: every /api/dsh-factory route passed the host
+        // connection gate in index.js:111-124 (401 fail-closed) before here.
+        if (method === 'POST' && seg.length === 3 && seg[2] === 'remote-sync') {
+          const remote = body?.remote
+          const state = typeof remote?.pr?.state === 'string' ? remote.pr.state.toUpperCase() : ''
+          if (!['MERGED', 'CLOSED', 'OPEN'].includes(state)) {
+            throw new Error('remote.pr.state 必须是 MERGED / CLOSED / OPEN 之一')
+          }
+          // applyRemoteSync returns { changed:false, needsHuman:true, suggestion }
+          // when a suggestion is recorded, or { changed:false } when the state
+          // implies no column change (e.g. OPEN). No apply/force/approve exists.
+          return ok(applyRemoteSync({ store, cardId: seg[1], remote }))
         }
       }
 
