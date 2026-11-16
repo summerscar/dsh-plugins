@@ -13,6 +13,10 @@
  * `buildSessionContext` is pure and unit-tested; `attachSessionContext` performs
  * the registration and is tested against a fake `agent.ctx`.
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { defaultSkillsDir, parseSkillMarkdown } from './skills.js'
 import { nextStatuses } from './state.js'
 
 const APPROVED_PHASES = new Set(['build', 'review', 'done'])
@@ -43,6 +47,30 @@ function planStatusOf(status) {
   if (APPROVED_PHASES.has(status)) return 'approved'
   if (status === 'plan') return 'submitted'
   return 'none'
+}
+
+/**
+ * Read one packaged skill's BODY (frontmatter stripped) from `skills/<name>/SKILL.md`.
+ * Returns the body string, or null when the file is missing/unreadable — a read
+ * failure must NEVER break dispatch, so callers soft-fall back to the plain
+ * section text. The filesystem access is an injectable port so this stays
+ * offline-testable without touching the real disk.
+ *
+ * @param {string} skillName
+ * @param {{ skillsDir?: string, readFileSync?: (path: string, enc: string) => string }} [port]
+ * @returns {string|null}
+ */
+export function readSkillBody(skillName, port = {}) {
+  if (typeof skillName !== 'string' || skillName === '') return null
+  const dir = typeof port.skillsDir === 'string' && port.skillsDir !== '' ? port.skillsDir : defaultSkillsDir()
+  const read = typeof port.readFileSync === 'function' ? port.readFileSync : readFileSync
+  try {
+    const raw = read(join(dir, skillName, 'SKILL.md'), 'utf8')
+    const { content } = parseSkillMarkdown(raw)
+    return typeof content === 'string' && content.trim() !== '' ? content : null
+  } catch {
+    return null
+  }
 }
 
 function repoOf(card, project) {
@@ -102,7 +130,7 @@ export function buildSessionContext({ card, project } = {}) {
     ...(fields.skill === null
       ? ['This phase is waiting for a human or is terminal — do NOT advance it yourself.']
       : [
-          `Load the \`${fields.skill}\` skill FIRST and follow it for this phase — load the skill before doing anything else.`,
+          `Read the \`${fields.skill}\` skill below first — its full instructions are included for this phase.`,
           `The \`${fields.skill}\` skill defines what this stage must produce. Advance the card with factory_transition_work_item and report with factory_report. Never commit, push or open a PR yourself — a human does that.`,
         ]),
   ].join('\n')
@@ -116,7 +144,7 @@ export function buildSessionContext({ card, project } = {}) {
     ...(fields.skill === null
       ? ['This phase waits for a human or is terminal — do not advance it yourself.']
       : [
-          `Load the \`${fields.skill}\` skill FIRST, before doing anything else, and follow it for this phase.`,
+          `Read and follow the \`${fields.skill}\` skill for this phase first — its instructions are in your system context (skill: ${fields.skill}).`,
           `Work inside ${show(fields.worktreePath)}. The \`${fields.skill}\` skill defines what this stage must produce; use factory_transition_work_item to advance and factory_report to report. Do not commit/push/open a PR.`,
         ]),
   ].join('\n')
@@ -145,11 +173,20 @@ const DEFAULT_ORDER = 60
  *
  * @param {{ agentCtx: object, store: import('./store.js').FactoryStore, cardId: string }} args
  */
-export function attachSessionContext({ agentCtx, store, cardId } = {}) {
+export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill } = {}) {
   const systemPrompt = agentCtx?.systemPrompt
   if (systemPrompt === undefined || systemPrompt === null) {
     throw new Error('attachSessionContext needs an agent context exposing systemPrompt')
   }
+
+  // Resolve the skill body for the CURRENT phase, lazily, via an injectable port.
+  // The factory builds top-level agents through agents.create(), which does NOT
+  // mount a preset — so the dispatched session has no `skill` tool. The skill
+  // body therefore has to be delivered through THIS systemPrompt section (the
+  // same channel factory_repo/cardId use), not by asking the agent to load it.
+  const readBody = typeof readSkill === 'function'
+    ? readSkill
+    : (name) => readSkillBody(name, { skillsDir })
 
   const current = () => {
     const card = store.getCard(cardId)
@@ -185,7 +222,18 @@ export function attachSessionContext({ agentCtx, store, cardId } = {}) {
       order,
       text: () => {
         const built = current()
-        return built === null ? '' : built.sectionText
+        if (built === null) return ''
+        if (built.skill === null) return built.sectionText
+        // Only the CURRENT phase's skill, never all seven. Wrapped in the same
+        // <skill_content> shape the host uses, so the model sees one canonical
+        // block. A failed read degrades to "body unavailable" — dispatch must
+        // not break because a packaged file is missing.
+        let body = null
+        try { body = readBody(built.skill) } catch { body = null }
+        if (typeof body !== 'string' || body.trim() === '') {
+          return `${built.sectionText}\n\n(技能正文不可用：读取 \`${built.skill}\` 失败，按上面的阶段说明执行。)`
+        }
+        return `${built.sectionText}\n\n<skill_content name="${built.skill}">\n${body}\n</skill_content>`
       },
     }))
   }
