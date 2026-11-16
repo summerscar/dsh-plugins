@@ -41,6 +41,14 @@ const cardsListSchema = (key) => ({ type: 'object', additionalProperties: false,
 export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort() } = {}) {
   if (store === undefined || store === null) throw new Error('factoryToolSpecs needs a store')
 
+  // Per-session, per-card, per-target counter for no-op transitions. An agent
+  // stuck in a loop calling `to` == current status must be told to stop, not fed
+  // an error it will retry. Keyed by agent id (session) when the host supplies
+  // `exec`, with a sessionless fallback so pure unit tests still work. The Map
+  // lives in this factory's closure, so each test/get of specs starts clean.
+  const noopTransitions = new Map()
+  const noopKey = (exec, cardId, to) => `${exec?.agent?.id ?? '__sessionless__'}:${cardId}:${to}`
+
   return [
     {
       name: 'factory_list_work_items',
@@ -70,12 +78,27 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         note: { type: 'string', description: 'Short reason, recorded in the card log.' },
       },
       output: {
-        schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, status: { type: 'string' } } },
-        render: (args, value) => textBlock(`Card ${value.id} is now ${value.status}.`),
+        schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, status: { type: 'string' }, notice: { type: 'string' } } },
+        render: (args, value) => textBlock(value.notice ?? `Card ${value.id} is now ${value.status}.`),
       },
-      execute: async (args) => {
-        const card = store.transitionCard(args.cardId, args.to, 'agent', args.note)
-        return { id: card.id, status: card.status }
+      execute: async (args, exec) => {
+        const card = store.getCard(args.cardId)
+        if (card !== undefined && card !== null && card.status === args.to) {
+          // Idempotent no-op: never throw the "illegal transition" error that an
+          // agent reads as "I did it wrong, retry". After two repeats, say so
+          // plainly so the loop cannot keep burning tokens on the same call.
+          const key = noopKey(exec, args.cardId, args.to)
+          const seen = (noopTransitions.get(key) ?? 0) + 1
+          noopTransitions.set(key, seen)
+          const notice = seen > 2
+            ? `Card ${args.cardId} is already ${args.to}. You have repeated this call ${seen} times — STOP calling factory_transition_work_item for this card and report your current status with factory_report instead.`
+            : `Card ${args.cardId} is already ${args.to}; no transition needed. Do NOT repeat this call — do the work this stage requires instead.`
+          return { id: args.cardId, status: args.to, notice }
+        }
+        // A real state change resets the no-op counter for this card/target.
+        const moved = store.transitionCard(args.cardId, args.to, 'agent', args.note)
+        noopTransitions.delete(noopKey(exec, args.cardId, args.to))
+        return { id: moved.id, status: moved.status }
       },
     },
     {
