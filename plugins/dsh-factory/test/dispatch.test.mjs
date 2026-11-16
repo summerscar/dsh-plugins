@@ -158,9 +158,16 @@ test('createHostPort sends the first message as a real user message (not a bare 
   const seen = {}
   const fakeAgent = { followup: (message) => { seen.message = message } }
   const ctx = {
-    get: (name) => (name === 'agents'
-      ? { create: async (options) => { seen.create = options; return { agent: fakeAgent, dispose: async () => {} } } }
-      : undefined),
+    get: (name) => {
+      if (name === 'agents') {
+        return { create: async (options) => { seen.create = options; return { agent: fakeAgent, dispose: async () => {} } } }
+      }
+      // createSession fail-fast needs a model route; provide the host default service.
+      if (name === 'agentDefaultModel') {
+        return { currentSelection: () => ({ provider: 'test-provider', model: 'test-model' }) }
+      }
+      return undefined
+    },
   }
   // Inject a createUserMessage so the test does not depend on the host peer.
   const port = createHostPort({ ctx, createUserMessage: ({ content, source }) => ({ id: 'msg-1', role: 'user', content, source }) })
@@ -172,5 +179,42 @@ test('createHostPort sends the first message as a real user message (not a bare 
   assert.equal(seen.message.role, 'user', 'followup gets a user-role message')
   assert.deepEqual(seen.message.source, { kind: 'user' })
   assert.deepEqual(seen.message.content, [{ type: 'text', text: 'do the task' }])
+})
+
+test('createHostPort fail-fast: no model route rejects BEFORE creating a session', async () => {
+  let createCalls = 0
+  const ctx = {
+    get: (name) => (name === 'agents'
+      ? { create: async () => { createCalls += 1; return { agent: { followup() {} }, dispose: async () => {} } } }
+      : undefined),
+  }
+  const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  // No agentDefaultModel, no model override -> must fail before agents.create.
+  await assert.rejects(
+    () => port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'do the task' }),
+    /模型/,
+  )
+  assert.equal(createCalls, 0, 'fail-fast must reject before any session is created')
+})
+
+test('createHostPort model route: project model overrides only the model part, provider follows host', async () => {
+  const seen = {}
+  const ctx = {
+    get: (name) => {
+      if (name === 'agents') {
+        return { create: async (options) => { seen.create = options; return { agent: { followup() {} }, dispose: async () => {} } } }
+      }
+      if (name === 'agentDefaultModel') {
+        return { currentSelection: () => ({ provider: 'host-provider', model: 'host-model', reasoningEffort: 'high' }) }
+      }
+      return undefined
+    },
+  }
+  const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', model: 'project-model' })
+  const opts = seen.create.agentOptions
+  assert.equal(opts.provider, 'host-provider', 'provider follows the host default')
+  assert.equal(opts.model, 'project-model', 'project override wins for model')
+  assert.equal(opts.reasoningEffort, 'high', 'effort follows the host default')
 })
 

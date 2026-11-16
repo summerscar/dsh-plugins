@@ -277,9 +277,13 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
  *     dsh-headless index.ts:420. A bare `{ content }` object is not a valid message.
  *
  * `createUserMessage` is the host `@deepseek-ai/dsh-llm` peer, loaded via dynamic
- * import with a minimal fallback shape. `permission`/`model` on createSession are
- * accepted but not yet wired into the live session (PRD §12 option surface); they
- * do not block dispatch.
+ * import with a minimal fallback shape. The model route is wired into the live
+ * session through `agentOptions`: it follows the host's default-model service
+ * using live getters (the same pattern the UI entry uses), and a project-level
+ * `defaultModel` overrides only the model id. Dispatch fails fast when neither
+ * source can provide a route, so the failure is recorded on the card instead of
+ * leaving a session that silently does nothing. `permission` is accepted for API
+ * compatibility but is not wired into the live session yet.
  */
 let cachedCreateUserMessage = null
 async function resolveCreateUserMessage() {
@@ -299,6 +303,17 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
   const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
   if (agents === undefined || agents === null || typeof agents.create !== 'function') {
     throw new Error('host has no agents service; cannot dispatch a session')
+  }
+  // User-configured default route. Read via ctx.get, never ctx.agentDefaultModel:
+  // an undeclared Cordis proxy property throws. The read is wrapped so a service
+  // present but throwing still degrades into a clean "no model" dispatch failure.
+  const defaultModel = typeof ctx?.get === 'function' ? ctx.get('agentDefaultModel') : undefined
+  const readDefaultSelection = () => {
+    try {
+      return typeof defaultModel?.currentSelection === 'function'
+        ? defaultModel.currentSelection()
+        : undefined
+    } catch { return undefined }
   }
 
   /** Deliver one message to an agent handle, as a real user message. */
@@ -331,9 +346,25 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
       return { sessionId }
     },
 
-    async createSession({ cwd, setup, firstMessage }) {
+    async createSession({ cwd, setup, firstMessage, model: projectModel }) {
+      // Fail fast instead of leaning on the loop's silent catch: with no route a
+      // session would start, do nothing, and never report why. AgentModel.current()
+      // needs BOTH provider and model; projectModel only overrides the model part.
+      const selection = readDefaultSelection()
+      const provider = selection?.provider
+      const model = projectModel ?? selection?.model
+      if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
+        throw new Error('无法派发会话：没有可用的模型路由（宿主默认模型和项目 defaultModel 均不可用）')
+      }
+      // Live getters mirror the host UI's agentOptions(): each read follows the
+      // current default selection, so changing the default later is reflected.
+      const agentOptions = {
+        get provider() { return readDefaultSelection()?.provider },
+        get model() { return projectModel ?? readDefaultSelection()?.model },
+        get reasoningEffort() { return readDefaultSelection()?.reasoningEffort },
+      }
       const sessionId = randomUUID()
-      const handle = await agents.create({ sessionId, meta: { cwd }, setup })
+      const handle = await agents.create({ sessionId, meta: { cwd }, agentOptions, setup })
       try {
         await send(handle, firstMessage)
       } catch (error) {
