@@ -29,8 +29,8 @@ import { createGhPort, intakeIssues } from './intake.js'
 
 /** Conservative, overridable defaults. Never hard-code a host-specific path/command. */
 export const DEFAULT_TICK_MS = 60_000
-export const DEFAULT_GLOBAL_MAX_ACTIVE = 4
-export const DEFAULT_PROJECT_MAX_ACTIVE = 2
+export const DEFAULT_GLOBAL_MAX_ACTIVE = 5
+export const DEFAULT_PROJECT_MAX_ACTIVE = 5
 
 /** Stable governance identifiers written into card history / audit events. */
 export const AUTO_TIER = 'L1'

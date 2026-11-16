@@ -116,6 +116,7 @@ export function buildSessionContext({ card, project } = {}) {
   }
   const sectionText = [
     'You are working on exactly ONE factory card. Do not touch any other card.',
+    'Advance through the agent-owned stages (\`triage\`, \`plan\`, \`build\`, \`review\`) continuously within this single session — finish the current stage and move the card yourself; do not end your turn expecting another session to take over. Only \`plan-review\`, \`done\` and \`canceled\` are stop-and-wait states where a human acts.',
     `- cardId: ${fields.cardId}`,
     `- title: ${fields.title}`,
     `- phase: ${fields.phase}`,
@@ -140,6 +141,7 @@ export function buildSessionContext({ card, project } = {}) {
     `phase: ${fields.phase}`,
     `worktree: ${show(fields.worktreePath)}`,
     `repo: ${show(fields.repo)}${fields.branch ? ` (branch ${fields.branch})` : ''}`,
+    'Stages triage / plan / build / review continue in this same session — finish the current one and advance the card yourself; only plan-review / done / canceled wait for a human.',
     '',
     ...(fields.skill === null
       ? ['This phase waits for a human or is terminal — do not advance it yourself.']

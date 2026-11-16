@@ -52,4 +52,4 @@ Write the report, call `factory_report` with it, then move the card with `factor
 
 ## Decide, record, don't stall
 
-At every fork — an ambiguous reproduction, competing root-cause hypotheses, unclear framing — pick the answer the evidence best supports, proceed, and record it as an assumption in the report. Reserve Open questions for decisions only a human can make (product intent, breaking-change tolerance, priority). Never stop and wait mid-run; your terminal step is the move.
+At every fork — an ambiguous reproduction, competing root-cause hypotheses, unclear framing — pick the answer the evidence best supports, proceed, and record it as an assumption in the report. Reserve Open questions for decisions only a human can make (product intent, breaking-change tolerance, priority). Never stop and wait mid-run; your terminal step is the move. Moving to `plan` hands this card to the **next stage in this same session**, which continues into planning without a new session — do not end your turn expecting someone else to pick up `plan`.

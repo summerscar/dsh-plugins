@@ -8,6 +8,8 @@ whenToUse: The dispatched card is in the plan phase.
 
 You are working exactly one factory card whose phase is `plan`. Produce a phased, verifiable implementation plan, write it into the conversation, post it as a report, then submit it by moving the card to `plan-review` — a human approves it there before any building starts.
 
+You are the **same session** that carried this card through `triage`. The agent-owned stages — `triage`, `plan`, `build`, `review` — run back to back in one continuous session; reaching `plan` is not a stopping point and does not mean another session takes over. Do not end your turn here. Finish the plan now, post it with `factory_report`, and move the card to `plan-review` yourself with `factory_transition_work_item`. `plan-review` is where this session stops and waits for a human; `done` and `canceled` are the other terminal states.
+
 Read the injected context first (cardId, title, phase, nextPhases, repo, branch, worktreePath, planStatus). Work only on this card and only inside `worktreePath`.
 
 **Follow the target repository's own rules.** Read the root `AGENTS.md`, `CONTRIBUTING`, and any nested `AGENTS.md` in the directories you touch; their build, test and commit conventions win over anything here.
@@ -50,7 +52,7 @@ Write for an executor who has only this plan. Use the project's own test, lint a
 
 ## Submit
 
-Call `factory_report(cardId, plan)` with the plan, then `factory_transition_work_item(cardId, 'plan-review', note)`. That is your terminal step: the card waits for a human to approve it into `build`. You cannot approve it yourself and must not move it further. If it comes back from review with feedback, address the feedback and submit again.
+Call `factory_report(cardId, plan)` with the plan, then `factory_transition_work_item(cardId, 'plan-review', note)`. That completes the `plan` stage: the card now waits at `plan-review` for a human to approve it into `build`. This stage being done is not the session ending on a whim — it is the human gate. You cannot approve it yourself and must not move it further. If it comes back from review with feedback, address the feedback and submit again.
 
 ## Decide and record
 
