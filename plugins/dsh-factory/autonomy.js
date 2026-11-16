@@ -176,6 +176,9 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           const result = await deps.intake({
             store, projectId: project.id, boardId, repo,
             ghPort: deps.ghPort, origin: intakeOrigin(),
+            // Per-project poll cap; null/undefined means "port default (100)".
+            // Bounds a single tick against a busy upstream (no card flood).
+            limit: Number.isInteger(project.intakeLimit) && project.intakeLimit > 0 ? project.intakeLimit : undefined,
           })
           report.intakeCreated = Array.isArray(result?.created) ? result.created.length : 0
         } catch (error) {

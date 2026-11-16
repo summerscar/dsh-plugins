@@ -86,7 +86,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'PATCH' && seg.length === 2) {
           const wantsAutonomy = ['autonomy', 'autoStart', 'autoApprove'].some((key) => key in body)
           const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
-          const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions'].some((key) => key in body)
+          const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions', 'intakeLimit'].some((key) => key in body)
           const kinds = [wantsAutonomy, wantsPreparation, wantsIntake].filter(Boolean).length
           if (kinds > 1) {
             return { status: 400, body: { error: 'autonomy / preparation / intake 字段不能在同一次 PATCH 里混改' } }

@@ -135,7 +135,13 @@ function normalizeIntake(input, current = {}) {
   if (maxActive !== null && (!Number.isInteger(maxActive) || maxActive < 1)) {
     throw new Error('maxActiveSessions 必须是正整数或 null')
   }
-  return { issueRepo: repo, intakeBoardId: boardId, maxActiveSessions: maxActive }
+  // Per-poll issue cap. null means "use the port default (100)". A small value
+  // stops a busy upstream from flooding the board in one tick.
+  const intakeLimit = pick('intakeLimit')
+  if (intakeLimit !== null && (!Number.isInteger(intakeLimit) || intakeLimit < 1)) {
+    throw new Error('intakeLimit 必须是正整数或 null')
+  }
+  return { issueRepo: repo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit }
 }
 
 export function emptyState() {

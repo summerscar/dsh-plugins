@@ -57,7 +57,7 @@ export function selectNewIssues(issues, existingSourceKeys) {
  * Poll one repo and turn new issues into Inbox cards.
  * @returns {{ created: string[], skipped: number }}
  */
-export async function intakeIssues({ store, projectId, boardId, repo, ghPort, origin } = {}) {
+export async function intakeIssues({ store, projectId, boardId, repo, ghPort, origin, limit } = {}) {
   if (typeof repo !== 'string' || repo.trim() === '') throw new Error('intakeIssues 需要 repo')
   if (typeof boardId !== 'string' || boardId === '') throw new Error('intakeIssues 需要 boardId')
   const existing = projectId === undefined ? store.listCards({}) : store.listCards({ projectId })
@@ -69,7 +69,10 @@ export async function intakeIssues({ store, projectId, boardId, repo, ghPort, or
   // session-context falls back to the project -- never a fabricated path.
   const project = projectId === undefined ? undefined : store.getProject(projectId)
   const repoPath = typeof project?.rootPath === 'string' && project.rootPath !== '' ? project.rootPath : undefined
-  const raw = await ghPort.listIssues(repo)
+  // `limit` bounds how many issues one poll asks for (the port default stays 100).
+  // Without it, pointing at a busy upstream floods the board with up to 100 cards
+  // in one tick, each of which the engine then dispatches as a real session.
+  const raw = await ghPort.listIssues(repo, limit === undefined ? {} : { limit })
   const issues = parseIssueList(repo, raw)
   const fresh = selectNewIssues(issues, existingKeys)
   const created = []
@@ -82,12 +85,13 @@ export async function intakeIssues({ store, projectId, boardId, repo, ghPort, or
   return { created, skipped: issues.length - fresh.length }
 }
 
-/** Real gh port: one `gh issue list --json` call per repo. */
-export function createGhPort() {
+/** Real gh port: one `gh issue list --json` call per repo. `limit` defaults to 100. */
+export function createGhPort({ limit = 100 } = {}) {
   return {
-    listIssues(repo) {
+    listIssues(repo, options = {}) {
+      const effective = Number.isInteger(options.limit) && options.limit > 0 ? options.limit : limit
       const result = spawnSync('gh', [
-        'issue', 'list', '--repo', repo, '--state', 'open', '--limit', '100',
+        'issue', 'list', '--repo', repo, '--state', 'open', '--limit', String(effective),
         '--json', 'number,title,body,url,labels',
       ], { encoding: 'utf8', env: cleanGitEnv() })
       if (result.error) throw result.error

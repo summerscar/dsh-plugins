@@ -146,6 +146,8 @@
 | 删除项目无界面入口 | 只能调 HTTP 接口删（`client.js` 无 DELETE 调用） | P4 界面一起做 |
 | 删项目不清 worktree | `deleteProject` 只删登记，worktree 根下残留目录 | 低影响，P4 一起处理 |
 | **README 夸大了卡片的仓库覆盖能力（既有文档与代码不一致）** | README 中英两句写「卡片可以覆盖它运行所用的仓库」，但 `dispatch.js:112` 的 `createWorktree` 用的是 `project.rootPath`，`card.repo` **从未**影响过实际运行仓库——它只影响注入会话上下文的仓库标识。与本次字段拆分无关，是既有的错误陈述 | **Docs 待改**：拆完 `repoPath` 后改成准确说法——卡片能覆盖的是**注入会话的仓库标识 / 路径提示**，worktree 仍由项目根决定。改完从本表划掉 |
+| **intake 拉取数量写死 `--limit 100`** | `intake.js` 硬编码上限，去重只与已有卡比。指向 issue 很多的繁忙上游时，一次 tick 就能往看板灌进最多 100 张卡，随后引擎按并发上限逐张自动派发，每张都真起 agent 会话 | **本轮修**：改为项目级可配的 `intakeLimit`（默认 100 保持向后兼容），由引擎 tick 传给 `intakeIssues`。这是真产品缺口，不是为测试绕过。待 QA 验「设成 N 只建 N 张」「不设仍默认 100」后视为已修 |
+| **intake 无 label 过滤** | 只能按「全部 open issue」拉，不能只拉指定 label 的 issue；配合不限量的上游仓仍可能拉进大量无关 issue | 保留为缺口，本轮不做（与 `intakeLimit` 是两个功能，别混）。可用 `intakeLimit` 先压量兜底 |
 
 ## 6. 调研依据（摘要，避免重复调研）
 
