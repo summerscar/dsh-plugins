@@ -186,6 +186,8 @@ This plugin does not fork any existing implementation. It compared two reference
 
 Conclusion: **take the skeleton from A** (card = own session, worktree isolation, watchdog), **the gate and review discipline from B**, and **build multi-project support ourselves** (A cannot do it, and B's way of doing it is too heavy for a single machine).
 
+The wider comparison that followed — feature strengths and weaknesses across several factory-style products, the Mastra Factory UI anchor, and what later phases should adopt or skip — lives in [RESEARCH.md](RESEARCH.md) / [RESEARCH.zh-CN.md](RESEARCH.zh-CN.md). Its conclusions feed the phases in §4; it is a decision input, not a restatement of this section.
+
 ## 7. How to contribute
 
 - Read the conventions at the repository root and in the plugin directory before touching code.

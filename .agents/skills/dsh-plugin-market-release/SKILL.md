@@ -180,11 +180,26 @@ node .agents/skills/dsh-plugin-market-release/scripts/entry.mjs \
 
 退出码 `2` 表示 npm 的 `repository` 没认回本仓——先去修 `package.json` 再投递，否则市场关联不上包。
 
-### 两个市场目前的登记点
+### 三个市场目前的登记点
+
+各市场独立审核、节奏互不等待；下表是「截至 2026-11-17 复核」的落地状态。版本号会随发版过期——下次发版后回来刷新写死版本的那几行（awesome 条目、radar 表行、index issue 已关闭则补评论）。
+
+**agent-scope（`@summerscar/dsh-connect-agentscope-platform`，已发 3 个市场）**
+
+| 市场 | 条目 / 登记点 | 状态 | 版本锚定 |
+| --- | --- | --- | --- |
+| awesome-dsh-plugin | `data/plugins/summerscar__dsh-plugins--plugins-dsh-connect-agentscope-platform.yml` | 已收录（条目文件已入 main） | 0.1.4 |
+| dsh-plugin-index | issue #485（`[plugin-add] @summerscar/dsh-connect-agentscope-platform`） | 已收录（#485 已关闭，0.1.4 复核通过） | 0.1.4 |
+| dsh-plugin-radar | issue #1525（`docs: 登记`，同单含 mnemon-sync） | open、0 评论、未打标签，维护者排队中 | 0.1.4 / mnemon 0.1.16 |
+
+radar 复核要点：issue 正文按 `docs/CATALOGING.md` 手写分类（模型接入→🛠 基建部署，没用 classify.py 撞偏），scope 已如实交代 `@summerscar/*` 非 `@dsh-external/*`（引表内先例）；两行运行级填「待测」等对方 k8s 实测。下次发 0.1.5 时，回 #1525 补一条版本评论即可。
+
+**mnemon-sync（`@summerscar/dsh-mnemon-sync`）**
 
 | 市场 | 对象 | 说明 |
 | --- | --- | --- |
 | awesome-dsh-plugin | 已有条目 `data/plugins/summerscar__dsh-plugins--plugins-dsh-mnemon-sync.yml` | 首次收录的 PR 已合并；之后再改描述/分类，另开 PR 只动这一个文件 |
 | dsh-plugin-index | issue 已关闭（已收录） | 版本号变化时在 issue 里补一条评论即可，不用重开 |
+| dsh-plugin-radar | issue #1525（与 agent-scope 同单） | 运行级「待测」 |
 
-新增插件时按上面的投递形态各来一次，两者节奏独立，不必等对方一起。
+新增插件时按上面的投递形态各来一次，各市场节奏独立，不必等对方一起。

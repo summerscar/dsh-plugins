@@ -38,6 +38,7 @@
 | 插件站点与市场索引的规则 | [site/AGENTS.md](site/AGENTS.md) | `catalog.json`、渲染与构建、`index.json`、部署。 |
 | 生命周期阶段、晋级、npm 发布流程 | [RELEASING.md](RELEASING.md) / [RELEASING.zh-CN.md](RELEASING.zh-CN.md) | `draft` → `testing` → `published`、首次发布、Trusted Publishing、发布冻结。 |
 | 工厂的目标、已定取舍、分期、已知缺口与调研依据 | [ROADMAP.md](plugins/dsh-factory/docs/ROADMAP.md) / [ROADMAP.zh-CN.md](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) | 设计理由与每个决定背后的原因；实现细节留在源码。 |
+| 竞品对比：功能优劣、Mastra UI 锚点、后续分期该抄什么与不做什么 | [RESEARCH.md](plugins/dsh-factory/docs/RESEARCH.md) / [RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) | 多项目对比及其取舍；指回消费这些结论的路线图分期。 |
 | 怎么把插件投递到两个社区市场 | [`.agents/skills/dsh-plugin-market-release/SKILL.md`](.agents/skills/dsh-plugin-market-release/SKILL.md) | 两种投递形态、字段规则、返修与改名流程。 |
 | 怎么发 npm、推进生命周期 | [`.agents/skills/npm-plugin-release/SKILL.md`](.agents/skills/npm-plugin-release/SKILL.md) | 发布工作流、OIDC、提交推送前的同步。 |
 | 怎么在真机上验证插件 | [`.agents/skills/dsh-plugin-live-verification/SKILL.md`](.agents/skills/dsh-plugin-live-verification/SKILL.md) | 宿主契约、静默降级、环境变量路径、取证纪律。 |
