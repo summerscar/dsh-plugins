@@ -6,10 +6,16 @@ name: Pages
 # serve a Jekyll-rendered root README instead of this site.
 #
 # A push to main is the only automatic trigger. The publish workflow's own
-# `commit` step pushes to main, which triggers this workflow naturally — an
-# extra workflow_run trigger would start two concurrent Pages runs that both
-# upload an artifact named "github-pages", making one deploy fail with
-# "No artifacts named github-pages were found".
+# `commit` step pushes to main, which triggers this workflow naturally. Do not
+# add a `workflow_run` trigger: a Pages deployment can only consume the
+# `github-pages` artifact that *its own* run uploaded, so a `workflow_run`
+# child cannot run `deploy-pages` at all (GitHub rejects it with "No artifacts
+# named github-pages were found"), and two push-triggered runs would race the
+# same artifact name. Ordering after publish is therefore enforced *inside*
+# this run, not via a second trigger: the "Wait for npm registry freshness"
+# step blocks until the packument CDN's `dist-tags.latest` has caught up with
+# the versions the publish flow just committed to index.json, so the site build
+# reads the freshest version instead of a stale replica.
 on:
   push:
     branches: [main]
@@ -41,6 +47,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm site:test
+      # Block until the packument CDN reports the version the publish flow just
+      # committed to index.json as `dist-tags.latest`. On an ordinary
+      # code-only push this passes on the first poll (index.json already equals
+      # the live registry); only a just-published push adds wait time. A
+      # lingering lag is non-fatal: it warns and builds the latest available
+      # version, and the next publish re-triggers this flow to self-heal.
+      - name: Wait for npm registry freshness
+        run: node site/fresh.mjs --timeout 300000 --poll 15000
       - run: pnpm site:build
       # render.mjs writes _site/.nojekyll; assert it so a regression cannot
       # silently let Jekyll take over the deployed site.

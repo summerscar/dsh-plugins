@@ -19,6 +19,7 @@
     "release:docs": "node scripts/release-status.mjs --write-docs",
     "release:fingerprint": "node scripts/release-status.mjs --fingerprint",
     "site:build": "node site/build.mjs",
+    "site:fresh": "node site/fresh.mjs",
     "site:market": "node site/market.mjs",
     "site:market:check": "node site/market.mjs --check",
     "site:test": "node --test site/*.test.mjs",
