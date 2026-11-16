@@ -11,6 +11,14 @@
  *   interval. Two timers can never overlap into a double upload.
  * - The interval is re-read from disk on every tick, so saving settings
  *   changes the cadence without restarting the process.
+ * - Arming compares the interval against the *last completed run* (`lastRunAt`),
+ *   not against the arming moment, so a Host restart or a settings save that
+ *   re-arms the timer catches up immediately when the due time already passed.
+ *   The check is deferred one minute rather than running at startup: the first
+ *   minute after a boot is the busiest, and an eager upload would compete with
+ *   everything else for I/O and network. The next scheduled tick then falls in
+ *   line with the last run that actually happened, and the settings page's
+ *   `nextAt` reports the same deferred-or-scheduled time the timer holds.
  * - A tick that fires while a run is in flight is dropped, not queued: a slow
  *   target must not build a backlog of pending uploads.
  * - Failures are recorded and swallowed. A timer is the last place that should
@@ -115,6 +123,7 @@ export class SyncScheduler {
     this.lastAttemptAt = undefined
     this.lastRunAt = undefined
     this.lastAt = undefined
+    this.nextAt = undefined
     this.lastError = undefined
     this.lastFailure = undefined
   }
@@ -154,9 +163,9 @@ export class SyncScheduler {
       available,
       autoSyncMinutes: minutes,
       ...this.lastAt === undefined ? {} : { lastAt: this.lastAt },
-      ...this.lastAttemptAt === undefined || !available
+      ...this.nextAt === undefined || !available
         ? {}
-        : { nextAt: new Date(this.lastAttemptAt + minutes * MINUTE_MS).toISOString() },
+        : { nextAt: this.nextAt },
       ...this.lastError === undefined ? {} : { lastError: this.lastError },
       ...this.lastError === undefined || this.lastFailure === undefined
         ? {}
@@ -171,17 +180,36 @@ export class SyncScheduler {
     try {
       settings = this.readSettings()
     } catch {
+      this.nextAt = undefined
       return
     }
     const minutes = minutesOf(settings)
-    if (minutes <= 0 || settings.enabled !== true) return
-    this.lastAttemptAt = this.now().getTime()
+    if (minutes <= 0 || settings.enabled !== true) {
+      this.nextAt = undefined
+      return
+    }
+    const intervalMs = minutes * MINUTE_MS
+    const lastRunMs = this.lastRunAt === undefined
+      ? undefined
+      : Date.parse(this.lastRunAt)
+    let delayMs
+    if (lastRunMs === undefined || lastRunMs + intervalMs <= this.now().getTime()) {
+      // No completed run on record, or the due time already passed: defer one
+      // minute, then run. The deferral keeps the catch-up off the boot and
+      // save moments — the busiest ones.
+      delayMs = MINUTE_MS
+    } else {
+      delayMs = lastRunMs + intervalMs - this.now().getTime()
+    }
+    const startedAt = this.now().getTime()
+    this.lastAttemptAt = startedAt
+    this.nextAt = new Date(startedAt + delayMs).toISOString()
     this.timer = setTimeout(() => {
       this.timer = undefined
       void this.tick('schedule').catch(() => {
         // `tick` already recorded the failure; the timer must not rethrow.
       })
-    }, minutes * MINUTE_MS)
+    }, delayMs)
   }
 
   /**
@@ -228,6 +256,9 @@ export class SyncScheduler {
       this.running = false
       if (this.controller === controller) this.controller = undefined
       this.schedule()
+      // The timer only re-arms when it armed one; report the absence honestly
+      // so the settings page shows no "next run" while the scheduler is off.
+      if (this.timer === undefined) this.nextAt = undefined
     }
   }
 }

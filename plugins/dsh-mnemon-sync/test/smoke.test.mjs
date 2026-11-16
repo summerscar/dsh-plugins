@@ -286,6 +286,99 @@ test('an archive is described by what it holds, not by the backup scope', async 
   assert.equal(plan.find((entry) => entry.path === 'payload/runtime/USER.md').bytes, 0)
 })
 
+test('the scheduler arms from the last completed run, not the arming moment', async () => {
+  // Regression: arming used to count the interval from when the timer was set,
+  // so a Host restart or a settings save pushed the next run out a whole extra
+  // interval. The delay now compares against `lastRunAt`: due time already
+  // passed (or no run on record) defers one minute for the catch-up; otherwise
+  // it waits out the remainder of the interval.
+  const { SyncScheduler, MINUTE_MS } = await import(new URL('../scheduler.js', import.meta.url))
+  const settings = { enabled: true, autoSyncMinutes: 60 }
+  let clock = new Date('2026-11-17T00:00:00Z')
+  const now = () => clock
+  const runs = []
+  const makeScheduler = (lastRunAt) => new SyncScheduler({
+    readSettings: () => settings,
+    run: async (trigger) => { runs.push(trigger); return {} },
+    now,
+  })
+
+  // No completed run on record: one minute of leeway, not an immediate run.
+  {
+    const scheduler = makeScheduler(undefined)
+    scheduler.start()
+    assert.equal(scheduler.nextAt, new Date(clock.getTime() + MINUTE_MS).toISOString())
+    scheduler.cancel()
+  }
+
+  // The due time already passed (last run 90 minutes ago, interval 60): catch
+  // up in one minute instead of waiting another full interval.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = makeScheduler(undefined)
+    scheduler.lastRunAt = new Date(clock.getTime() - 90 * MINUTE_MS).toISOString()
+    scheduler.schedule()
+    assert.equal(scheduler.nextAt, new Date(clock.getTime() + MINUTE_MS).toISOString())
+    scheduler.cancel()
+  }
+
+  // The due time is still ahead (last run 30 minutes ago, interval 60): wait
+  // out the remaining 30 minutes of that interval.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = makeScheduler(undefined)
+    scheduler.lastRunAt = new Date(clock.getTime() - 30 * MINUTE_MS).toISOString()
+    scheduler.schedule()
+    assert.equal(scheduler.nextAt, new Date(clock.getTime() + 30 * MINUTE_MS).toISOString())
+    scheduler.cancel()
+  }
+
+  // A completed tick re-arms from that run's timestamp.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = makeScheduler(undefined)
+    const result = await scheduler.tick('manual')
+    assert.deepEqual(runs, ['manual'])
+    assert.equal(scheduler.lastAt, '2026-11-17T00:00:00.000Z')
+    assert.equal(scheduler.nextAt, new Date(clock.getTime() + 60 * MINUTE_MS).toISOString())
+    scheduler.cancel()
+  }
+
+  // A tick that did not complete (stopped) arms nothing and reports no next run.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = makeScheduler(undefined)
+    scheduler.stopped = true
+    assert.deepEqual(await scheduler.tick('schedule'), { skipped: 'stopped' })
+    assert.equal(scheduler.nextAt, undefined)
+    assert.equal(scheduler.snapshot(settings).nextAt, undefined)
+  }
+
+  // `snapshot` echoes the armed `nextAt` rather than recomputing it from the
+  // arming moment, which is what the settings page renders.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = makeScheduler(undefined)
+    scheduler.lastRunAt = new Date(clock.getTime() - 90 * MINUTE_MS).toISOString()
+    scheduler.start()
+    assert.equal(scheduler.snapshot(settings).nextAt, scheduler.nextAt)
+    scheduler.cancel()
+  }
+
+  // Disabled settings arm nothing and keep `nextAt` absent from the snapshot.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = new SyncScheduler({
+      readSettings: () => ({ enabled: false, autoSyncMinutes: 60 }),
+      run: async () => ({}),
+      now,
+    })
+    scheduler.schedule()
+    assert.equal(scheduler.timer, undefined)
+    assert.equal(scheduler.snapshot({ enabled: false, autoSyncMinutes: 60 }).nextAt, undefined)
+  }
+})
+
 test('both skill components start unselected', async () => {
   // A first backup must not quietly carry a machine's skills: restoring a skill
   // component writes into the skill roots, which is a migration, not a routine

@@ -55,7 +55,7 @@ const ARCHIVE_PREFIX = 'mnemon-sync-'
  * Read it from `GET /api/mnemon-sync/status` (`build`), or grep the response
  * before trusting any conclusion about whether a change took effect.
  */
-export const BUILD = 'mnemon-sync-2026-11-11.3'
+export const BUILD = 'mnemon-sync-2026-11-11.4'
 
 export const name = 'dsh-mnemon-sync'
 // `connection` gates every HTTP route below. `mnemonMemory` stays optional on
