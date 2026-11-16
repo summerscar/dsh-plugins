@@ -119,7 +119,7 @@ const cardOf = (f, statusValue) => {
 // AE-1d — the重点: autoApprove=true must NOT let L1 advance past plan-review
 // ---------------------------------------------------------------------------
 
-test('AE-1d: L1 + autoApprove=true still stops at plan-review; engine never reads autoApprove', async () => {
+test('AE-1d: L1 + autoApprove=true still stops at plan-review; autoApprove is read only under the L2 gate', async () => {
   const f = setup({ autonomy: 'L1', autoStart: true, autoApprove: true })
   try {
     const waiting = cardOf(f, 'plan-review')
@@ -134,11 +134,15 @@ test('AE-1d: L1 + autoApprove=true still stops at plan-review; engine never read
     const autoRuleTransitions = transitions.filter((h) => h.actor === 'autoRule')
     assert.equal(autoRuleTransitions.length, 0, 'no autoRule transition on the plan-approval card')
 
-    // Static guard: grep-equivalent check that no code reads project.autoApprove.
+    // Static guard: AE-1d now means autoApprove is read ONLY under the L2 gate.
+    // L2 legitimately reads project.autoApprove to approve plans; L0/L1 must not.
+    // Guard that every live `project.autoApprove` read is on the same line as the
+    // L2 condition, so a future L1-path read cannot silently reintroduce approval.
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(new URL('../autonomy.js', import.meta.url), 'utf8')
-    const reads = src.split('\n').filter((line) => /autoApprove/.test(line) && !/^\s*(\*|\/\/)/.test(line))
-    assert.equal(reads.length, 0, `autonomy.js must not reference autoApprove in code; found: ${reads.join(' | ')}`)
+    const reads = src.split('\n').filter((line) => /project\.autoApprove/.test(line) && !/^\s*(\*|\/\/)/.test(line))
+    const ungated = reads.filter((line) => !/L2/.test(line))
+    assert.equal(ungated.length, 0, `project.autoApprove must be read only inside the L2 gate; ungated: ${ungated.join(' | ')}`)
   } finally { f.cleanup() }
 })
 

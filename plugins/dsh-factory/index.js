@@ -38,7 +38,7 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-16.37'
+export const BUILD = 'factory-2026-11-16.38'
 
 export const name = 'dsh-factory'
 

@@ -67,6 +67,14 @@ A card that fails dispatch repeatedly up to the threshold (currently 3) is marke
 
 Seven: six phase skills (triage / plan / build / self-review / review / rereview) plus one project-add skill. The phase skills line up one-to-one with the transitions an agent is allowed to make in the status machine.
 
+### 2.8 Autonomy levels
+
+There are three levels. `L0` does nothing. `L1` is the default: the engine takes only the `inbox -> triage` edge, and a card stops at `plan-review` for a person. `L2` is **off by default and must be opted into explicitly per project**; there is no allowlist of repositories or cards.
+
+Under `L2` the machine takes one more automatic edge — `plan-review -> build` — approving the plan on the card's behalf. It uses the same `autoRule` actor and the same `assertTransition` state gate as every other move, so it cannot reach a state the gate does not allow. The boundary is deliberate: the machine **only approves plans**. It stops once the card is in `build`; arming the delivery authorization (commit, push, opening a pull request) still belongs to a person, and the machine never touches git or creates a pull request. This is narrower than "fully automatic to a draft PR" — the machine does not arm or deliver.
+
+`pause` and per-card `takeover` take effect immediately for approvals too: a paused project or a taken-over card is not auto-approved, and cards skipped during a pause are not made up for when it resumes. Repeated ticks are idempotent, and this automatic edge has no path to `done` or `canceled`.
+
 ## 3. Decisions already settled — no need to reopen them
 
 | Decision | Reason |
@@ -77,8 +85,8 @@ Seven: six phase skills (triage / plan / build / self-review / review / rereview
 | Worktree paths outside the data root, with one narrow home-subtree exception | A worktree landing in session storage, caches or another project's state would corrupt unrelated data; the only tolerated in-root path is the exact `<home>/dsh-factory-worktrees` subtree, resolved live per call and shared by all three boundary checks |
 | A single global "worktrees root" setting, empty means the HOME-resolved default | One setting is easier to reason about than per-project roots; the default is expressed via `homedir()`, never a machine-specific absolute path |
 | A new session per stage with a history digest, rather than one session throughout | Review must be independent: reviewing your own work breaks injection defence and review discipline |
-| Plan approval and delivery authorization stay with a person | This is the product's safety floor; it is not made configurable |
-| Automatic modes go no further than a draft pull request | Merging permanently stays with a person |
+| Plan approval and delivery authorization stay with a person by default | The default keeps every gate human; L2 can delegate **only plan approval** through explicit per-project opt-in, never delivery |
+| Only L2 may auto-approve a plan, and only as an explicit opt-in | Off by default, no allowlist; the machine approves `plan-review -> build` via `autoRule` through the same state gate, then stops. Arming delivery, git writes and merge stay human |
 
 ## 4. What comes next (in priority order)
 
@@ -111,17 +119,21 @@ The `autonomy` / `autoStart` / `autoApprove` fields used to hold storage and wri
 - **Two concurrency ceilings** (per project plus a global backstop), counted by live sessions rather than the `sessionId` field; when full, cards queue without being dropped or marked stalled, and a later tick picks them up once a slot frees.
 - **Pause / resume / per-card takeover** are three separate actions, each persisted and each leaving a governance record. Pause and takeover both **leave running sessions alone** and only affect later ticks — killing a session outright would leave a worktree and half-finished changes behind.
 - **Zero side effects by default**: `L0` does strictly nothing; a project missing its issue source or target board is skipped with the reason visible in `status` — **no guessing, no reverse-engineering the git remote, no creating a board automatically**.
-- **Sync does not approve for you**: `sync.js` uses a separate `syncRule` actor plus an empty `SYNC_AUTO_EDGES` allowlist, so under L1 a remote "PR closed" suggestion is only recorded for a human and never pushes a waiting card into `build`; the `autoRule` semantics stay reserved for L2.
+- **Sync does not approve for you**: `sync.js` uses a separate `syncRule` actor plus an empty `SYNC_AUTO_EDGES` allowlist, so a remote "PR closed" suggestion is only recorded for a human and never pushes a waiting card into `build`; plan approval under L2 uses the `autoRule` actor instead, kept distinct from sync.
 - **The permission level is never overclaimed**: `permissionEnforced` is always `false`, and neither the interface nor the status may claim write restriction is in force.
 - **Three hard sandbox guarantees** (every level of the dispatch and continuation chains passes the same gates): ① write `sandbox/mode: workspace-write` into `createSession`'s `seed` to pin the mode (no timing race); ② read back the `sandboxMode` projection after creation and refuse/dispose on mismatch; ③ cap the permission at `workspace-write`, never granting a higher project-configured level. Sessions created before the fix are refused on continuation and fall back to a rebuild; old full-access sessions are never reused.
 
 **Verification status**: offline cases plus real-machine checks (the `status.engine` fields, pause/resume, the takeover route, the audit route) are done. **Real automatic dispatch (AE-2) has now been verified end to end on a real machine**: a real GitHub issue was discovered and turned into a card, the engine took the single automatic edge `inbox -> triage` as `autoRule`, and the dispatched agent carried the card through `triage` and `plan` and stopped at `plan-review` — the whole chain ran without a human click. The earlier failed attempts were a fixture mismatch (an empty fixture repo had no source matching the task), not a product defect; this run used a repo whose content matches the task and waited for `turn/end` to settle before cleanup, see §5 and §7.
 
-### P3 — L2, fully automatic to a draft pull request (not started)
+### P3 — L2, machine-assisted plan approval (**implemented and verified on a real machine**)
 
-Let the machine press "approve plan" and "arm the delivery authorization" for a person. This is **a round of its own**, because it changes the model of where approval comes from (today the approval source is hard-wired to a person) — the highest-risk cut in the plan.
+An **explicit per-project opt-in** (off by default, no allowlist): the machine may approve a plan, taking one more automatic edge `plan-review -> build` as `autoRule` through the same `assertTransition` gate used by every other move. The boundary is deliberately narrow — **the machine only approves the plan**:
 
-- Boundary: reuse the existing approval gate, open no bypass; draft pull request; no merge, no marking done.
+- It stops once the card is in `build`; **arming the delivery authorization still belongs to a person**, and the machine never touches git, opens a pull request, merges or marks done. This is a narrower scope than the original idea of the machine also arming delivery — that part is deliberately not built, a chosen boundary and not a gap.
+- `pause` (project or global) and per-card `takeover` block approval immediately and do not replay cards skipped during a pause; repeated ticks stay idempotent; the automatic edge has no bypass to `done`.
+- `L0` and `L1` are unchanged: even with `autoApprove` set, only an L2 project acts on it.
+
+Verified on a real machine: under `L2 + autoApprove` a waiting `plan-review` card was approved into `build` with a full audit trail; `L1`/`L0` stayed inert; pause, takeover and idempotence held; no bypass to `done`; and the AE-2b sync path did not regress. This is **the second half of the autonomy key** — plan approval handed to the machine, delivery authorization still held by a person.
 
 ### P4 — Autonomy-level interface (not started)
 
