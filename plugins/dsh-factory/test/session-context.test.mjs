@@ -28,11 +28,15 @@ test('buildSessionContext carries the full field set and puts worktree + id in t
   try {
     const fresh = store.getCard(card.id)
     const built = buildSessionContext({ card: fresh, project })
-    for (const key of ['cardId', 'title', 'phase', 'nextPhases', 'repo', 'branch', 'worktreePath', 'planStatus', 'prUrl']) {
+    for (const key of ['cardId', 'title', 'phase', 'nextPhases', 'repo', 'branch', 'worktreePath', 'planStatus', 'prUrl', 'skill']) {
       assert.ok(key in built, `missing field ${key}`)
     }
     assert.equal(built.cardId, card.id)
     assert.equal(built.phase, 'inbox')
+    // The dispatch message must point the session at the stage skill it should load.
+    assert.equal(built.skill, 'factory-triage')
+    assert.ok(built.sectionText.includes('factory-triage'))
+    assert.ok(built.firstMessage.includes('factory-triage'))
     // The first message must name the card and its worktree (our improvement
     // over kanban, which omits worktreePath).
     assert.ok(built.firstMessage.includes(card.id))

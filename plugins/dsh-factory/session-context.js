@@ -17,6 +17,27 @@ import { nextStatuses } from './state.js'
 
 const APPROVED_PHASES = new Set(['build', 'review', 'done'])
 
+/**
+ * Stage → packaged skill that drives it. The dispatched session must be TOLD
+ * which skill to load: without this it receives only "advance the card" and
+ * has no idea that `factory-triage` / `factory-plan` exist or what each stage
+ * is supposed to produce, so it stalls (the AE-2 "stuck at triage" finding).
+ * plan-review / done / canceled are deliberately absent — those wait for a
+ * human or are terminal, so there is no agent skill to load.
+ */
+const PHASE_SKILL = Object.freeze({
+  inbox: 'factory-triage',
+  triage: 'factory-triage',
+  plan: 'factory-plan',
+  build: 'factory-build',
+  review: 'factory-review',
+})
+
+/** The skill a session should load for its current phase, or null. */
+export function skillForPhase(status) {
+  return PHASE_SKILL[status] ?? null
+}
+
 /** Statuses whose plan is considered approved / submitted / not yet. */
 function planStatusOf(status) {
   if (APPROVED_PHASES.has(status)) return 'approved'
@@ -55,6 +76,10 @@ export function buildSessionContext({ card, project } = {}) {
     worktreePath: card.worktreePath ?? null,
     planStatus: planStatusOf(card.status),
     prUrl: card.prUrl ?? null,
+    // Which packaged skill drives THIS stage. The session is told to load it
+    // before doing anything (see sectionText / firstMessage). null at the
+    // human-gated / terminal phases.
+    skill: skillForPhase(card.status),
   }
 
   const show = (value) => {
@@ -74,7 +99,12 @@ export function buildSessionContext({ card, project } = {}) {
     `- worktreePath: ${show(fields.worktreePath)}`,
     `- planStatus: ${fields.planStatus}`,
     `- prUrl: ${show(fields.prUrl)}`,
-    'Work only inside worktreePath. Advance the card with factory_transition_work_item and report with factory_report. Never commit, push or open a PR yourself — a human does that.',
+    ...(fields.skill === null
+      ? ['This phase is waiting for a human or is terminal — do NOT advance it yourself.']
+      : [
+          `Load the \`${fields.skill}\` skill FIRST and follow it for this phase — load the skill before doing anything else.`,
+          `The \`${fields.skill}\` skill defines what this stage must produce. Advance the card with factory_transition_work_item and report with factory_report. Never commit, push or open a PR yourself — a human does that.`,
+        ]),
   ].join('\n')
 
   const firstMessage = [
@@ -83,7 +113,12 @@ export function buildSessionContext({ card, project } = {}) {
     `worktree: ${show(fields.worktreePath)}`,
     `repo: ${show(fields.repo)}${fields.branch ? ` (branch ${fields.branch})` : ''}`,
     '',
-    `Work inside ${show(fields.worktreePath)}. Use factory_transition_work_item to advance and factory_report to report; do not commit/push/open a PR.`,
+    ...(fields.skill === null
+      ? ['This phase waits for a human or is terminal — do not advance it yourself.']
+      : [
+          `Load the \`${fields.skill}\` skill FIRST, before doing anything else, and follow it for this phase.`,
+          `Work inside ${show(fields.worktreePath)}. The \`${fields.skill}\` skill defines what this stage must produce; use factory_transition_work_item to advance and factory_report to report. Do not commit/push/open a PR.`,
+        ]),
   ].join('\n')
 
   return { ...fields, sectionText, firstMessage }

@@ -102,7 +102,7 @@
 `autonomy` / `autoStart` / `autoApprove` 三个字段原本只有存储与写入校验、没有任何代码读取它们做决策。**L1 引擎已落地**（`autonomy.js`）：
 
 - **一个插件级定时器**，挂在宿主 timer 服务上，卸载随插件清理；服务缺失不静默降级，原因在 `status.engine.timerReason` 可读。多项目只是每轮枚举，不是多个定时器；tick 单飞不叠加。
-- **L1 只走一条自动边**：`inbox -> triage`，经 `dispatchCard` 完成，actor 记 `autoRule` 并带 `tier`/`rule`/`channel`。阶段推进仍由会话内技能以 `agent` 身份完成，**引擎不自己挪卡**；到 `plan-review` 停住等批。
+- **L1 只走一条自动边**：`inbox -> triage`，经 `dispatchCard` 完成，actor 记 `autoRule` 并带 `tier`/`rule`/`channel`。阶段推进仍由会话内技能以 `agent` 身份完成，**引擎不自己挪卡**；到 `plan-review` 停住等批。**但这只是设计意图，不是已实现的事实**：派发消息里必须**点名当前阶段该加载哪个技能**，会话才知道该做什么；漏了这一步，「由会话内技能推进」就只是空话——本轮真机 AE-2 正是在这里断链，见 §5。
 - **`autoApprove` 在 L1 一次不读**：即使 `L1 + autoApprove=true` 也停在 `plan-review`，防「字段开着、代码顺手就用了」的越权。
 - **并发两级上限**（项目级 + 全局兜底），按运行时活跃会话计，不按 `sessionId` 字段计；满额排队不丢卡、不标 stalled，有空位后由后续 tick 取走。
 - **暂停 / 恢复 / 单卡接管**是三个独立动作、各自持久化并留治理记录。暂停与接管都**不打断**已在运行的会话，只影响后续 tick 的自动派发——硬杀会话会留下 worktree 和半截改动。
@@ -148,6 +148,8 @@
 | **README 夸大了卡片的仓库覆盖能力（既有文档与代码不一致）** | README 中英两句写「卡片可以覆盖它运行所用的仓库」，但 `dispatch.js:112` 的 `createWorktree` 用的是 `project.rootPath`，`card.repo` **从未**影响过实际运行仓库——它只影响注入会话上下文的仓库标识。与本次字段拆分无关，是既有的错误陈述 | **Docs 待改**：拆完 `repoPath` 后改成准确说法——卡片能覆盖的是**注入会话的仓库标识 / 路径提示**，worktree 仍由项目根决定。改完从本表划掉 |
 | **intake 拉取数量写死 `--limit 100`** | `intake.js` 硬编码上限，去重只与已有卡比。指向 issue 很多的繁忙上游时，一次 tick 就能往看板灌进最多 100 张卡，随后引擎按并发上限逐张自动派发，每张都真起 agent 会话 | **本轮修**：改为项目级可配的 `intakeLimit`（默认 100 保持向后兼容），由引擎 tick 传给 `intakeIssues`。这是真产品缺口，不是为测试绕过。待 QA 验「设成 N 只建 N 张」「不设仍默认 100」后视为已修 |
 | **intake 无 label 过滤** | 只能按「全部 open issue」拉，不能只拉指定 label 的 issue；配合不限量的上游仓仍可能拉进大量无关 issue | 保留为缺口，本轮不做（与 `intakeLimit` 是两个功能，别混）。可用 `intakeLimit` 先压量兜底 |
+| **派发消息未指定阶段技能，自动派发的会话停在 `triage`** | `session-context.js` 的 `firstMessage` / `sectionText` 里 `skill` 一词零命中——只说「用 `factory_transition_work_item` 推进」，没说「按 `factory-triage` 技能办事」。对比 `/factory add` 的 `buildAddIntent` 明确写了技能名，所以那条链能跑通。AE-2 真机会话因此停在 `triage`、`sessionTurn` 不动，没到 `plan-review` | **本轮必修**：`firstMessage` 与 `sectionText` 都点名当前阶段技能（`inbox`/`triage→factory-triage`、`plan→factory-plan`、`build→factory-build`、`review→factory-review`；`plan-review`/`done`/`canceled` 无技能），并写明先加载技能再动手。修完才算 AE-2 真正验通——此前「停在 triage 是上界保证」的判断作废 |
+| **真机派发起的会话无法主动终止（已知不可清理项）** | AE-2 真机验证会起真 agent 会话；测试项目删掉后引擎不会再派它，但宿主会话列表里它可能仍 idle。`sessions` API 不可用，插件侧无法主动终止 | **起真会话的实际成本**，不是 bug。真机验收的收尾要如实记一条「可能残留 idle 会话」，别让它变成下次的谜团；不要为了「收尾干净」而谎报会话已终止 |
 
 ## 6. 调研依据（摘要，避免重复调研）
 
