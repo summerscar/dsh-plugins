@@ -89,9 +89,15 @@ test('a successful dispatch records the worktree + session and advances Inbox→
     assert.ok(calls.session[0].firstMessage.includes(fresh.worktreePath))
     // The setup callback must be provided so injection happens before first prompt.
     assert.equal(typeof calls.session[0].setup, 'function')
-    // …and it must return undefined: the host runs `setupCommit?.commit()`, so any
-    // returned object without a real commit() would crash dispatch (live-e2e bug).
-    assert.equal(calls.session[0].setup({ systemPrompt: {} }), undefined, 'setup must not return a non-commit value')
+    // …and it must resolve to undefined: the host awaits setup then calls
+    // `setupCommit?.commit()`, so any returned object without a real commit()
+    // would crash dispatch. Provide the now-required agentPresets service.
+    const agentCtx = {
+      systemPrompt: {},
+      get: (name) => (name === 'agentPresets' ? { mount: async () => {} } : undefined),
+    }
+    const setupResult = await calls.session[0].setup(agentCtx)
+    assert.equal(setupResult, undefined, 'setup must not resolve to a non-commit value')
   } finally {
     cleanup()
   }

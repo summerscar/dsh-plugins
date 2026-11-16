@@ -35,6 +35,35 @@ import { attachSessionContext, buildSessionContext } from './session-context.js'
 import { createWorktree, removeWorktree, worktreePathFor } from './worktree.js'
 import { hasPreparation, prepareWorktree } from './worktree-setup.js'
 
+/**
+ * Build the `setup(agentCtx)` a dispatched agent runs before its first turn.
+ *
+ * Mounts the deployment's CURRENT agent preset onto this agent's scope
+ * (`mount(agentCtx)` with no id follows `defaultId`, i.e. whatever preset the
+ * user has selected — no hardcoded preset name). Without this the agent has no
+ * `tool-bash`/`tool-fs`/`skill` and reaches for whatever global tools happen to
+ * exist (e.g. an SSH host-exec path the sandbox does not confine). Mount MUST
+ * happen here: `mount` requires a scoped context and is refused after the first
+ * turn opens (`agent-preset/locked`), so `setup` is the only legal window.
+ * The preset service is a hard safety dependency: without it we refuse the
+ * dispatch rather than silently produce a tool-less agent that grabs an SSH
+ * path — the same fail-closed rule as the sandboxPolicy gate.
+ *
+ * Then registers the per-session work-item context. Returns a Promise resolving
+ * to undefined: the loop awaits setup then calls `setupCommit?.commit()`, so a
+ * disposer return value would crash.
+ */
+function makeAgentSetup({ store, cardId }) {
+  return async (agentCtx) => {
+    const presets = typeof agentCtx?.get === 'function' ? agentCtx.get('agentPresets') : undefined
+    if (presets === undefined || presets === null || typeof presets.mount !== 'function') {
+      throw new Error('无法派发会话：宿主未提供 agentPresets 服务，无法挂载预设（agent 会缺少 bash 等必需工具）')
+    }
+    await presets.mount(agentCtx)
+    attachSessionContext({ agentCtx, store, cardId })
+  }
+}
+
 /** Branch name a card's work gets in its worktree. */
 export function branchForCard(cardId) {
   return `factory/${cardId}`
@@ -129,15 +158,10 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
       cwd: worktreePath,
       permission: project.defaultPermission,
       model: project.defaultModel,
-      // `setup(agentCtx)` runs before the first prompt assembly: this is where the
-      // per-session work-item context is registered, scoped to this agent alone.
-      // DSH runs `setupCommit?.commit()` on whatever `setup` returns (dsh-agent-loop
-      // index.js:1591-1593). Returning the disposer function would crash on `.commit`;
-      // so register the per-session context and return nothing, exactly like DSH's own
-      // setup callbacks (dsh-api-session-controller / dsh-agent-loop return undefined).
-      setup: (agentCtx) => {
-        attachSessionContext({ agentCtx, store, cardId })
-      },
+      // `setup(agentCtx)` runs before the first prompt assembly: mount the user's
+      // preset (gives the agent its real tool set) and register the per-session
+      // work-item context. See makeAgentSetup for why mount must live here.
+      setup: makeAgentSetup({ store, cardId }),
       firstMessage: built.firstMessage,
     })
 
@@ -221,7 +245,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
         created = await port.resumeSession({
           resumeSessionId: previousSessionId,
           cwd: worktreePath,
-          setup: (agentCtx) => { attachSessionContext({ agentCtx, store, cardId }) },
+          setup: makeAgentSetup({ store, cardId }),
           firstMessage: text,
         })
         store.setWorktree(cardId, { sessionId: created.sessionId })
@@ -242,7 +266,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
       cwd: worktreePath,
       permission: project.defaultPermission,
       model: project.defaultModel,
-      setup: (agentCtx) => { attachSessionContext({ agentCtx, store, cardId }) },
+      setup: makeAgentSetup({ store, cardId }),
       firstMessage: text,
     })
     store.setWorktree(cardId, { sessionId: created.sessionId })
