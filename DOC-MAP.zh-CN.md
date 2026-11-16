@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；后续改动走正常更新流程。能力与限制见它自己的 README。 |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；同样的更新流程。账号处理、可选模型供应商与额度面板见其 README。 |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。完整的添加链路已真机验过，L1 自治引擎已实现。 |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2（L1）、P3（L2）均已实现并真机验通；状态持久化已换成 SQLite。 |
 
-工厂是目前唯一在开发的插件。它现在能做什么、还有什么没解决，都要读它的路线图：[§2](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 写当前行为，[§5](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 列已知缺口。缺口清单不等于「已验证行为」的完整清单，判断以源码和真机为准。曾有两条被列为影响派发安全的前置，如今都不再悬着——派发会话的权限边界已修并已验，写入与回执之间的窗口在 L1 已被规避，只剩结构性修复作为 L2 的独立前置。
+工厂是目前唯一在开发的插件。它现在能做什么、还有什么没解决，都要读它的路线图：[§2](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 写当前行为，[§5](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 列已知缺口。缺口清单不等于「已验证行为」的完整清单，判断以源码和真机为准。派发会话的权限边界与写入/回执窗口（工厂侧）都已修并验通。
 
 ## 未来规划
 
@@ -22,10 +22,10 @@
 | --- | --- | --- | --- |
 | P1 | 在真机上验证完整的添加链路 | 已完成 | 路线图 §4 P1：验收分组与逐轮账本 |
 | P2 | 自治引擎 L1 | 已实现；真实自动派发已在真机端到端验通，停在 plan-review | 路线图 §4 P2 与 §5 |
-| P3 | L2，自动推进到 draft PR | 未开始 | 路线图 §4 P3：单独一轮，因为它改变批准来源 |
-| P4 | 自治档位、状态与暂停／接管的界面 | 未开始 | 路线图 §4 P4：依赖引擎行为先稳定 |
+| P3 | L2：机器代批计划（按项目 opt-in） | 已实现并真机验通——机器只走 `plan-review -> build`，交付授权仍留人 | 路线图 §4 P3 |
+| P4 | 自治档位、状态、暂停／接管与并发设置的界面 | 未开始（PRD 与交互原型已备，代码未开工） | 路线图 §4 P4 |
 
-**下一步**：P2 功能性缺口已清零、自动链路已端到端验通。写入与回执之间的事务边界结构修复是 P3／L2 的前置，应单列为独立任务、不塞进 P2 收尾；P4 的界面依赖引擎行为先稳定。P3 有意单独成轮，因为它移动批准来源。
+**下一步**：下一轮做 P4 自治档位界面。[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，需要明确决定才启动；剩余已知缺口见路线图 §5。
 
 ## 想了解某件事，读哪份
 
@@ -42,6 +42,7 @@
 | 怎么把插件投递到两个社区市场 | [`.agents/skills/dsh-plugin-market-release/SKILL.md`](.agents/skills/dsh-plugin-market-release/SKILL.md) | 两种投递形态、字段规则、返修与改名流程。 |
 | 怎么发 npm、推进生命周期 | [`.agents/skills/npm-plugin-release/SKILL.md`](.agents/skills/npm-plugin-release/SKILL.md) | 发布工作流、OIDC、提交推送前的同步。 |
 | 怎么在真机上验证插件 | [`.agents/skills/dsh-plugin-live-verification/SKILL.md`](.agents/skills/dsh-plugin-live-verification/SKILL.md) | 宿主契约、静默降级、环境变量路径、取证纪律。 |
+| 怎么构建自动派发的 agent 会话：上下文注入、沙箱钉档、写前预检、自治边 | [`.agents/skills/dsh-dispatch-session-mechanics/SKILL.md`](.agents/skills/dsh-dispatch-session-mechanics/SKILL.md) | 派发会话的宿主侧机制：每类坑什么时候出现、怎么判断。 |
 
 ## 维护
 

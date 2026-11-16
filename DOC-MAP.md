@@ -10,9 +10,9 @@ Lifecycle stages come from `scripts/plugin-release-states.json`, the single sour
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/README.md) | `published` | Released and in maintenance; later changes follow the normal update flow. Its capabilities and limits are described in its own README. |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/README.md) | `published` | Released and in maintenance; same update flow. See its README for account handling, the optional model provider and the credits panel. |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/README.md) | `draft` | Under active development; the source is in the repository but it has not been released. The end-to-end add chain has been verified; the L1 autonomy engine is implemented. |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/README.md) | `draft` | Under active development; the source is in the repository but it has not been released. P1 add chain, P2 (L1) and P3 (L2) are all implemented and verified on a real machine; state persists in SQLite. |
 
-The factory is the only plugin currently being developed. Its roadmap is the place to read both what it can do today and what is still open: [§2 of the roadmap](plugins/dsh-factory/docs/ROADMAP.md) describes current behaviour, and [§5](plugins/dsh-factory/docs/ROADMAP.md) lists known gaps. Do not read the gap list as a complete registry of verified behaviour: verify against the source and the host. Two items once flagged as safety prerequisites for dispatch are no longer open — the permission boundary on dispatched sessions is fixed and verified, and the window between a write and its receipt is contained in L1, with only its structural fix left as a separate prerequisite for L2.
+The factory is the only plugin currently being developed. Its roadmap is the place to read both what it can do today and what is still open: [§2 of the roadmap](plugins/dsh-factory/docs/ROADMAP.md) describes current behaviour, and [§5](plugins/dsh-factory/docs/ROADMAP.md) lists known gaps. Do not read the gap list as a complete registry of verified behaviour: verify against the source and the host. The permission boundary on dispatched sessions and the write/receipt window (factory side) are both fixed and verified.
 
 ## Future work
 
@@ -22,10 +22,10 @@ The phases below are the global view only. Detail, decisions and acceptance crit
 | --- | --- | --- | --- |
 | P1 | Verify the full add chain on a real host | Done | Roadmap §4 P1 — acceptance groups and the round-by-round ledger |
 | P2 | Autonomy engine, level L1 | Implemented; real automatic dispatch verified end to end on a real machine, stopping at plan-review | Roadmap §4 P2 and §5 |
-| P3 | Level L2, automatic progression up to a draft pull request | Not started | Roadmap §4 P3 — a separate round because it changes where approval comes from |
-| P4 | Interface for autonomy levels, status and pause / takeover | Not started | Roadmap §4 P4 — depends on engine behaviour being settled first |
+| P3 | L2: the machine approves plans (opt-in, per project) | Implemented and verified on a real machine — the machine takes `plan-review -> build` only; delivery authorization stays with a person | Roadmap §4 P3 |
+| P4 | Interface for autonomy levels, status, pause / takeover and concurrency settings | Not started (PRD and interaction prototype ready, code not begun) | Roadmap §4 P4 |
 
-**Next step:** P2's functional gaps are cleared and the automatic path is verified end to end. The structural transaction-boundary fix is a prerequisite for P3 / L2 and should be scoped as its own task rather than folded into a P2 close-out; P4's interface depends on engine behaviour being settled first. P3 is deliberately its own round because it moves the approval source.
+**Next step:** P4 is the next build: the autonomy-level interface. The Work/Review card split recorded in [RESEARCH.md](plugins/dsh-factory/docs/RESEARCH.md) is a structural follow-up that needs an explicit decision before it starts; remaining known gaps are listed in roadmap §5.
 
 ## Where to look
 
@@ -42,6 +42,7 @@ The phases below are the global view only. Detail, decisions and acceptance crit
 | How to release a plugin to the two community markets | [`.agents/skills/dsh-plugin-market-release/SKILL.md`](.agents/skills/dsh-plugin-market-release/SKILL.md) | Market submission shapes, field rules, review-and-resubmit flow. |
 | How to publish to npm and advance the lifecycle | [`.agents/skills/npm-plugin-release/SKILL.md`](.agents/skills/npm-plugin-release/SKILL.md) | Release workflow, OIDC, synchronization before commit and push. |
 | How to verify a plugin on a real host | [`.agents/skills/dsh-plugin-live-verification/SKILL.md`](.agents/skills/dsh-plugin-live-verification/SKILL.md) | Host contracts, silent degradation, environment-driven paths, evidence discipline. |
+| How to build auto-dispatched agent sessions: context injection, sandbox pinning, write prechecks, autonomy edges | [`.agents/skills/dsh-dispatch-session-mechanics/SKILL.md`](.agents/skills/dsh-dispatch-session-mechanics/SKILL.md) | Host-side mechanisms behind dispatched sessions: when each pitfall shows up and how to judge it. |
 
 ## Maintenance
 
