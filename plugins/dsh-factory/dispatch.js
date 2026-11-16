@@ -196,14 +196,23 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
   const text = typeof message === 'string' && message !== '' ? message : built.firstMessage
   let created = null
   let resumeFailure
+  let followupFailure
   try {
     // Level 1 — the session is still live: cheapest, no rebuild.
     if (sessionActive === true && previousSessionId !== undefined) {
-      await port.followupSession({ sessionId: previousSessionId, message: text })
-      store.releaseClaim(cardId, claim.token)
-      store.clearDispatchFailures(cardId)
-      store.recordContinuation(cardId, { sessionId: previousSessionId, mode: 'followup' })
-      return { sessionId: previousSessionId, worktreePath, mode: 'followup' }
+      try {
+        await port.followupSession({ sessionId: previousSessionId, message: text })
+        store.releaseClaim(cardId, claim.token)
+        store.clearDispatchFailures(cardId)
+        store.recordContinuation(cardId, { sessionId: previousSessionId, mode: 'followup' })
+        return { sessionId: previousSessionId, worktreePath, mode: 'followup' }
+      } catch (followupError) {
+        // A live but unsafe session (e.g. created before the sandbox fix) is
+        // refused by followupSession's sandbox gate. Do NOT let this escape to
+        // the outer catch — that would strand the card. Fall through to level 2
+        // then level 3, which rebuilds a fresh, sandboxed session.
+        followupFailure = followupError
+      }
     }
 
     // Level 2 — session gone but its history is on disk: rebuild on it.
@@ -241,9 +250,11 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
     store.releaseClaim(cardId, claim.token)
     store.recordContinuationFallback(cardId, {
       from: previousSessionId,
-      reason: typeof resumeFailure === 'undefined'
-        ? 'no persisted session to resume'
-        : (resumeFailure instanceof Error ? resumeFailure.message : String(resumeFailure)),
+      reason: followupFailure !== undefined
+        ? (followupFailure instanceof Error ? followupFailure.message : String(followupFailure))
+        : resumeFailure !== undefined
+          ? (resumeFailure instanceof Error ? resumeFailure.message : String(resumeFailure))
+          : 'no persisted session to resume',
     })
     store.recordContinuation(cardId, { sessionId: created.sessionId, mode: 'created' })
     return { sessionId: created.sessionId, worktreePath, mode: 'created', fallbackRecorded: true }
@@ -304,6 +315,26 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
   if (agents === undefined || agents === null || typeof agents.create !== 'function') {
     throw new Error('host has no agents service; cannot dispatch a session')
   }
+  // Sandbox policy is a hard safety dependency for dispatch: without it we
+  // cannot pin or verify the session's file boundary. Read via ctx.get, never a
+  // direct property (undeclared Cordis proxy properties throw).
+  const sandboxPolicy = typeof ctx?.get === 'function' ? ctx.get('sandboxPolicy') : undefined
+  // The only mode a dispatched agent may run in. A profile defaulting to
+  // danger-full-access would otherwise give it the harness's full file access.
+  const REQUIRED_SANDBOX_MODE = 'workspace-write'
+  // Read the resolved policy back from a live session and refuse anything but
+  // the required boundary. Used by all three session paths (create, resume,
+  // followup): a pre-fix session may lack the sandbox/mode event and fall back
+  // to the profile default, which on some profiles is danger-full-access.
+  const assertSandboxMode = (session) => {
+    if (sandboxPolicy === undefined || sandboxPolicy === null || typeof sandboxPolicy.resolve !== 'function') {
+      throw new Error('无法派发会话：宿主未提供 sandboxPolicy 服务，无法保证会话在 workspace-write 沙箱内运行')
+    }
+    const resolved = sandboxPolicy.resolve({ session })
+    if (resolved?.mode !== REQUIRED_SANDBOX_MODE) {
+      throw new Error(`无法派发会话：沙箱模式实际为 ${resolved?.mode ?? '未知'}，所需为 ${REQUIRED_SANDBOX_MODE}；拒绝在无 workspace-write 边界的会话中运行`)
+    }
+  }
   // User-configured default route. Read via ctx.get, never ctx.agentDefaultModel:
   // an undeclared Cordis proxy property throws. The read is wrapped so a service
   // present but throwing still degrades into a clean "no model" dispatch failure.
@@ -342,11 +373,26 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
       if (agent === undefined || agent === null || typeof agent.followup !== 'function') {
         throw new Error(`会话 ${sessionId} 已不可用，无法直接接续`)
       }
+      // A session created before the sandbox fix may still be live in a
+      // non-workspace-write mode. Refuse to continue it; do not dispose a live
+      // session we do not own — the error lets continueCard fall back safely.
+      assertSandboxMode(agent.session)
       await send({ agent }, message)
       return { sessionId }
     },
 
-    async createSession({ cwd, setup, firstMessage, model: projectModel }) {
+    async createSession({ cwd, setup, firstMessage, model: projectModel, permission: requestedPermission }) {
+      // Safety gate: dispatch must run inside a real file boundary. If the host
+      // cannot report a sandbox policy, refuse before creating anything — an
+      // unverified session is an agent with the harness's full filesystem access.
+      if (sandboxPolicy === undefined || sandboxPolicy === null || typeof sandboxPolicy.resolve !== 'function') {
+        throw new Error('无法派发会话：宿主未提供 sandboxPolicy 服务，无法保证会话在 workspace-write 沙箱内运行')
+      }
+      // project.defaultPermission is advisory only: anything other than the
+      // required mode is refused, never silently downgraded to full access.
+      if (requestedPermission !== undefined && requestedPermission !== REQUIRED_SANDBOX_MODE) {
+        throw new Error(`无法派发会话：请求的权限档 ${requestedPermission} 不等于 ${REQUIRED_SANDBOX_MODE}；派发会话只允许在 workspace-write 沙箱中运行`)
+      }
       // Fail fast instead of leaning on the loop's silent catch: with no route a
       // session would start, do nothing, and never report why. AgentModel.current()
       // needs BOTH provider and model; projectModel only overrides the model part.
@@ -363,9 +409,21 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
         get model() { return projectModel ?? readDefaultSelection()?.model },
         get reasoningEffort() { return readDefaultSelection()?.reasoningEffort },
       }
+      // Pin the sandbox mode via the session SEED, not via setup: agent-loop
+      // writes the constructor seed before setup, and setup before announce
+      // (pinInitialPermission). A seed event makes pinInitialPermission see
+      // sandbox !== null and skip applying the profile default. Seed has no
+      // timing race — unlike appending from setup. seed events need a full
+      // envelope with seq contiguous from 0; sandbox/mode is a non-turn event
+      // so it does not affect turn accounting.
+      const seed = [{ type: 'sandbox/mode', seq: 0, time: Date.now(), data: { mode: REQUIRED_SANDBOX_MODE } }]
       const sessionId = randomUUID()
-      const handle = await agents.create({ sessionId, meta: { cwd }, agentOptions, setup })
+      const handle = await agents.create({ sessionId, meta: { cwd }, seed, agentOptions, setup })
+      // Verify what actually took effect, not what we asked for. Read the resolved
+      // policy back from the live session; a mismatch means the profile overrode
+      // us, so dispose and refuse rather than run with an unknown boundary.
       try {
+        assertSandboxMode(handle.agent?.session)
         await send(handle, firstMessage)
       } catch (error) {
         try { await handle.dispose() } catch { /* best effort */ }
@@ -387,6 +445,11 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
         setup,
       })
       try {
+        // A persisted session from before the sandbox fix has no sandbox/mode
+        // event, so it resumes in the profile default (possibly full-access).
+        // Refuse it here; the error lets continueCard fall to level 3, which
+        // goes through createSession's seed gate.
+        assertSandboxMode(handle.agent?.session)
         await send(handle, firstMessage)
       } catch (error) {
         try { await handle.dispose() } catch { /* best effort */ }

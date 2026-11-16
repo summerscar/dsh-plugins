@@ -105,6 +105,33 @@ test('level 1: a live session is NOT a reason to refuse (the PRD contradiction, 
 
 // --- level 2 -----------------------------------------------------------------
 
+test('sandbox gate: a live session refused at level 1 falls through to a fresh sandboxed session', async () => {
+  // Regression for the "card stranded in level 1" bug: followupSession refuses
+  // an old unsafe session (e.g. no sandbox/mode event). Its error must NOT escape
+  // to the outer catch — the card must fall through level 2 -> level 3 and get a
+  // freshly seeded, sandboxed session. This is the REAL behaviour change.
+  const { store, card, cleanup } = setup()
+  try {
+    const followupErr = new Error('无法派发会话：沙箱模式实际为 danger-full-access')
+    const { port, calls } = fakePort({
+      active: true,
+      followupError: followupErr,
+      resumeError: new Error('SessionPersistenceNotFoundError: no history'),
+    })
+    const result = await continueCard({ store, cardId: card.id, port, message: 'go on' })
+    assert.equal(result.mode, 'created', 'a refused level-1 session must end at a fresh session')
+    assert.equal(result.fallbackRecorded, true)
+    assert.equal(calls.followup.length, 0, 'followup was attempted but rejected (error thrown before push)')
+    assert.equal(calls.resume.length, 1, 'level 2 was attempted')
+    assert.equal(calls.create.length, 1, 'level 3 rebuilt a fresh session')
+    const record = store.getCard(card.id).history.find((h) => h.type === 'continuation-fallback')
+    assert.ok(record, 'fallback must be recorded on the card')
+    assert.match(String(record.reason), /danger-full-access/, 'the LEVEL 1 refusal reason wins over the level 2 one')
+    assert.equal(store.getCard(card.id).sessionId, 'session-new')
+    assert.equal(store.getCard(card.id).pendingDispatch, null, 'claim released after the fall through')
+  } finally { cleanup() }
+})
+
 test('level 2: a dead session with history is resumed on the SAME sessionId', async () => {
   const { store, card, cleanup } = setup()
   try {

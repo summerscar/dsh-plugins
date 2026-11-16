@@ -12,6 +12,43 @@ import test from 'node:test'
 import { FactoryStore } from '../store.js'
 import { createHostPort, dispatchCard } from '../dispatch.js'
 
+/**
+ * Build a fake host ctx that satisfies every hard dependency of createSession:
+ * agents, agentDefaultModel (model route) and sandboxPolicy (file boundary).
+ * `resolvedMode` controls what the boundary check reads back.
+ */
+function makeHostCtx({ resolvedMode = 'workspace-write', withSandbox = true, withModel = true, onSessionAppend, onCreate } = {}) {
+  const seen = { create: null, sessionAppends: [], disposed: 0 }
+  const session = {
+    append: (type, data) => {
+      seen.sessionAppends.push({ type, data })
+      if (onSessionAppend) onSessionAppend(type, data, seen)
+    },
+  }
+  const agent = { session, followup: (m) => { seen.message = m } }
+  const ctx = {
+    get: (name) => {
+      if (name === 'agents') {
+        return {
+          create: async (options) => {
+            seen.create = options
+            if (onCreate) onCreate(options, seen)
+            return { agent, dispose: async () => { seen.disposed += 1 } }
+          },
+        }
+      }
+      if (withModel && name === 'agentDefaultModel') {
+        return { currentSelection: () => ({ provider: 'test-provider', model: 'test-model' }) }
+      }
+      if (withSandbox && name === 'sandboxPolicy') {
+        return { resolve: () => ({ mode: resolvedMode }) }
+      }
+      return undefined
+    },
+  }
+  return { ctx, seen, agent, session }
+}
+
 function setup() {
   const tmp = mkdtempSync(join(tmpdir(), 'factory-dispatch-'))
   const store = new FactoryStore({ file: join(tmp, 'factory.json') })
@@ -155,20 +192,7 @@ test('a failed dispatch releases the claim so the card can be retried', async ()
 })
 
 test('createHostPort sends the first message as a real user message (not a bare object)', async () => {
-  const seen = {}
-  const fakeAgent = { followup: (message) => { seen.message = message } }
-  const ctx = {
-    get: (name) => {
-      if (name === 'agents') {
-        return { create: async (options) => { seen.create = options; return { agent: fakeAgent, dispose: async () => {} } } }
-      }
-      // createSession fail-fast needs a model route; provide the host default service.
-      if (name === 'agentDefaultModel') {
-        return { currentSelection: () => ({ provider: 'test-provider', model: 'test-model' }) }
-      }
-      return undefined
-    },
-  }
+  const { ctx, seen } = makeHostCtx()
   // Inject a createUserMessage so the test does not depend on the host peer.
   const port = createHostPort({ ctx, createUserMessage: ({ content, source }) => ({ id: 'msg-1', role: 'user', content, source }) })
   const created = await port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'do the task' })
@@ -182,39 +206,75 @@ test('createHostPort sends the first message as a real user message (not a bare 
 })
 
 test('createHostPort fail-fast: no model route rejects BEFORE creating a session', async () => {
-  let createCalls = 0
-  const ctx = {
-    get: (name) => (name === 'agents'
-      ? { create: async () => { createCalls += 1; return { agent: { followup() {} }, dispose: async () => {} } } }
-      : undefined),
-  }
+  // Sandbox is present (so the model gate is what we test), but no model route.
+  const { ctx, seen } = makeHostCtx({ withModel: false })
   const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
-  // No agentDefaultModel, no model override -> must fail before agents.create.
   await assert.rejects(
     () => port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'do the task' }),
     /模型/,
   )
-  assert.equal(createCalls, 0, 'fail-fast must reject before any session is created')
+  assert.equal(seen.create, null, 'fail-fast must reject before any session is created')
 })
 
 test('createHostPort model route: project model overrides only the model part, provider follows host', async () => {
-  const seen = {}
-  const ctx = {
-    get: (name) => {
-      if (name === 'agents') {
-        return { create: async (options) => { seen.create = options; return { agent: { followup() {} }, dispose: async () => {} } } }
-      }
-      if (name === 'agentDefaultModel') {
-        return { currentSelection: () => ({ provider: 'host-provider', model: 'host-model', reasoningEffort: 'high' }) }
-      }
-      return undefined
-    },
-  }
+  const { ctx, seen } = makeHostCtx({ withModel: false })
+  // Supply a custom model selection but no project override for provider.
+  const baseGet = ctx.get
+  ctx.get = (name) => (name === 'agentDefaultModel'
+    ? { currentSelection: () => ({ provider: 'host-provider', model: 'host-model', reasoningEffort: 'high' }) }
+    : baseGet(name))
   const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
   await port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', model: 'project-model' })
   const opts = seen.create.agentOptions
   assert.equal(opts.provider, 'host-provider', 'provider follows the host default')
   assert.equal(opts.model, 'project-model', 'project override wins for model')
   assert.equal(opts.reasoningEffort, 'high', 'effort follows the host default')
+})
+
+// ---------------------------------------------------------------------------
+// Dispatch sandbox safety (security fix): dispatched agents MUST run inside
+// workspace-write, regardless of the profile default (which was danger-full-access).
+// ---------------------------------------------------------------------------
+
+test('createSession seeds sandbox/mode=workspace-write into the new session', async () => {
+  const { ctx, seen } = makeHostCtx()
+  const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go' })
+  const seed = seen.create?.seed
+  assert.ok(Array.isArray(seed), 'agents.create must receive a seed')
+  const pin = seed.find((e) => e.type === 'sandbox/mode')
+  assert.ok(pin, 'seed must contain a sandbox/mode event')
+  assert.equal(pin.data?.mode, 'workspace-write', 'seed pins workspace-write')
+  assert.equal(pin.seq, 0, 'seed event seq starts at 0')
+})
+
+test('createSession refuses when resolved sandbox mode is NOT workspace-write and disposes the session', async () => {
+  // Host resolves back to danger-full-access even though we seeded workspace-write.
+  const { ctx, seen } = makeHostCtx({ resolvedMode: 'danger-full-access' })
+  const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await assert.rejects(
+    () => port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go' }),
+    /沙箱模式/,
+    'a non-workspace-write boundary must be refused',
+  )
+  assert.equal(seen.disposed, 1, 'the unverified session must be disposed')
+})
+
+test('createSession never allows a danger-full-access project permission (capped at workspace-write)', async () => {
+  const { ctx, seen } = makeHostCtx()
+  const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await assert.rejects(
+    () => port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', permission: 'danger-full-access' }),
+    /workspace-write/,
+    'auto-dispatch must refuse a full-access permission request',
+  )
+  assert.equal(seen.create, null, 'no session created for a disallowed permission')
+  // And the legitimate workspace-write permission is accepted.
+  const ok = makeHostCtx()
+  const okPort = createHostPort({ ctx: ok.ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await okPort.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', permission: 'workspace-write' })
+  assert.ok(ok.seen.create, 'workspace-write permission is allowed')
+  const pin = ok.seen.create.seed.find((e) => e.type === 'sandbox/mode')
+  assert.equal(pin.data.mode, 'workspace-write')
 })
 
