@@ -14,11 +14,11 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus } from './state.js'
-import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot } from './worktree.js'
+import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot, expandHome } from './worktree.js'
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 
 export const SCHEMA_VERSION = 1
@@ -145,7 +145,10 @@ function normalizeIntake(input, current = {}) {
 }
 
 export function emptyState() {
-  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [] }
+  // `settings.worktreeRoot` is the global "worktrees root" (empty = use default).
+  // It is read once at project creation and frozen onto the project; changing it
+  // never moves an existing project's or card's worktree.
+  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [], settings: { worktreeRoot: '' } }
 }
 
 export class FactoryStore {
@@ -163,7 +166,10 @@ export class FactoryStore {
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new Error(`不支持的 schemaVersion：${parsed.schemaVersion}（期望 ${SCHEMA_VERSION}）`)
     }
-    return { ...emptyState(), ...parsed }
+    // Merge nested settings too: an older state file has no `settings`, and a
+    // partial one may lack `worktreeRoot`. Keep the defaults for missing keys.
+    const base = emptyState()
+    return { ...base, ...parsed, settings: { ...base.settings, ...(parsed.settings ?? {}) } }
   }
 
   _commit() {
@@ -192,6 +198,33 @@ export class FactoryStore {
     return card
   }
 
+  // ---- global settings ----------------------------------------------------
+
+  /** Raw saved worktrees-root string ('' = use default), plus its resolved form. */
+  getWorktreeSettings() {
+    const raw = typeof this.state.settings?.worktreeRoot === 'string' ? this.state.settings.worktreeRoot.trim() : ''
+    return { worktreeRoot: raw, resolved: raw === '' ? defaultWorktreeRoot() : resolve(expandHome(raw)) }
+  }
+
+  /**
+   * Set the global "worktrees root" used as the default for NEW projects.
+   * Validated through the same hard gate as a per-project root (Plan B): an
+   * empty string clears it (back to the default); a non-empty value must expand
+   * to an allowed absolute path. Does not touch any existing project or card.
+   */
+  updateWorktreeRoot(value) {
+    const raw = typeof value === 'string' ? value.trim() : ''
+    if (raw !== '') assertWorktreeRoot(resolve(expandHome(raw)))
+    this.state.settings = { ...(this.state.settings ?? {}), worktreeRoot: raw }
+    this._commit()
+    return this.getWorktreeSettings()
+  }
+
+  /** Effective default for a brand-new project: saved global root, or built-in. */
+  defaultProjectWorktreeRoot() {
+    return this.getWorktreeSettings().resolved
+  }
+
   // ---- projects -----------------------------------------------------------
 
   listProjects() {
@@ -208,7 +241,9 @@ export class FactoryStore {
     const rootPath = reqString(input.rootPath, 'rootPath')
     const rootCheck = checkProjectRoot(rootPath)
     if (!rootCheck.ok) throw new Error(rootCheck.error)
-    const worktreeRoot = input.worktreeRoot ? reqString(input.worktreeRoot, 'worktreeRoot') : defaultWorktreeRoot()
+    const worktreeRoot = input.worktreeRoot
+      ? reqString(input.worktreeRoot, 'worktreeRoot')
+      : this.defaultProjectWorktreeRoot()
     assertWorktreeRoot(worktreeRoot)
     const project = {
       id: optionalString(input.id) || randomUUID(),

@@ -24,16 +24,20 @@ import {
   worktreeStatus,
 } from '../worktree.js'
 
-test('worktree path is <root>/<projectId>/<cardId> and defaults outside the data root', () => {
-  const project = { id: 'proj-1' }
+test('worktree path is <root>/<name-slug>-<id8>/<cardId> and defaults outside the data root', () => {
+  // The segment is now the readable name slug plus the first 8 chars of the id,
+  // NOT the bare id. A fixture whose id happens to equal its slug (like the old
+  // `{id:'proj-1'}`) would pass both shapes and hide a regression, so use a name
+  // and an id that differ.
+  const project = { id: 'a1b2c3d4-REST', name: 'My Blog' }
   assert.equal(
     worktreePathFor(project, 'card-9'),
-    join(defaultWorktreeRoot(), 'proj-1', 'card-9'),
+    join(defaultWorktreeRoot(), 'my-blog-a1b2c3d4', 'card-9'),
   )
   // A custom root is honoured.
   assert.equal(
-    worktreePathFor({ id: 'p', worktreeRoot: '/srv/wt' }, 'c'),
-    join('/srv/wt', 'p', 'c'),
+    worktreePathFor({ id: 'deadbeef', name: 'X', worktreeRoot: '/srv/wt' }, 'c'),
+    join('/srv/wt', 'x-deadbeef', 'c'),
   )
 })
 

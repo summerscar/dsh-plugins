@@ -59,5 +59,13 @@
   "setupSaving": "Saving…",
   "setupSaved": "Saved",
   "setupPreparing": "Preparing worktree…",
-  "setupRolledBack": "Rolled back: worktree and branch removed"
+  "setupRolledBack": "Rolled back: worktree and branch removed",
+  "wtRootTitle": "Worktrees root",
+  "wtRootPurpose": "Set the shared location for new projects' worktrees; each project gets its own subdirectory under it",
+  "wtRootLabel": "Worktrees root (leave blank for default)",
+  "wtRootPlaceholder": "~/dsh-factory-worktrees",
+  "wtRootHint": "Leave blank to use the default `~/dsh-factory-worktrees` (resolved from your home directory)",
+  "wtRootResolved": "Effective now: {path}",
+  "wtRootScope": "Applies only to worktrees created from now on; existing worktrees are unaffected",
+  "wtRootDanger": "Worktrees root cannot be inside the DSH data directory"
 }

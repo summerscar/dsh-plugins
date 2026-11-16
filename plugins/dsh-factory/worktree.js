@@ -14,7 +14,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { cleanGitEnv } from './git-env.js'
@@ -56,15 +56,28 @@ export function resolveDataRoot(env = process.env) {
   return resolve(raw !== '' ? expandHome(raw) : join(homedir(), '.dsh'))
 }
 
+const WORKTREE_DIRNAME = 'dsh-factory-worktrees'
+
 /**
- * Centralised worktree root, per project + card, deliberately outside the data
- * root. `DSH_FACTORY_WORKTREE_ROOT` overrides it; the neutral default is a temp
- * directory so no host-private absolute path ships with the plugin. Also resolved
- * per call rather than at module load.
+ * The single narrow exception subtree: `<home>/dsh-factory-worktrees`.
+ * Resolved live from `homedir()` on every call (never captured at load time,
+ * never a hardcoded path). This is deliberately independent of
+ * `DSH_FACTORY_WORKTREE_ROOT`: an explicit override does NOT inherit the
+ * exception — it must still sit outside the data root on its own.
+ */
+function homeWorktreeDir() {
+  return resolve(homedir(), WORKTREE_DIRNAME)
+}
+
+/**
+ * Centralised worktree root, per project + card. `DSH_FACTORY_WORKTREE_ROOT`
+ * overrides it; the default is `~/dsh-factory-worktrees` under the user's home.
+ * Resolved per call rather than at module load, and expressed via `homedir()`
+ * so no host-private absolute path ships with the plugin.
  */
 export function defaultWorktreeRoot(env = process.env) {
   const raw = typeof env?.DSH_FACTORY_WORKTREE_ROOT === 'string' ? env.DSH_FACTORY_WORKTREE_ROOT.trim() : ''
-  return resolve(raw !== '' ? expandHome(raw) : join(tmpdir(), 'dsh-factory-worktrees'))
+  return resolve(raw !== '' ? expandHome(raw) : homeWorktreeDir())
 }
 
 /** True when `child` is `parent` itself or lives beneath it (separator-safe). */
@@ -80,18 +93,40 @@ export function isInsideDataRoot(target) {
   return isPathInside(resolveDataRoot(), target)
 }
 
+/**
+ * Plan B containment gate, used by all three worktree boundary checks.
+ *
+ * An absolute path is allowed when EITHER:
+ *   1. it is outside the data root (the general-machine case — zero behaviour
+ *      change), OR
+ *   2. it lives inside the single narrow `<home>/dsh-factory-worktrees` subtree
+ *      (the case where HOME is nested under the data root, e.g. this container).
+ *
+ * `resolveDataRoot()` and `homedir()` are BOTH resolved live on every call, so a
+ * layout change between calls is reflected and nothing is cached. The exception
+ * is exactly that one subtree — any other path under the data root (session DB,
+ * caches, other projects' state, or a same-named directory elsewhere) stays
+ * forbidden. No host-private absolute path is hard-coded.
+ */
+export function isAllowedWorktreePath(target) {
+  if (typeof target !== 'string' || target.trim() === '' || !isAbsolute(target)) return false
+  const resolved = resolve(target)
+  if (!isInsideDataRoot(resolved)) return true
+  return isPathInside(homeWorktreeDir(), resolved)
+}
+
 export function worktreeRootOf(project) {
   const root = project?.worktreeRoot
   return resolve(typeof root === 'string' && root.trim() !== '' ? root : defaultWorktreeRoot())
 }
 
-/** Throw unless the worktree root is an absolute path outside the data root. */
+/** Throw unless the worktree root is absolute and an allowed path (see Plan B). */
 export function assertWorktreeRoot(root) {
   if (typeof root !== 'string' || root.trim() === '' || !isAbsolute(root)) {
     throw new Error('worktreeRoot 必须是绝对路径')
   }
-  if (isInsideDataRoot(root)) {
-    throw new Error(`worktreeRoot 不得位于数据根 ${resolveDataRoot()} 内`)
+  if (!isAllowedWorktreePath(root)) {
+    throw new Error(`worktreeRoot 不得位于数据根 ${resolveDataRoot()} 内（允许的数据根内例外：<home>/${WORKTREE_DIRNAME} 子树）`)
   }
   return resolve(root)
 }
@@ -119,17 +154,45 @@ export function checkProjectRoot(rootPath) {
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/
 
 /**
- * `<worktreeRoot>/<projectId>/<cardId>` — per project, per card. Refuses path
- * segments that could escape the root and refuses a result inside the data root.
+ * Readable, filesystem-safe directory segment for a project: `<name-slug>-<id>`.
+ *
+ * - The slug keeps the project name legible (lowercase, runs of anything outside
+ *   `[a-z0-9]` collapsed to `-`, trimmed, length-capped). Non-Latin names collapse
+ *   to a slug that may be empty; the id suffix still guarantees a safe segment.
+ * - The suffix is derived ONLY from `project.id`, never the name, so renaming a
+ *   project keeps the same segment and in-flight cards do not lose their path.
+ *   `project.id` is a UUID and already inside SAFE_SEGMENT; a short prefix is
+ *   enough to keep two same-named projects distinct.
+ *
+ * Deterministic, SAFE_SEGMENT-clean, unique per project, rename-stable.
+ */
+export function projectSegment(project) {
+  const name = typeof project?.name === 'string' ? project.name : ''
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '')
+  const id = String(project?.id ?? '')
+  const suffix = id.slice(0, 8)
+  return slug === '' ? suffix : `${slug}-${suffix}`
+}
+
+/**
+ * `<worktreeRoot>/<project segment>/<cardId>` — per project, per card. The
+ * project segment is readable (`projectSegment`); cardId stays a UUID. Refuses
+ * path segments that could escape the root and refuses a result that is not an
+ * allowed path (Plan B: outside the data root or the one narrow home subtree).
  */
 export function worktreePathFor(project, cardId) {
   const root = assertWorktreeRoot(worktreeRootOf(project))
-  const projectId = String(project?.id ?? '')
+  const segment = projectSegment(project)
   const card = String(cardId ?? '')
-  if (!SAFE_SEGMENT.test(projectId)) throw new Error(`projectId 含非法字符：${projectId}`)
+  if (!SAFE_SEGMENT.test(segment)) throw new Error(`项目目录段含非法字符：${segment}`)
   if (!SAFE_SEGMENT.test(card)) throw new Error(`cardId 含非法字符：${card}`)
-  const path = join(root, projectId, card)
-  if (isInsideDataRoot(path)) throw new Error('worktree 路径落入数据根')
+  const path = join(root, segment, card)
+  if (!isAllowedWorktreePath(path)) throw new Error('worktree 路径不得位于数据根（允许的数据根内例外：<home>/dsh-factory-worktrees 子树）')
   return path
 }
 
@@ -176,7 +239,7 @@ function clearBranch(repoPath, branch) {
 export function createWorktree({ repoPath, worktreePath, branch, baseBranch = 'main', fetch = false }) {
   if (!isAbsolute(repoPath)) throw new Error('repoPath 必须是绝对路径')
   if (!isAbsolute(worktreePath)) throw new Error('worktreePath 必须是绝对路径')
-  if (isInsideDataRoot(worktreePath)) throw new Error('worktree 路径不得位于数据根内')
+  if (!isAllowedWorktreePath(worktreePath)) throw new Error('worktree 路径不得位于数据根（允许的数据根内例外：<home>/dsh-factory-worktrees 子树）')
   if (fetch) {
     const fetched = git(repoPath, ['fetch', 'origin', baseBranch])
     if (fetched.status !== 0) throw new Error(`git fetch 失败：${(fetched.stderr || '').trim()}`)

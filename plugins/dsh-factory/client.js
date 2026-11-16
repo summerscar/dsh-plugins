@@ -134,6 +134,14 @@ window.__ModuleLoader__.load({
       setupSaved: "已保存",
       setupPreparing: "准备 worktree 中…",
       setupRolledBack: "已回滚：worktree 与分支已清理",
+      wtRootTitle: "Worktrees 根目录",
+      wtRootPurpose: "设置新项目 worktree 的统一存放位置，各项目会在此目录下有独立子目录",
+      wtRootLabel: "Worktrees root（留空即用默认）",
+      wtRootPlaceholder: "~/dsh-factory-worktrees",
+      wtRootHint: "留空使用默认 `~/dsh-factory-worktrees`（按用户主目录解析）",
+      wtRootResolved: "当前生效：{path}",
+      wtRootScope: "仅对之后新建的 worktree 生效；已有 worktree 不受影响",
+      wtRootDanger: "worktrees root 不能位于 DSH 数据目录内",
     }
     const en = {
       settings: "Project Factory",
@@ -193,6 +201,14 @@ window.__ModuleLoader__.load({
       setupSaved: "Saved",
       setupPreparing: "Preparing worktree…",
       setupRolledBack: "Rolled back: worktree and branch removed",
+      wtRootTitle: "Worktrees root",
+      wtRootPurpose: "Set the shared location for new projects' worktrees; each project gets its own subdirectory under it",
+      wtRootLabel: "Worktrees root (leave blank for default)",
+      wtRootPlaceholder: "~/dsh-factory-worktrees",
+      wtRootHint: "Leave blank to use the default `~/dsh-factory-worktrees` (resolved from your home directory)",
+      wtRootResolved: "Effective now: {path}",
+      wtRootScope: "Applies only to worktrees created from now on; existing worktrees are unaffected",
+      wtRootDanger: "Worktrees root cannot be inside the DSH data directory",
     }
 
     async function callApi(method, path, body) {
@@ -401,6 +417,59 @@ window.__ModuleLoader__.load({
       return h('div', { key: 'worktreeSetup', style: box }, rows)
     }
 
+    // Global "worktrees root": one collapsible bar at the top of the page. Its
+    // value is the raw saved string (blank = built-in default); the resolved
+    // absolute path is read back from the backend and shown read-only. Saving
+    // only affects worktrees created from now on — existing projects/cards keep
+    // the root frozen onto them at creation (server-side), so nothing is moved.
+    function WorktreesRootSetting({ t }) {
+      const [value, setValue] = useState('')
+      const [resolved, setResolved] = useState('')
+      const [saving, setSaving] = useState(false)
+      const [message, setMessage] = useState('')
+      const [error, setError] = useState('')
+
+      useEffect(() => {
+        let live = true
+        callApi('GET', '/settings').then((data) => {
+          if (!live) return
+          setValue(data?.settings?.worktreeRoot ?? '')
+          setResolved(data?.settings?.resolved ?? '')
+        }).catch((err) => { if (live) setError(err.message) })
+        return () => { live = false }
+      }, [])
+
+      const save = async () => {
+        setSaving(true); setError(''); setMessage('')
+        try {
+          const data = await callApi('PATCH', '/settings', { worktreeRoot: value })
+          setValue(data?.settings?.worktreeRoot ?? '')
+          setResolved(data?.settings?.resolved ?? '')
+          setMessage(t('setupSaved'))
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const inputStyle = { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' }
+      return h('div', { key: 'wtRoot', style: { background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } }, [
+        h('div', { key: 'label', style: { fontSize: 13, color: T.ink, fontWeight: 500 } }, t('wtRootLabel')),
+        h('div', { key: 'purpose', style: small }, t('wtRootPurpose')),
+        h('input', {
+          key: 'input', value, placeholder: t('wtRootPlaceholder'), spellCheck: false,
+          style: inputStyle, onChange: (event) => setValue(event.target.value),
+        }),
+        h('div', { key: 'hint', style: small }, t('wtRootHint')),
+        h('div', { key: 'resolved', style: { ...small, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, t('wtRootResolved', { path: resolved || '—' })),
+        h('div', { key: 'scope', style: small }, t('wtRootScope')),
+        h('div', { key: 'danger', style: { ...small, color: T.warning } }, t('wtRootDanger')),
+        h('div', { key: 'saveRow', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h(Button, { key: 'save', disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('setupSave')),
+          message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+          error ? h('span', { key: 'err', style: { ...small, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+        ].filter(Boolean)),
+      ])
+    }
+
     function BoardPage({ t }) {
       const [projects, setProjects] = useState([])
       const [boards, setBoards] = useState([])
@@ -413,6 +482,7 @@ window.__ModuleLoader__.load({
       const [newBoardName, setNewBoardName] = useState('')
       const [newCardTitle, setNewCardTitle] = useState('')
       const [showSetup, setShowSetup] = useState(false)
+      const [showWtRoot, setShowWtRoot] = useState(false)
 
       const load = useCallback(async () => {
         setBusy(true)
@@ -466,6 +536,19 @@ window.__ModuleLoader__.load({
       if (error) {
         children.push(h('div', { key: 'error', style: { color: T.danger, fontSize: 13, background: T.panel, border: `1px solid ${T.danger}`, borderRadius: 6, padding: '6px 10px' } }, `${t('errorPrefix')}${error}`))
       }
+
+      // Global worktrees-root bar: page-top, collapsible, always visible (even
+      // before any project exists). Not tied to a selected project — its value
+      // is the default used by projects created from now on.
+      children.push(h('div', { key: 'wtRootToggle', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+        h('button', {
+          key: 'toggle', type: 'button',
+          style: { padding: '4px 10px', borderRadius: 6, border: `1px solid ${T.line}`, background: T.card, color: T.ink, fontSize: 12, cursor: 'pointer' },
+          onClick: () => setShowWtRoot(!showWtRoot),
+        }, t('wtRootTitle')),
+        h('span', { key: 'hint', style: { fontSize: 12, color: T.muted } }, t('wtRootPurpose')),
+      ]))
+      if (showWtRoot) children.push(h(WorktreesRootSetting, { key: 'wtRootBar', t }))
 
       if (projects.length === 0) {
         children.push(h('div', { key: 'empty', style: { color: T.muted, fontSize: 13 } }, t('noProjects')))

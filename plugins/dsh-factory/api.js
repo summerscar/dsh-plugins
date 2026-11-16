@@ -47,6 +47,13 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         })
       }
 
+      if (method === 'GET' && seg.length === 1 && seg[0] === 'settings') {
+        return ok({ settings: store.getWorktreeSettings() })
+      }
+      if (method === 'PATCH' && seg.length === 1 && seg[0] === 'settings') {
+        return ok({ settings: store.updateWorktreeRoot(body.worktreeRoot) })
+      }
+
       if (method === 'GET' && seg.length === 1 && seg[0] === 'audit') {
         return ok({
           events: collectAudit(store, {

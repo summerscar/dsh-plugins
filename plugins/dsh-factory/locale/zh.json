@@ -59,5 +59,13 @@
   "setupSaving": "保存中…",
   "setupSaved": "已保存",
   "setupPreparing": "准备 worktree 中…",
-  "setupRolledBack": "已回滚：worktree 与分支已清理"
+  "setupRolledBack": "已回滚：worktree 与分支已清理",
+  "wtRootTitle": "Worktrees 根目录",
+  "wtRootPurpose": "设置新项目 worktree 的统一存放位置，各项目会在此目录下有独立子目录",
+  "wtRootLabel": "Worktrees root（留空即用默认）",
+  "wtRootPlaceholder": "~/dsh-factory-worktrees",
+  "wtRootHint": "留空使用默认 `~/dsh-factory-worktrees`（按用户主目录解析）",
+  "wtRootResolved": "当前生效：{path}",
+  "wtRootScope": "仅对之后新建的 worktree 生效；已有 worktree 不受影响",
+  "wtRootDanger": "worktrees root 不能位于 DSH 数据目录内"
 }
