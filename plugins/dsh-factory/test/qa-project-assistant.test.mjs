@@ -9,6 +9,7 @@
  * fake would hide a broken real validator behind a green test.
  */
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,10 +41,31 @@ function makeRepo() {
 
 function setup() {
   const tmp = mkdtempSync(join(tmpdir(), 'qa-assist-store-'))
-  const file = join(tmp, 'factory.json')
+  const file = join(tmp, 'factory.sqlite')
   const store = new FactoryStore({ file })
   const specs = new Map(factoryToolSpecs({ store }).map((s) => [s.name, s]))
   return { store, specs, file, cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
+}
+
+// Persistence is now SQLite: the file is a binary database, not JSON text.
+// To prove a write really landed, REOPEN a fresh store on the same file and read
+// through the public API — stronger than parsing a file, and the only correct way
+// after the engine swap. To simulate a dirty on-disk field, edit the state.data
+// JSON column directly via node:sqlite, exactly where the store persists it.
+function reopen(file) {
+  const store = new FactoryStore({ file })
+  const state = store.state
+  store.db.close()
+  return state
+}
+function patchStateRow(file, mutate) {
+  const db = new DatabaseSync(file)
+  try {
+    const row = db.prepare('SELECT data FROM state WHERE id = 1').get()
+    const data = JSON.parse(row.data)
+    mutate(data)
+    db.prepare('UPDATE state SET data = ? WHERE id = 1').run(JSON.stringify(data))
+  } finally { db.close() }
 }
 
 // --- J1 ----------------------------------------------------------------------
@@ -156,8 +178,8 @@ test('direct create: a valid git repo root is registered; no git write is attemp
       name: 'QA', rootPath: repo.root, copyFiles: ['.env.local'], postCreate: '',
     })
     assert.equal(store.state.projects.length, 1)
-    // Direct disk read — never require(): Node caches JSON modules.
-    assert.equal(JSON.parse(readFileSync(file, 'utf8')).projects.length, 1)
+    // Reopen the SQLite store to prove the write really persisted (no JSON parse).
+    assert.equal(reopen(file).projects.length, 1)
     const saved = store.getProject(created.id)
     assert.equal(saved.rootPath, repo.root)
     assert.deepEqual(saved.copyFiles, ['.env.local'])
@@ -176,7 +198,7 @@ test('direct create: a non-existent / non-git path is refused with ZERO writes',
       )
     }
     assert.equal(store.state.projects.length, 0)
-    assert.equal(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).projects.length : 0, 0)
+    assert.equal(reopen(file).projects.length, 0, 'a refused create persisted nothing')
   } finally { cleanup() }
 })
 
@@ -309,7 +331,8 @@ test('W-13: worktree isolation is mandatory, no off switch is persisted', async 
     const r = await dispatchCard({ store, cardId: c.id, port })
     assert.equal(calls.length, 1, 'createWorktree must run unconditionally')
     assert.notEqual(r.worktreePath, '/workspace/p')
-    assert.equal('worktreeIsolation' in JSON.parse(readFileSync(file, 'utf8')).projects[0], false)
+    assert.equal('worktreeIsolation' in reopen(file).projects[0], false,
+      'the off switch must not be persisted (read back from SQLite)')
   } finally { cleanup() }
 })
 
@@ -412,11 +435,11 @@ test('PATCH autonomy: only the fields present change; identity and rootPath neve
 
     // Rule 5: mixing the two disjoint shapes is refused AND writes nothing.
     // A 400 alone is not enough — a handler could half-apply before rejecting.
-    const beforeDisk = JSON.parse(readFileSync(file, 'utf8')).projects[0]
+    const beforeDisk = reopen(file).projects[0]
     const mixed = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'L2', copyFiles: ['.other'] } })
     assert.equal(mixed.status, 400)
     assert.match(mixed.body.error, /混改/)
-    const afterDisk = JSON.parse(readFileSync(file, 'utf8')).projects[0]
+    const afterDisk = reopen(file).projects[0]
     assert.equal(afterDisk.autonomy, beforeDisk.autonomy, 'a refused mixed PATCH must not write autonomy')
     assert.deepEqual(afterDisk.copyFiles, beforeDisk.copyFiles, 'a refused mixed PATCH must not write copyFiles')
   } finally { cleanup() }
@@ -444,13 +467,12 @@ test('PATCH autonomy: a junk value is REFUSED and leaves every field untouched',
 test('legacy/dirty autonomy on disk: the store still loads it, and it never looks auto-running', () => {
   // store._load() validates only schemaVersion — autonomy is NOT checked on read.
   // That is deliberate (a bad field must not reject the whole store), so every
-  // reader must defend itself. Proven here by writing junk straight to the file.
+  // reader must defend itself. Proven here by writing junk straight into the
+  // persisted state.data JSON column (SQLite is binary; no legacy JSON file).
   const { store, file, cleanup } = setup()
   try {
     const p = store.createProject({ name: 'p', rootPath: '/workspace/p' })
-    const raw = JSON.parse(readFileSync(file, 'utf8'))
-    raw.projects[0].autonomy = 'L9'
-    writeFileSync(file, JSON.stringify(raw, null, 2))
+    patchStateRow(file, (data) => { data.projects[0].autonomy = 'L9' })
 
     const reloaded = new FactoryStore({ file })
     const loaded = reloaded.getProject(p.id)

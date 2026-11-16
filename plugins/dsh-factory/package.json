@@ -62,14 +62,18 @@
     "dsh": ">=0.2.2-rc.1"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.2.2-rc.1",
-    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1"
+    "@deepseek-ai/dsh-home-paths": ">=0.2.2-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-tools": {
       "optional": true
     },
     "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-home-paths": {
       "optional": true
     }
   },
@@ -120,5 +124,8 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "icon": "./icon.svg"
+  "icon": "./icon.svg",
+  "devDependencies": {
+    "@deepseek-ai/dsh-home-paths": "0.2.2-rc.3"
+  }
 }

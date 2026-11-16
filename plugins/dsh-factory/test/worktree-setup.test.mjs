@@ -7,6 +7,7 @@
  * file copy is proven, not just described.
  */
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -276,12 +277,16 @@ test('updatePreparation changes only the three preparation fields, old state fil
     assert.equal(updated.postCreate, 'echo ok')
     assert.equal(updated.rootPath, '/workspace/p', 'repo identity is untouched')
 
-    // A state file written before these fields existed must still load.
-    const legacy = JSON.parse(readFileSync(store.file, 'utf8'))
-    delete legacy.projects[0].copyFiles
-    delete legacy.projects[0].postCreate
-    delete legacy.projects[0].postCreateTimeoutMs
-    writeFileSync(store.file, `${JSON.stringify(legacy, null, 2)}\n`)
+    // A state row written before these fields existed must still load. The
+    // state lives in the SQLite state.data JSON column; edit it there directly.
+    const db = new DatabaseSync(store.file)
+    try {
+      const legacy = JSON.parse(db.prepare('SELECT data FROM state WHERE id = 1').get().data)
+      delete legacy.projects[0].copyFiles
+      delete legacy.projects[0].postCreate
+      delete legacy.projects[0].postCreateTimeoutMs
+      db.prepare('UPDATE state SET data = ? WHERE id = 1').run(JSON.stringify(legacy))
+    } finally { db.close() }
     const reloaded = new FactoryStore({ file: store.file })
     assert.deepEqual(reloaded.getProject(project.id).copyFiles, undefined)
     assert.equal(hasPreparation(reloaded.getProject(project.id)), false, 'legacy project is a no-op')

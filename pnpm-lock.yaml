@@ -212,11 +212,20 @@ importers:
 
   plugins/dsh-connect-agentscope-platform: {}
 
-  plugins/dsh-factory: {}
+  plugins/dsh-factory:
+    devDependencies:
+      '@deepseek-ai/dsh-home-paths':
+        specifier: 0.2.2-rc.3
+        version: 0.2.2-rc.3
 
   plugins/dsh-mnemon-sync: {}
 
 packages:
+
+  '@deepseek-ai/dsh-home-paths@0.2.2-rc.3':
+    resolution: {integrity: sha512-6T9lBevc9Myz5jgBCBdHQsBWTqpq3POxQ6PpuhqkXnAn38DnUcA52/79SUTK8tkkkFE1vAnXBhZfY6ePCzDAGQ==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.1.0
 
   b4a@1.9.0:
     resolution: {integrity: sha512-dpfcF9fDNR6++cthXR67iyhgqWy9CBouAvIWhIntzBG6cvK/cnIPiZQjBwi/ZqjjBEDGfoNDtmB0kTjroOJ3pQ==}
@@ -301,6 +310,8 @@ packages:
     resolution: {integrity: sha512-vlLytXkeP4xvEq2otHeJfSQIRyWxo/oZGEbXrtEEF9Hnmrdly59sUbzZ/QgyWuLYHctCHxFF4tRQZNQ9k60ExQ==}
 
 snapshots:
+
+  '@deepseek-ai/dsh-home-paths@0.2.2-rc.3': {}
 
   b4a@1.9.0: {}
 

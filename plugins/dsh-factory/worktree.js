@@ -18,6 +18,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { cleanGitEnv } from './git-env.js'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
 /**
  * Expand a leading `~` / `~/` / `~\` against the OS home directory. Uses
@@ -52,8 +53,10 @@ export function expandHome(value) {
  * the environment at the moment of the check.
  */
 export function resolveDataRoot(env = process.env) {
-  const raw = typeof env?.DSH_HOME === 'string' ? env.DSH_HOME.trim() : ''
-  return resolve(raw !== '' ? expandHome(raw) : join(homedir(), '.dsh'))
+  // Delegate to the host's canonical helper: explicit config → `$DSH_HOME`
+  // (blank treated as unset) → `~/.dsh`, with `~` expansion. `env` stays injectable
+  // so offline tests can pin a temporary data root. No local fallback duplicated.
+  return resolveDshHome(undefined, env)
 }
 
 const WORKTREE_DIRNAME = 'dsh-factory-worktrees'

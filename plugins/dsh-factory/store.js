@@ -1,10 +1,13 @@
 /**
  * dsh-factory — three-layer store: Project → Board → Card (PRD §7).
  *
- * Zero-dependency JSON persistence: one file, `schemaVersion` stamped, writes
- * are atomic (temp file + rename) so a crash mid-write cannot leave a half file
- * that fails to parse. This is deliberately a plain file, not SQLite — the PRD
- * defers that switch to a data-size threshold.
+ * SQLite persistence: the in-memory `state` object (projects/boards/cards/
+ * events/settings, schemaVersion stamped) is the single source of truth for
+ * every public method; `_load` reads one row at construction and `_commit`
+ * upserts that row in one transaction on every change. A crash mid-write cannot
+ * leave a half state row (SQLite statement atomicity). The whole-state-in-one-
+ * row shape keeps ~30 public methods and the `store.state.*` direct reads in
+ * api.js/audit.js untouched — this is a persistence swap, not a schema rewrite.
  *
  * The store owns *state* and the two safety invariants that do not belong in a
  * route handler:
@@ -13,7 +16,8 @@
  *     (AG-2 / §9.4) and leave an audit record (actor + time + status snapshot, D4).
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -152,31 +156,50 @@ export function emptyState() {
 }
 
 export class FactoryStore {
-  constructor({ file }) {
+  /**
+   * @param file - SQLite database file path (this is the store's own file).
+   *   Each distinct path is an independent, fresh database — tests use a temp
+   *   path per case for isolation. A new path starts as an empty store.
+   */
+  constructor({ file } = {}) {
     if (typeof file !== 'string' || file.trim() === '') throw new Error('FactoryStore 需要一个数据文件路径')
     this.file = file
-    this.state = this._load()
+    mkdirSync(dirname(this.file), { recursive: true })
+    this.db = new DatabaseSync(this.file)
+    this.db.exec('CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL)')
+    this._upsert = this.db.prepare('INSERT INTO state (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data')
+    this._select = this.db.prepare('SELECT data FROM state WHERE id = 1')
+    try {
+      this.state = this._load()
+    } catch (error) {
+      // Do not leak an open handle on a failed construction — a retry must be
+      // able to reopen the database immediately.
+      try { this.db.close() } catch { /* best effort */ }
+      throw error
+    }
   }
 
+  /** Read the single state row; a fresh database yields emptyState. */
   _load() {
-    if (!existsSync(this.file)) return emptyState()
-    const raw = readFileSync(this.file, 'utf8').trim()
-    if (raw === '') return emptyState()
+    const row = this._select.get()
+    if (row === undefined || typeof row.data !== 'string') return emptyState()
+    return this._parseState(row.data)
+  }
+
+  /** Validate + normalise one serialised state (schemaVersion + nested settings). */
+  _parseState(raw) {
     const parsed = JSON.parse(raw)
     if (parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new Error(`不支持的 schemaVersion：${parsed.schemaVersion}（期望 ${SCHEMA_VERSION}）`)
     }
-    // Merge nested settings too: an older state file has no `settings`, and a
-    // partial one may lack `worktreeRoot`. Keep the defaults for missing keys.
+    // A partial state lacks `settings` or `worktreeRoot`; keep the defaults.
     const base = emptyState()
     return { ...base, ...parsed, settings: { ...base.settings, ...(parsed.settings ?? {}) } }
   }
 
+  /** Persist the whole state in one atomic upsert. */
   _commit() {
-    mkdirSync(dirname(this.file), { recursive: true })
-    const tmp = `${this.file}.tmp-${process.pid}-${Date.now()}`
-    writeFileSync(tmp, `${JSON.stringify(this.state, null, 2)}\n`, 'utf8')
-    renameSync(tmp, this.file)
+    this._upsert.run(JSON.stringify(this.state))
     return this.state
   }
 

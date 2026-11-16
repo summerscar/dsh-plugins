@@ -11,7 +11,7 @@
  * validator cannot be imported here (ERR_MODULE_NOT_FOUND) — noted in the report.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -193,6 +193,11 @@ test('TB-7 assertRoot still runs before precheck: a non-repo root is refused eve
 
 test('TB-2 _SUCCESS: all three write tools still succeed with default (non-failing) ports', async () => {
   const { store, card, cleanup } = setup()
+  // A throwaway git repo so the real assertRepoRoot check passes on any
+  // machine (CI, fresh clones) — no external /workspace/factory-e2e-hono
+  // dependency.
+  const repo = mkdtempSync(join(tmpdir(), 'qa-receipt-repo-'))
+  mkdirSync(join(repo, '.git'), { recursive: true })
   try {
     const specs = new Map(factoryToolSpecs({ store }).map((s) => [s.name, s]))
     // transition: need human to triage first, then agent may plan
@@ -200,11 +205,11 @@ test('TB-2 _SUCCESS: all three write tools still succeed with default (non-faili
     assert.equal((await specs.get('factory_transition_work_item').execute({ cardId: card.id, to: 'plan' })).status, 'plan')
     assert.equal((await specs.get('factory_report').execute({ cardId: card.id, report: 'ok' })).reports, 1)
     const created = await specs.get('factory_create_project').execute({
-      name: 'real-project', rootPath: '/workspace/factory-e2e-hono',
+      name: 'real-project', rootPath: repo,
     })
     assert.equal(created.name, 'real-project')
     assert.equal(typeof created.id, 'string')
-  } finally { cleanup() }
+  } finally { rmSync(repo, { recursive: true, force: true }); cleanup() }
 })
 
 test('TB-1/6 read-only tools are NOT gated by receipt ports', async () => {

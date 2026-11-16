@@ -14,8 +14,8 @@
  * @module dsh-factory
  */
 
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
 import { createEngineStatus, defaultEngineDeps, startEngine } from './autonomy.js'
 import { createApi } from './api.js'
@@ -38,23 +38,26 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-16.38'
+export const BUILD = 'factory-2026-11-16.39'
 
 export const name = 'dsh-factory'
 
 export const inject = ['webServer', 'connection']
 
 /**
- * Where the JSON state file lives. `config.dataDir` wins, else
- * `DSH_FACTORY_DATA_DIR`, else `~/.dsh-factory`. A real deployment should point
- * this at a host-managed state directory; the default is a placeholder until the
- * host state-path API is confirmed.
+ * Where the SQLite database lives. `config.dataDir` wins, else
+ * `DSH_FACTORY_DATA_DIR`, else `<DSH home>/dsh-factory`. The DSH home itself is
+ * resolved by the host's canonical helper (explicit → `$DSH_HOME` → `~/.dsh`);
+ * this is a DATA directory, not the worktrees root (`~/dsh-factory-worktrees`).
  */
 export function resolveDataFile(config = {}) {
-  const dir = typeof config.dataDir === 'string' && config.dataDir.trim() !== ''
+  const override = typeof config.dataDir === 'string' && config.dataDir.trim() !== ''
     ? config.dataDir.trim()
-    : (process.env.DSH_FACTORY_DATA_DIR || join(homedir(), '.dsh-factory'))
-  return join(dir, 'factory.json')
+    : (typeof process.env.DSH_FACTORY_DATA_DIR === 'string' && process.env.DSH_FACTORY_DATA_DIR.trim() !== ''
+      ? process.env.DSH_FACTORY_DATA_DIR.trim()
+      : '')
+  const dir = override !== '' ? override : join(resolveDshHome(), 'dsh-factory')
+  return join(dir, 'factory.sqlite')
 }
 
 function sendJson(res, status, body) {
