@@ -14,7 +14,7 @@ English · [简体中文](docs/README.zh-CN.md)
 
 ## What it does
 
-- **Kanban across projects.** Work is organised as project → board → card. A project is one absolute root path plus the repositories under it; a card can override the repository it runs against, so projects scattered across different directories live on the same board.
+- **Kanban across projects.** Work is organised as project → board → card. A project is one absolute root path plus the repositories under it. A card's repository information is passed to its session as context only; the worktree a card runs in is always created from the project's root path, so a card never changes which directory it actually runs in.
 - **One session and one worktree per card.** Dispatching a card creates a dedicated session and isolates it in a git worktree under a per-project directory, so two cards never share a working tree.
 - **Stage continuation.** When a card moves to its next stage, the plugin carries on in the same worktree, trying in order: the session is still live and simply continues; the session ended but its history is on disk and is rebuilt onto; only when that history is unusable does it start a fresh session and record the fallback on the card. A continuation never creates a new worktree.
 - **Stops after repeated failures.** A card that fails three times in a row is marked stalled and is no longer retried automatically, so it cannot spin forever.

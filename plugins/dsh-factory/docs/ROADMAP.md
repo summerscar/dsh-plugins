@@ -145,6 +145,7 @@ Settings page, status badge, pause/take-over. **Prerequisite**: the engine behav
 | Inbox discovery is manually triggered | Scheduling belongs to P2 | — |
 | No interface entry point to delete a project | Deleting requires the HTTP endpoint (`client.js` makes no DELETE call) | Belongs to the P4 interface |
 | Deleting a project leaves its worktree behind | `deleteProject` removes the registration only; the directory stays under the worktree root | Low impact; handle it with P4 |
+| **README overstates a card's control over its repository (existing doc/code mismatch)** | Both READMEs say "a card can override the repository it runs against", but `createWorktree` at `dispatch.js:112` uses `project.rootPath`, and `card.repo` has **never** affected the repository actually worked on — it only affects the repository identifier injected into session context. Unrelated to this field split; an existing false statement | **Docs to fix**: after the `repoPath` split, state it accurately — a card can override the **repository identifier / path hint injected into the session**, while the worktree is still decided by the project root. Remove this row once done |
 
 ## 6. Research basis (summary, so it is not researched twice)
 

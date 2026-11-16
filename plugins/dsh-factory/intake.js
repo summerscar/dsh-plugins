@@ -62,6 +62,13 @@ export async function intakeIssues({ store, projectId, boardId, repo, ghPort, or
   if (typeof boardId !== 'string' || boardId === '') throw new Error('intakeIssues 需要 boardId')
   const existing = projectId === undefined ? store.listCards({}) : store.listCards({ projectId })
   const existingKeys = new Set(existing.map((card) => card.source).filter((value) => typeof value === 'string'))
+  // The card records TWO separate things: `repo` is the remote GitHub identifier
+  // (used for display / provenance), `repoPath` is the local filesystem path the
+  // session actually works in. Keep them distinct (ROADMAP §5). A global intake
+  // (no projectId) has no local root here, so repoPath stays empty and
+  // session-context falls back to the project -- never a fabricated path.
+  const project = projectId === undefined ? undefined : store.getProject(projectId)
+  const repoPath = typeof project?.rootPath === 'string' && project.rootPath !== '' ? project.rootPath : undefined
   const raw = await ghPort.listIssues(repo)
   const issues = parseIssueList(repo, raw)
   const fresh = selectNewIssues(issues, existingKeys)
@@ -69,7 +76,7 @@ export async function intakeIssues({ store, projectId, boardId, repo, ghPort, or
   for (const issue of fresh) {
     // `origin` is supplied by the engine so auto-discovered cards are auditable;
     // a person calling the HTTP intake route passes none (defaults to `system`).
-    const card = store.createCard({ boardId, title: issue.title, body: issue.body, source: issue.key, repo, origin })
+    const card = store.createCard({ boardId, title: issue.title, body: issue.body, source: issue.key, repo, ...(repoPath === undefined ? {} : { repoPath }), origin })
     created.push(card.id)
   }
   return { created, skipped: issues.length - fresh.length }

@@ -370,6 +370,11 @@ export class FactoryStore {
       boardId,
       projectId: board.projectId,
       repo: optionalString(input.repo),
+      // LOCAL filesystem path of the repository. Distinct from `repo`: `repo` is
+      // the remote identifier (e.g. "owner/name", written by issue intake), while
+      // `repoPath` is where the repo lives on disk. session-context reads
+      // `repoPath`, never `repo` (ROADMAP §5 — they mean different things).
+      repoPath: optionalString(input.repoPath),
       title: reqString(input.title, 'title'),
       body: typeof input.body === 'string' ? input.body : '',
       source: optionalString(input.source) || 'manual',

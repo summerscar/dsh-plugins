@@ -25,7 +25,11 @@ function planStatusOf(status) {
 }
 
 function repoOf(card, project) {
-  if (typeof card.repo === 'string' && card.repo !== '') return card.repo
+  // `card.repo` is the REMOTE identifier (e.g. "owner/name") — never a path. The
+  // session works on disk, so prefer the explicit local `repoPath`, then the
+  // project's own repos/rootPath. Falls back cleanly for old cards that predate
+  // `repoPath` (they simply have none, so this skips to the project).
+  if (typeof card.repoPath === 'string' && card.repoPath !== '') return card.repoPath
   const first = Array.isArray(project?.repos) ? project.repos[0] : undefined
   return first?.path ?? project?.rootPath ?? null
 }
@@ -43,6 +47,10 @@ export function buildSessionContext({ card, project } = {}) {
     phase: card.status,
     nextPhases: nextStatuses(card.status),
     repo: repoOf(card, project),
+    // Remote identifier (e.g. "owner/name") and provenance, kept separate from
+    // the local path in `repo`. Rendered only for reference; never used as a path.
+    repoRemote: typeof card.repo === 'string' && card.repo !== '' ? card.repo : null,
+    source: typeof card.source === 'string' && card.source !== '' ? card.source : null,
     branch: card.branch ?? null,
     worktreePath: card.worktreePath ?? null,
     planStatus: planStatusOf(card.status),
@@ -59,7 +67,9 @@ export function buildSessionContext({ card, project } = {}) {
     `- title: ${fields.title}`,
     `- phase: ${fields.phase}`,
     `- nextPhases: ${show(fields.nextPhases)}`,
-    `- repo: ${show(fields.repo)}`,
+    `- repo: ${show(fields.repo)} (local repository path — work here; the remote identifier, if any, is in source)`,
+    ...(fields.repoRemote === null ? [] : [`- repoRemote: ${fields.repoRemote}`]),
+    ...(fields.source === null ? [] : [`- source: ${fields.source}`]),
     `- branch: ${show(fields.branch)}`,
     `- worktreePath: ${show(fields.worktreePath)}`,
     `- planStatus: ${fields.planStatus}`,
