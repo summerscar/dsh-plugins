@@ -10,7 +10,7 @@ Lifecycle stages come from `scripts/plugin-release-states.json`, the single sour
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/README.md) | `published` | Released and in maintenance; later changes follow the normal update flow. Its capabilities and limits are described in its own README. |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/README.md) | `published` | Released and in maintenance; same update flow. See its README for account handling, the optional model provider and the credits panel. |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/README.md) | `draft` | Under active development; the source is in the repository but it has not been released. P1 add chain, P2 (L1), P3 (L2) and the P4 autonomy-level interface are all implemented; P4 acceptance passed via the test suite, the interface was re-tested on a live machine, and the P4-7a/7b global-cap proof was verified against a backend concurrency fixture; state persists in SQLite. |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/README.md) | `draft` | Under active development; the source is in the repository but it has not been released. P1 add chain, P2 (L1), P3 (L2), the P4 autonomy-level interface and a project-level GitHub identity configuration are all implemented and merged to `main`. The GitHub identity configuration adds three source kinds with fixed scopes, per-project resolution, a global connect/reconnect/revoke manager and an identity card written in plain language. State persists in SQLite. |
 
 The factory is the only plugin currently being developed. Its roadmap is the place to read both what it can do today and what is still open: [§2 of the roadmap](plugins/dsh-factory/docs/ROADMAP.md) describes current behaviour, and [§5](plugins/dsh-factory/docs/ROADMAP.md) lists known gaps. Do not read the gap list as a complete registry of verified behaviour: verify against the source and the host. The permission boundary on dispatched sessions and the write/receipt window (factory side) are both fixed and verified.
 
@@ -25,7 +25,7 @@ The phases below are the global view only. Detail, decisions and acceptance crit
 | P3 | L2: the machine approves plans (opt-in, per project) | Implemented and verified on a real machine — the machine takes `plan-review -> build` only; delivery authorization stays with a person | Roadmap §4 P3 |
 | P4 | Interface for autonomy levels, status, pause / takeover and concurrency settings | Implemented and accepted; interface re-tested on a live machine and the P4-7a/7b global-cap proof verified against a backend concurrency fixture | Roadmap §4 P4 and §5 |
 
-**Next step:** P4 (the autonomy-level interface) is now done and complete. What remains: the Work/Review card split recorded in [RESEARCH.md](plugins/dsh-factory/docs/RESEARCH.md) is a structural follow-up that still needs an explicit decision before it starts; the other known gaps stay listed in roadmap §5.
+**Next step:** The project-level GitHub identity configuration is delivered and merged to `main`. What remains: the Work/Review card split recorded in [RESEARCH.md](plugins/dsh-factory/docs/RESEARCH.md) is a structural follow-up that still needs an explicit decision before it starts; the other known gaps stay listed in roadmap §5.
 
 ## Where to look
 

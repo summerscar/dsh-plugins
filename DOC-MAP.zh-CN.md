@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；后续改动走正常更新流程。能力与限制见它自己的 README。 |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；同样的更新流程。账号处理、可选模型供应商与额度面板见其 README。 |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2（L1）、P3（L2）与 P4 自治档界面均已实现；P4 验收已过测试套件、界面已在真机复测、P4-7a/7b 全局上限证明已用后端并发夹具验过；状态持久化已换成 SQLite。 |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2（L1）、P3（L2）、P4 自治档界面与 GitHub 项目级身份配置均已实现并合入 `main`。本版新增的 GitHub 身份配置含三类来源定死作用域、按项目判级、全局区连接/重设/撤销、以及白话文案的身份卡。状态持久化已换成 SQLite。 |
 
 工厂是目前唯一在开发的插件。它现在能做什么、还有什么没解决，都要读它的路线图：[§2](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 写当前行为，[§5](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 列已知缺口。缺口清单不等于「已验证行为」的完整清单，判断以源码和真机为准。派发会话的权限边界与写入/回执窗口（工厂侧）都已修并验通。
 
@@ -25,7 +25,7 @@
 | P3 | L2：机器代批计划（按项目 opt-in） | 已实现并真机验通——机器只走 `plan-review -> build`，交付授权仍留人 | 路线图 §4 P3 |
 | P4 | 自治档位、状态、暂停／接管与并发设置的界面 | 已实现并验收；界面已在真机复测、P4-7a/7b 全局上限证明已用后端并发夹具验过 | 路线图 §4 P4 与 §5 |
 
-**下一步**：P4 自治档界面已完成、全部收口。接下来：[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，仍需明确决定才启动；其余已知缺口见路线图 §5。
+**下一步**：GitHub 项目级身份配置已交付并合入 `main`。接下来：[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，仍需明确决定才启动；其余已知缺口见路线图 §5。
 
 ## 想了解某件事，读哪份
 
