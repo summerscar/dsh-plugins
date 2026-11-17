@@ -22,6 +22,24 @@ function grant(token, login, type) {
   return { kind: 'grant', payload: { token, login, type } }
 }
 
+/** Stub the liveness-probe fetch (a plain GET /user) so token tiers verify offline. */
+function stubFetch(login) {
+  const real = globalThis.fetch
+  globalThis.fetch = async () => ({ status: 200, text: async () => JSON.stringify({ login }) })
+  return () => { globalThis.fetch = real }
+}
+
+/** Temporarily set one process env var; return a restorer for finally blocks. */
+function setEnv(key, value) {
+  const saved = process.env[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+  return () => {
+    if (saved === undefined) delete process.env[key]
+    else process.env[key] = saved
+  }
+}
+
 /** A fake ctx: captures the webServer handler and feeds injected services. */
 function harness(services = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'qa-pgh-wire-'))
@@ -121,40 +139,61 @@ async function createProject(h, overrides = {}) {
 test('PGH-14/PGH-4: /identity/:id shows binding + reads an ambient global WITHOUT hard-binding a project record', async () => {
   const creds = credStore({})
   const h = harness({ credentials: creds })
+  // DETERMINISM: apply()'s resolveIdentity reads the real process.env and a real
+  // probeGhLogin, so without injection the winning tier depends on the machine —
+  // a box with gh login lands on GH_CLI (no record read) and passes, while a bare
+  // CI runner falls through to the per-repo tier and reads a project key, which
+  // used to flip this assertion. Inject a controlled ambient env token + stub the
+  // liveness probe so the decision deterministically lands on an ambient global
+  // on EVERY machine (env token wins whenever no real gh login outranks it).
+  const restoreEnv = setEnv('GH_TOKEN', 'ghp_ambient_fixture')
+  const restoreFetch = stubFetch('ambient-user')
   try {
     const p = await createProject(h, { issueRepo: 'owner/repo' })
     const card = await h.call('GET', `/identity/${p.id}`)
     assert.equal(card.status, 200)
     assert.deepEqual(card.body.binding, { rootPath: '/workspace/p', issueRepo: 'owner/repo', bound: true })
-    // On a machine with gh login / env token this resolves to an ambient global
-    // (PGH-4: read the ready-made global, do NOT report "not connected"); on a
-    // bare machine it is "not connected". Either way it must never fabricate a
-    // per-project record just to explain the identity.
+    // With a controlled ambient token injected, the winner is an ambient global
+    // (GH_CLI if a real login outranks it, else the injected ENV_TOKEN). It must
+    // resolve to a connected global — never "not connected", never a repo record.
     const ambient = [IDENTITY_SOURCE.GH_CLI, IDENTITY_SOURCE.ENV_TOKEN]
     assert.ok(
-      card.body.identity.source === IDENTITY_SOURCE.NONE || ambient.includes(card.body.identity.source),
-      `source must be ambient-global or none, got ${card.body.identity.source}`,
+      ambient.includes(card.body.identity.source),
+      `source must be an ambient global, got ${card.body.identity.source}`,
     )
-    assert.equal(card.text.includes('token'), false, 'card response must not contain a token field')
-    assert.equal('token' in card.body.identity, false)
+    assert.equal(card.body.identity.connected, true, 'ambient global must show connected, not "not connected"')
+    // Assert the SECRET isn't echoed, not the substring "token": the source enum
+    // legitimately reads "env-token"/"gh-token" on a token-backed winner, so a
+    // naive includes('token') false-positives on CI (where those tiers actually win).
+    assert.equal(card.text.includes('ghp_ambient_fixture'), false, 'the injected token value must never be echoed')
+    assert.equal('token' in card.body.identity, false, 'no token field in the view')
     assert.equal(creds.reads.some((k) => k.includes(p.id)), false, 'no per-project record was hard-bound/read')
-  } finally { h.cleanup() }
+  } finally { restoreEnv(); restoreFetch(); h.cleanup() }
 })
 
 test('PGH-14: /identity/:id resolves a stored shared token as connected + shared, no token echo', async () => {
   const creds = credStore({ [credentialKeyOf(SHARED_KEY_ID)]: grant('ghp_secret', 'shared-user', 'shared-token-global') })
   const h = harness({ credentials: creds })
+  // DETERMINISM: keep BOTH ambient tiers OFF — clear the env token AND point PATH
+  // at an empty dir so probeGhLogin's `spawnSync('gh')` fails (a real gh login on
+  // the host would otherwise short-circuit at Tier2 and this case would never
+  // exercise the shared tier). Stub GET /user so the shared token verifies offline.
+  const emptyBin = mkdtempSync(join(tmpdir(), 'qa-pgh-nopath-'))
+  const restoreEnv = setEnv('GH_TOKEN', undefined)
+  const restorePath = setEnv('PATH', emptyBin)
+  const restoreFetch = stubFetch('shared-user')
   try {
     const p = await createProject(h)
-    // client_id empty → tier 1 disabled; gh CLI not logged in this ctx; env token
-    // from the machine may or may not be present, so assert the shared tier is at
-    // least reachable and NEVER leaks the token.
     const card = await h.call('GET', `/identity/${p.id}`)
     assert.equal(card.status, 200)
+    // client_id empty → Tier1 disabled; no gh login, no env token → Tier4 shared wins.
+    assert.equal(card.body.identity.source, IDENTITY_SOURCE.SHARED_TOKEN)
+    assert.equal(card.body.identity.connected, true)
+    assert.equal(card.body.identity.login, 'shared-user')
     assert.equal(card.text.includes('ghp_secret'), false, 'token never leaves the host')
     assert.equal('token' in card.body.identity, false)
     assert.ok(creds.reads.includes(credentialKeyOf(OAUTH_KEY_ID)) === false, 'OAuth tier skipped without client_id')
-  } finally { h.cleanup() }
+  } finally { restoreEnv(); restorePath(); restoreFetch(); rmSync(emptyBin, { recursive: true, force: true }); h.cleanup() }
 })
 
 test('PGH-14: /identity/:id is fail-closed for a missing project', async () => {
