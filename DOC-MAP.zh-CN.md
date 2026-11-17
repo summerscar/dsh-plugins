@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；后续改动走正常更新流程。能力与限制见它自己的 README。 |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；同样的更新流程。账号处理、可选模型供应商与额度面板见其 README。 |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2（L1）、P3（L2）均已实现并真机验通；状态持久化已换成 SQLite。 |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2（L1）、P3（L2）与 P4 自治档界面均已实现；P4 验收已过测试套件（真机浏览器核对仍待办）；状态持久化已换成 SQLite。 |
 
 工厂是目前唯一在开发的插件。它现在能做什么、还有什么没解决，都要读它的路线图：[§2](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 写当前行为，[§5](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 列已知缺口。缺口清单不等于「已验证行为」的完整清单，判断以源码和真机为准。派发会话的权限边界与写入/回执窗口（工厂侧）都已修并验通。
 
@@ -23,9 +23,9 @@
 | P1 | 在真机上验证完整的添加链路 | 已完成 | 路线图 §4 P1：验收分组与逐轮账本 |
 | P2 | 自治引擎 L1 | 已实现；真实自动派发已在真机端到端验通，停在 plan-review | 路线图 §4 P2 与 §5 |
 | P3 | L2：机器代批计划（按项目 opt-in） | 已实现并真机验通——机器只走 `plan-review -> build`，交付授权仍留人 | 路线图 §4 P3 |
-| P4 | 自治档位、状态、暂停／接管与并发设置的界面 | 未开始（PRD 与交互原型已备，代码未开工） | 路线图 §4 P4 |
+| P4 | 自治档位、状态、暂停／接管与并发设置的界面 | 已实现；验收已过测试套件——真机浏览器核对仍待办 | 路线图 §4 P4 与 §5 |
 
-**下一步**：下一轮做 P4 自治档位界面。[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，需要明确决定才启动；剩余已知缺口见路线图 §5。
+**下一步**：P4 自治档界面已完成。接下来：把 P4 的全局上限写入口按并发夹具验证（P4-7a/7b）、并做一遍真机浏览器核对，都记在路线图 §5；[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，仍需明确决定才启动；其余已知缺口见路线图 §5。
 
 ## 想了解某件事，读哪份
 

@@ -17,8 +17,73 @@
 import { collectAudit } from './audit.js'
 import { inspectRepo } from './project-proposal.js'
 import { applyRemoteSync } from './sync.js'
+import { assertWorktreeRoot, isPathInside, removeWorktree, worktreeRootOf } from './worktree.js'
+import { DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
 
-export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {} }) {
+/**
+ * Delete a project and really remove its worktrees (P4 §4 — the one sanctioned
+ * "add a feature" exception). Kept as an injectable pure-ish function so QA can
+ * exercise the safety boundaries offline with a fake `remove`.
+ *
+ * Order matters: clean worktrees FIRST, delete the registration LAST. Any failure
+ * (dirty tree, path escaping the project root, git error) throws before the
+ * registration is touched, so a rejected delete never leaves "registration gone
+ * but worktree still on disk" — the exact new residue the PRD forbids. A partial
+ * clean (some removed, then one fails) keeps the registration; the caller sees the
+ * verbatim error and can retry with `force` after handling the dirty tree.
+ *
+ * Safety: every target must be a non-empty absolute path inside THIS project's
+ * frozen worktreeRoot (checked with the same assertWorktreeRoot gate as creation),
+ * so another project's worktree can never be swept in by a crafted card field.
+ */
+export function deleteProjectWithWorktrees(store, id, { force = false, remove = removeWorktree } = {}) {
+  const project = store.getProject(id)
+  if (project === undefined || project === null) throw new Error(`项目不存在：${id}`)
+  const root = assertWorktreeRoot(worktreeRootOf(project))
+  const cards = store.listCards({ projectId: id })
+  const targets = cards
+    .filter((card) => typeof card.worktreePath === 'string' && card.worktreePath !== '')
+    .map((card) => ({ cardId: card.id, worktreePath: card.worktreePath, branch: card.branch }))
+  for (const target of targets) {
+    // `worktreeRootOf` returns an absolute resolved root; every stored path must
+    // sit under it. A path outside is a hard refusal, never a best-effort skip.
+    if (!isPathInside(root, target.worktreePath)) {
+      throw new Error(`卡片 ${target.cardId} 的 worktree 不在本项目根 ${root} 下，拒绝删除：${target.worktreePath}`)
+    }
+  }
+  const removed = []
+  for (const target of targets) {
+    // `removeWorktree` does its own dirty check: without `force` a dirty tree is
+    // refused with the exact change list, preserving the user's uncommitted work.
+    remove({ repoPath: project.rootPath, worktreePath: target.worktreePath, force, branch: target.branch })
+    removed.push({ cardId: target.cardId, worktreePath: target.worktreePath })
+  }
+  // Only now, with every worktree gone, is the registration removed.
+  const deleted = store.deleteProject(id)
+  // Audit: actor=human, project id, cleaned worktree list (the cards that carried
+  // the paths are already gone, so the list must be captured in the event note).
+  store.recordEvent({
+    type: 'project-deleted', scope: 'project', targetId: id, actor: 'human', decision: 'deleted',
+    note: `worktrees removed: ${removed.length}`,
+  })
+  return { ...deleted, worktreesRemoved: removed }
+}
+
+/**
+ * Concurrency view used by the settings UI. `projectDefaultMaxActive` is the
+ * launch-config default (NOT HTTP-writable this round); exposing it lets the UI
+ * render the effective slots = min(project value, effective global) with correct
+ * sources without hard-coding any number (P4 §3.3.3 / §3.3.5).
+ */
+function concurrencyView(store, engineConfig) {
+  const configured = engineConfig.projectMaxActive
+  return {
+    effectiveGlobalMaxActive: effectiveGlobalMaxActive(store, engineConfig),
+    projectDefaultMaxActive: Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_PROJECT_MAX_ACTIVE,
+  }
+}
+
+export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {} }) {
   return function handle(input = {}) {
     const method = String(input.method ?? 'GET').toUpperCase()
     const rawRoute = String(input.route ?? '/')
@@ -39,7 +104,10 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           // L1 engine state, readable at any time: why nothing is happening is
           // never hidden. `permissionEnforced` stays false until the host really
           // wires the permission level into sessions (PRD §9.2, no false claim).
-          engine: engineStatus(runtime.engine),
+          // The effective global cap and its source are computed from the same
+          // helper the engine uses, so the UI cannot show a number that differs
+          // from what the scheduler enforces (P4 §3.3.3/§3.3.4).
+          engine: engineStatus(runtime.engine, effectiveGlobalMaxActive(store, engineConfig)),
           counts: {
             projects: store.state.projects.length,
             boards: store.state.boards.length,
@@ -49,10 +117,25 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
       }
 
       if (method === 'GET' && seg.length === 1 && seg[0] === 'settings') {
-        return ok({ settings: store.getWorktreeSettings() })
+        return ok({
+          settings: {
+            ...store.getWorktreeSettings(),
+            globalMaxActive: store.getGlobalMaxActiveSetting(),
+            ...concurrencyView(store, engineConfig),
+          },
+        })
       }
       if (method === 'PATCH' && seg.length === 1 && seg[0] === 'settings') {
-        return ok({ settings: store.updateWorktreeRoot(body.worktreeRoot) })
+        // Whichever field is present is written by its OWN setter; `undefined`
+        // fields are not passed, so a global-cap write can never clobber
+        // worktreeRoot and vice versa (P4 §3.3.1). Both may be sent together only
+        // if the client deliberately wants both — each still goes through its
+        // own validation, and an error in either surfaces verbatim.
+        const out = { ...store.getWorktreeSettings(), globalMaxActive: store.getGlobalMaxActiveSetting() }
+        if ('worktreeRoot' in body) Object.assign(out, store.updateWorktreeRoot(body.worktreeRoot))
+        if ('globalMaxActive' in body) Object.assign(out, store.updateGlobalMaxActive(body.globalMaxActive))
+        Object.assign(out, concurrencyView(store, engineConfig))
+        return ok({ settings: out })
       }
 
       if (method === 'GET' && seg.length === 1 && seg[0] === 'audit') {
@@ -108,7 +191,12 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'POST' && seg.length === 3 && (seg[2] === 'pause' || seg[2] === 'resume')) {
           return ok({ project: store.setProjectPaused(seg[1], seg[2] === 'pause', 'human') })
         }
-        if (method === 'DELETE' && seg.length === 2) return ok({ deleted: store.deleteProject(seg[1]) })
+        // Delete really removes this project's worktrees before dropping the
+        // registration (P4 §4). `force` is opt-in from the confirm dialog and
+        // never default — a dirty tree is refused with its change list intact.
+        if (method === 'DELETE' && seg.length === 2) {
+          return ok({ deleted: deleteProject(store, seg[1], { force: body.force === true }) })
+        }
       }
 
       if (seg[0] === 'boards') {
@@ -189,7 +277,7 @@ function ok(body, status = 200) {
 }
 
 /** Copy the observable engine state without leaking references to the caller. */
-function engineStatus(engine) {
+function engineStatus(engine, globalCap) {
   if (engine === undefined || engine === null) return null
   return {
     timerActive: engine.timerActive === true,
@@ -202,5 +290,9 @@ function engineStatus(engine) {
     projects: Array.isArray(engine.projects) ? engine.projects.map((entry) => ({ ...entry })) : [],
     orphans: Array.isArray(engine.orphans) ? engine.orphans.map((entry) => ({ ...entry })) : [],
     permissionEnforced: engine.permissionEnforced === true,
+    // Effective global concurrency cap + where it came from (settings / config
+    // / default), so the UI can render the read-back value and its source (P4 §3.3.4).
+    globalMaxActive: globalCap?.value ?? null,
+    globalMaxActiveSource: globalCap?.source ?? null,
   }
 }

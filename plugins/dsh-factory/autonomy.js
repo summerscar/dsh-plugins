@@ -85,6 +85,24 @@ function positiveInt(value, fallback) {
 }
 
 /**
+ * Effective global concurrency cap and its source — the SINGLE source of truth
+ * used by both `runTick` (dispatch) and `GET /status` (UI read-back), so the
+ * number the UI shows can never drift from the number the scheduler enforces.
+ *
+ * Priority: HTTP-saved `store.settings.globalMaxActive` > launch config
+ * (`config.engine.globalMaxActive`) > built-in default (P4 §3.3). Reading the
+ * store on every call is what makes a PATCH take effect on the NEXT tick with no
+ * restart, and survive a reload (the value is read back from persisted settings).
+ */
+export function effectiveGlobalMaxActive(store, config = {}) {
+  const saved = typeof store?.getGlobalMaxActiveSetting === 'function' ? store.getGlobalMaxActiveSetting() : null
+  if (saved !== null) return { value: saved, source: 'settings' }
+  const fromConfig = positiveInt(config.globalMaxActive, null)
+  if (fromConfig !== null) return { value: fromConfig, source: 'config' }
+  return { value: DEFAULT_GLOBAL_MAX_ACTIVE, source: 'default' }
+}
+
+/**
  * The engine's observable state, read fresh by `GET /status` on every request.
  * `timerReason` answers "why is nothing happening" instead of failing silently
  * (P1 lesson): a missing host timer service, or missing project config, is always
@@ -157,7 +175,11 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
   const projectReports = []
   let errors = 0
   try {
-    const globalMax = positiveInt(config.globalMaxActive, DEFAULT_GLOBAL_MAX_ACTIVE)
+    // Read the global cap live from the store every tick: a PATCH to
+    // store.settings.globalMaxActive takes effect on the next tick with no
+    // restart, and the same effective value is what GET /status reports (P4 §3.3).
+    // `config` (captured at startEngine) is only the fallback tier.
+    const { value: globalMax } = effectiveGlobalMaxActive(store, config)
     const projectDefaultMax = positiveInt(config.projectMaxActive, DEFAULT_PROJECT_MAX_ACTIVE)
     const allCards = store.listCards({})
 

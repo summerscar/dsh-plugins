@@ -152,7 +152,11 @@ export function emptyState() {
   // `settings.worktreeRoot` is the global "worktrees root" (empty = use default).
   // It is read once at project creation and frozen onto the project; changing it
   // never moves an existing project's or card's worktree.
-  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [], settings: { worktreeRoot: '' } }
+  // `settings.globalMaxActive` is the HTTP-writable global concurrency cap
+  // (null = fall back to launch config, then built-in default). It lives in the
+  // SAME settings row so a reload restores it, but is validated and written by
+  // its own method so it can never overwrite worktreeRoot, or vice versa (P4 §3.3).
+  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [], settings: { worktreeRoot: '', globalMaxActive: null } }
 }
 
 export class FactoryStore {
@@ -246,6 +250,33 @@ export class FactoryStore {
   /** Effective default for a brand-new project: saved global root, or built-in. */
   defaultProjectWorktreeRoot() {
     return this.getWorktreeSettings().resolved
+  }
+
+  /**
+   * Raw saved global concurrency cap. `null` means "not set": the engine then
+   * falls back to launch config, then its built-in default. The effective value
+   * and its source are resolved by autonomy.js (the single source of truth), so
+   * the store only exposes what is persisted — never a derived number.
+   */
+  getGlobalMaxActiveSetting() {
+    const raw = this.state.settings?.globalMaxActive
+    return Number.isInteger(raw) && raw > 0 ? raw : null
+  }
+
+  /**
+   * Set the global concurrency cap. Accepts a positive integer or null / ''
+   * (clear → fall back to launch config). Written into `settings` alongside
+   * worktreeRoot via a spread, so neither field can clobber the other. Validation
+   * errors are thrown verbatim for the API to surface unchanged (P4 §3.3).
+   */
+  updateGlobalMaxActive(value) {
+    const raw = value === null || value === undefined || value === '' ? null : value
+    if (raw !== null && (!Number.isInteger(raw) || raw < 1)) {
+      throw new Error('globalMaxActive 必须是正整数或 null')
+    }
+    this.state.settings = { ...(this.state.settings ?? {}), globalMaxActive: raw }
+    this._commit()
+    return { globalMaxActive: raw }
   }
 
   // ---- projects -----------------------------------------------------------

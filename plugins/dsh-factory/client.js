@@ -37,19 +37,37 @@ window.__ModuleLoader__.load({
       warning: 'var(--dsw-alias-warning, #b8860b)',
       success: 'var(--dsw-alias-success, #2f9e56)',
       danger: 'var(--dsw-alias-danger, #d33)',
+      // P4 view-scoped brand tokens. The variables are defined only under
+      // [data-dsh-factory-p4] in ensureStyles(); the fallbacks keep the page
+      // legible even before that stylesheet is injected. Never touch the host theme.
+      accent: 'var(--df-accent, #4f46d5)',
+      accentWash: 'var(--df-accent-wash, #eef0ff)',
+      accentInk: 'var(--df-accent-ink, #3b33b8)',
+      blue: 'var(--df-blue, #2f7de1)',
+      blueWash: 'var(--df-blue-wash, #eaf2fe)',
+      orange: 'var(--df-orange, #c9771f)',
+      orangeWash: 'var(--df-orange-wash, #fdf1e3)',
+      green: 'var(--df-green, #1f8f63)',
+      gray: 'var(--df-gray, #8b95a5)',
+      grayWash: 'var(--df-gray-wash, #f1f3f6)',
+      dangerWash: 'var(--df-danger-wash, #fdf0f1)',
+      radiusLg: 'var(--df-radius, 11px)',
+      radiusSm: 'var(--df-radius-sm, 7px)',
+      shadow: 'var(--df-shadow, 0 1px 2px rgba(20,28,40,.04), 0 6px 20px rgba(20,28,40,.04))',
     }
 
-    // Status → accent, by "who is waiting". triage/plan/build = agent busy (blue);
-    // inbox/plan-review/review = your turn (amber); done green; canceled grey.
+    // Status → accent, by "who is waiting" (P4 brand semantics). triage/plan/build
+    // = agent busy (blue); inbox/plan-review/review = your turn (orange); done
+    // green; canceled grey. Card left borders pick these up (Design checklist #1).
     const STATUS_ACCENT = {
-      inbox: T.warning,
-      triage: T.info,
-      plan: T.info,
-      'plan-review': T.warning,
-      build: T.info,
-      review: T.warning,
-      done: T.success,
-      canceled: T.muted,
+      inbox: T.orange,
+      triage: T.blue,
+      plan: T.blue,
+      'plan-review': T.orange,
+      build: T.blue,
+      review: T.orange,
+      done: T.green,
+      canceled: T.gray,
     }
 
     const COLUMNS = [
@@ -99,7 +117,7 @@ window.__ModuleLoader__.load({
       colDone: "完成",
       canceled: "已取消",
       emptyColumn: "—",
-      actDispatch: "派发",
+      actDispatch: "交给 AI 处理",
       actApprovePlan: "批准计划",
       actConfirmCommit: "确认提交",
       actCreatePr: "推送分支并创建 PR",
@@ -142,6 +160,94 @@ window.__ModuleLoader__.load({
       wtRootResolved: "当前生效：{path}",
       wtRootScope: "仅对之后新建的 worktree 生效；已有 worktree 不受影响",
       wtRootDanger: "worktrees root 不能位于 DSH 数据目录内",
+      // P4 · autonomy & runtime panel
+      autoPanelTitle: "自治与运行",
+      autoPanelPurpose: "档位、暂停、运行数分开保存，互不影响",
+      lvTitle: "运行档位",
+      lvL0: "手动",
+      lvL1: "你批准",
+      lvL2: "机器批准",
+      badgeL0: "手动",
+      badgeL1: "你批准",
+      badgeL2: "机器批准",
+      badgePaused: "已暂停",
+      lvSub: "机器替你做到哪一步",
+      leMachine: "机器会做",
+      leYou: "你要做",
+      leL0M: "不自动做任何事，全部等你亲自操作。",
+      leL0Y: "自己派发、自己批准计划、自己确认提交。",
+      leL1M: "把卡推进到「待批准」就停下，不会自己往下走。",
+      leL1Y: "批准计划后，机器才继续实现。",
+      leL2M: "连计划也自动批准，一路推进到实现。",
+      leL2Y: "不用管，随时可改回手动；机器不碰 git、不建 PR、不标完成。",
+      prefHead: "偏好设置（一般不用改）",
+      prefNote: "档位决定怎么跑；开关只做记录，切档不会清空。",
+      unsaved: "未保存",
+      autoStart: "新卡自动开工",
+      autoApprove: "计划自动批准",
+      inactiveAtLevel: "本档位用不到",
+      saveLevel: "保存档位",
+      l2Title: "改用「机器批准」档位？",
+      l2Body: "机器会自动批准计划并继续实现，但不碰 git、不建 PR、不标记完成。按项目单独启用，随时可改回手动。",
+      enableL2: "确认启用",
+      cancel: "取消",
+      pauseTitle: "暂停与接管",
+      pauseSub: "即时生效的人工门闩",
+      projPause: "暂停本项目的自动派发",
+      enginePause: "暂停引擎",
+      engineResume: "恢复引擎",
+      engineRunning: "引擎运行中",
+      enginePaused: "引擎已暂停",
+      pauseSem: "暂停只拦新任务；正在跑的不动，跳过的卡不补。",
+      takeover: "我来接手",
+      concTitle: "同时运行数",
+      concSub: "单独保存；实际数量取较小的",
+      projMaxLabel: "本项目最多同时跑几个（maxActiveSessions）",
+      globMaxLabel: "同时运行上限（globalMaxActive）",
+      blankDefault: "留空则用默认",
+      globHelp: "所有项目加起来，最多同时跑几个任务。留空用默认；改完立即生效，重启也不丢。",
+      effLabel: "当前能同时跑几个",
+      effSrc: "来源：{src}；取两项中较小的",
+      srcSettings: "已保存的全局设置",
+      srcConfig: "部署配置",
+      srcDefault: "内置默认",
+      saveConc: "保存并发设置",
+      saveGlobal: "保存全局设置",
+      dangerTitle: "危险区",
+      dangerSub: "仅当前项目",
+      deleteHint: "删除项目及其所有看板、卡片与 worktree，操作不可撤销。",
+      deleteProject: "删除项目",
+      delTitle: "删除项目及其 worktree",
+      delBody: "将删除本项目登记及其所有 worktree；只清理属于本项目的 worktree，有未提交改动的会被拒绝并列出改动，部分清理失败则保留项目登记并显示原始错误。",
+      delType: "输入项目名 {name} 以确认",
+      delWrong: "项目名不匹配，未删除",
+      forceHead: "强制清理有未提交改动的 worktree（不默认勾选）",
+      forceBody: "默认拒绝删除并列出改动；仅在确知可丢弃时勾选。",
+      delConfirm: "删除项目",
+      needsTitle: "需要你处理",
+      needsApprove: "待批准计划",
+      needsStalled: "停滞卡片",
+      needsOrphan: "孤儿会话",
+      needsEngineErr: "引擎错误",
+      needsClear: "暂无需要处理的事项",
+      gmInvalid: "同时运行上限必须是正整数或 null",
+      pmInvalid: "项目并发必须是正整数或 null",
+      scopeGlobal: "全局设置",
+      scopeGlobalSub: "作用于所有项目",
+      scopeProject: "项目设置",
+      scopeProjectSub: "只作用于当前项目",
+      globalNote: "全局设置作用于所有项目；改动只影响之后新建的 worktree 与调度，已有项目和运行中的卡不受影响。",
+      engineGate: "暂停整个引擎",
+      engineGateHint: "全局暂停挡住所有项目的自动派发；已在运行的会话不受影响。页头的引擎开关与此同步。",
+      viewDesc: "卡片按阶段排好，到关口才请你批准。",
+      statCards: "卡片",
+      statActive: "活跃会话",
+      statSlots: "可同时跑",
+      closeSettings: "关闭",
+      mobileSettings: "配置",
+      mobileTakeover: "我来接手",
+      mobileApprove: "批准计划",
+      mobileDispatch: "交给 AI",
     }
     const en = {
       settings: "Project Factory",
@@ -166,7 +272,7 @@ window.__ModuleLoader__.load({
       colDone: "Done",
       canceled: "Canceled",
       emptyColumn: "—",
-      actDispatch: "Dispatch",
+      actDispatch: "Hand to AI",
       actApprovePlan: "Approve plan",
       actConfirmCommit: "Confirm commit",
       actCreatePr: "Push branch & create PR",
@@ -209,6 +315,94 @@ window.__ModuleLoader__.load({
       wtRootResolved: "Effective now: {path}",
       wtRootScope: "Applies only to worktrees created from now on; existing worktrees are unaffected",
       wtRootDanger: "Worktrees root cannot be inside the DSH data directory",
+      // P4 · autonomy & runtime panel
+      autoPanelTitle: "Autonomy & runtime",
+      autoPanelPurpose: "Level, pause and task count save separately — never together",
+      lvTitle: "Autonomy level",
+      lvL0: "Manual",
+      lvL1: "You approve",
+      lvL2: "Machine approves",
+      badgeL0: "Manual",
+      badgeL1: "You approve",
+      badgeL2: "Machine approves",
+      badgePaused: "Paused",
+      lvSub: "how far the engine goes for you",
+      leMachine: "Machine does",
+      leYou: "You do",
+      leL0M: "Nothing runs on its own — it waits for you at every step.",
+      leL0Y: "Dispatch, approve plans and confirm commits yourself.",
+      leL1M: "Moves cards up to \"awaiting approval\", then stops.",
+      leL1Y: "Approve the plan; only then does the machine continue.",
+      leL2M: "Approves plans automatically and pushes through to implementation.",
+      leL2Y: "Nothing — switch back to Manual anytime; it never touches git, opens PRs or marks done.",
+      prefHead: "Preferences (usually leave as-is)",
+      prefNote: "The level sets behavior; switches only record your choice and stay unchanged when you switch levels.",
+      unsaved: "Unsaved",
+      autoStart: "Auto-start new cards",
+      autoApprove: "Auto-approve plans",
+      inactiveAtLevel: "unused at this level",
+      saveLevel: "Save level",
+      l2Title: "Switch to the \"Machine approves\" level?",
+      l2Body: "The machine auto-approves plans and keeps implementing, but never touches git, opens a PR or marks work done. Enabled per project, reversible anytime.",
+      enableL2: "Enable",
+      cancel: "Cancel",
+      pauseTitle: "Pause & takeover",
+      pauseSub: "immediate human gates",
+      projPause: "Pause auto dispatch for this project",
+      enginePause: "Pause engine",
+      engineResume: "Resume engine",
+      engineRunning: "Engine running",
+      enginePaused: "Engine paused",
+      pauseSem: "Pause stops new work only — running tasks stay, skipped cards aren't retried.",
+      takeover: "Take back",
+      concTitle: "Tasks at once",
+      concSub: "Saved on its own; actual count is the smaller of the two",
+      projMaxLabel: "Max tasks at once for this project (maxActiveSessions)",
+      globMaxLabel: "Max tasks at once (globalMaxActive)",
+      blankDefault: "Leave blank to use the default",
+      globHelp: "Across all projects: the most tasks that can run at once. Leave blank for the default. Changes apply immediately and survive a restart.",
+      effLabel: "Tasks that can run now",
+      effSrc: "Source: {src}; the smaller of the two",
+      srcSettings: "saved global setting",
+      srcConfig: "deployment config",
+      srcDefault: "built-in default",
+      saveConc: "Save concurrency",
+      saveGlobal: "Save global settings",
+      dangerTitle: "Danger zone",
+      dangerSub: "this project only",
+      deleteHint: "Deletes this project and all its boards, cards and worktrees. This cannot be undone.",
+      deleteProject: "Delete project",
+      delTitle: "Delete project and its worktrees",
+      delBody: "Deletes the project registration and all its worktrees; only worktrees belonging to this project are removed. Dirty worktrees are refused with their change list, and a partial cleanup failure keeps the registration and shows the original error.",
+      delType: "Type the project name {name} to confirm",
+      delWrong: "Project name does not match — nothing deleted",
+      forceHead: "Force-remove worktrees with uncommitted changes (off by default)",
+      forceBody: "By default a dirty tree is refused and listed; only tick this when you know the changes can be discarded.",
+      delConfirm: "Delete project",
+      needsTitle: "Needs attention",
+      needsApprove: "plans to approve",
+      needsStalled: "stalled cards",
+      needsOrphan: "orphan sessions",
+      needsEngineErr: "engine error",
+      needsClear: "Nothing needs your attention",
+      gmInvalid: "Max tasks at once must be a positive integer or null",
+      pmInvalid: "Project cap must be a positive integer or null",
+      scopeGlobal: "Global",
+      scopeGlobalSub: "applies to all projects",
+      scopeProject: "Project",
+      scopeProjectSub: "this project only",
+      globalNote: "Global settings apply to all projects; changes only affect worktrees and scheduling created from now on — existing projects and in-flight cards are untouched.",
+      engineGate: "Pause entire engine",
+      engineGateHint: "A global pause blocks auto dispatch for all projects; running sessions are untouched. The header engine switch stays in sync.",
+      viewDesc: "Cards grouped by stage; we ask you to approve only at key gates.",
+      statCards: "Cards",
+      statActive: "Live sessions",
+      statSlots: "Running now",
+      closeSettings: "Close",
+      mobileSettings: "Settings",
+      mobileTakeover: "Take back",
+      mobileApprove: "Approve",
+      mobileDispatch: "Hand to AI",
     }
 
     async function callApi(method, path, body) {
@@ -243,7 +437,8 @@ window.__ModuleLoader__.load({
       const accent = STATUS_ACCENT[card.status] || T.muted
       const meta = (card.source && card.source !== 'manual' ? `${card.source} · ` : '') + card.status
       return h('div', {
-        style: { background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 },
+        className: 'df-card',
+        style: { background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${accent}`, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 },
       }, [
         h('div', { key: 'title', style: { fontSize: 13, color: T.ink, fontWeight: 500 } }, card.title),
         h('div', { key: 'meta', style: { fontSize: 11, color: T.muted } }, meta),
@@ -258,6 +453,11 @@ window.__ModuleLoader__.load({
       const add = (label, fn) => buttons.push(h(Button, { key: label, onClick: () => void run(fn) }, label))
       if (card.status === 'inbox') add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) })
       if (card.status === 'plan-review') add(t('actApprovePlan'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'build', actor: 'human' }) })
+      // Take-over pulls one card out of the engine's control, persisted on the
+      // card. Available on any live (non-terminal) card (P4-6, third entry).
+      if (card.status !== 'done' && card.status !== 'canceled' && card.takenOver !== true) {
+        add(t('takeover'), async () => { await callApi('POST', `/cards/${card.id}/takeover`) })
+      }
       if (card.status === 'review') {
         if (!card.commitSha) add(t('actConfirmCommit'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'confirm-commit' })
@@ -274,7 +474,7 @@ window.__ModuleLoader__.load({
     }
 
     function Column({ title, cards, t, renderCard }) {
-      return h('div', { style: { flex: '1 1 0', minWidth: 140, background: T.panel, borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 } }, [
+      return h('div', { className: 'df-col', style: { flex: '1 1 0', minWidth: 140, background: T.panel, borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 } }, [
         h('div', { key: 'head', style: { fontSize: 12, fontWeight: 600, color: T.muted, display: 'flex', justifyContent: 'space-between' } }, [
           h('span', { key: 'label' }, title),
           h('span', { key: 'count' }, String(cards.length)),
@@ -470,10 +670,431 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    // ---- P4 · autonomy & runtime -----------------------------------------
+    // The FIRST hard line: the status badge is derived ONLY from the `autonomy`
+    // field, never from autoStart/autoApprove. "level back to manual while a
+    // switch is still on" is a legal stored combination; reading switches would
+    // show "running automatically" when the engine is actually idle (P4-2).
+    const LEVELS = ['L0', 'L1', 'L2']
+    const LEVEL_BADGE = { L0: 'badgeL0', L1: 'badgeL1', L2: 'badgeL2' }
+
+    function Modal({ title, tone, children, onCancel, onConfirm, confirmLabel, confirmTone, busy, t }) {
+      return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(18,24,32,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 18 } }, [
+        h('div', {
+          className: 'df-modal',
+          style: { background: T.card, borderRadius: 12, width: '100%', maxWidth: 480, boxShadow: '0 24px 70px rgba(10,16,24,.28)', overflow: 'hidden' },
+        }, [
+          h('div', { style: { padding: '16px 18px 12px', borderBottom: `1px solid ${T.line}` } },
+            h('h3', { style: { margin: 0, fontSize: 15, color: tone === 'danger' ? T.danger : T.ink } }, title)),
+          h('div', { style: { padding: '14px 18px', fontSize: 13, color: T.muted, lineHeight: 1.7 } }, children),
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: `1px solid ${T.line}`, background: T.panel } }, [
+            h(Button, { key: 'cancel', onClick: onCancel, disabled: busy }, h('span', { className: 'df-tap' }, t('cancel'))),
+            h(Button, {
+              key: 'ok', disabled: busy,
+              onClick: onConfirm,
+              style: confirmTone === 'danger'
+                ? { background: T.danger, borderColor: T.danger, color: '#fff' }
+                : { background: T.info, borderColor: T.info, color: '#fff' },
+            }, h('span', { className: 'df-tap' }, confirmLabel)),
+          ]),
+        ]),
+      ])
+    }
+
+    function AutonomySection({ project, t, onSaved }) {
+      // `savedLevel` is what the backend stored; `level` is the pending choice.
+      // Clicking a segment changes ONLY the pending value + explainer card; the
+      // badge keeps showing the saved level until Save commits (P4-1b).
+      const savedLevel = project?.autonomy ?? 'L0'
+      const [level, setLevel] = useState(savedLevel)
+      const [autoStart, setAutoStart] = useState(project?.autoStart === true)
+      const [autoApprove, setAutoApprove] = useState(project?.autoApprove === true)
+      const [prefsOpen, setPrefsOpen] = useState(false)
+      const [l2Confirm, setL2Confirm] = useState(false)
+      const [saving, setSaving] = useState(false)
+      const [message, setMessage] = useState('')
+      const [error, setError] = useState('')
+
+      // Switching projects remounts this component (key=project.id at the call
+      // site), so these useState initialisers re-run on the newly saved values —
+      // no "sidebar L0, drawer L1" contradiction.
+      const dirty = level !== savedLevel
+      // L0 suppresses both switches; L1 ignores autoApprove (engine reads it only
+      // at L2). Values are retained, just shown as unused at the pending level.
+      const inactiveStart = level === 'L0'
+      const inactiveApprove = level === 'L0' || level === 'L1'
+
+      const chooseLevel = (next) => {
+        if (next === 'L2' && level !== 'L2') { setL2Confirm(true); return }
+        setLevel(next)
+      }
+      const confirmL2 = () => { setL2Confirm(false); setLevel('L2') }
+
+      const save = async () => {
+        setSaving(true); setError(''); setMessage('')
+        try {
+          const data = await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, {
+            autonomy: level, autoStart, autoApprove,
+          })
+          // Silent-normalisation read-back: adopt the ACTUAL stored values from
+          // the backend, never the form's originals (P4-3). After save the badge
+          // and the pending choice converge on the same read-back value.
+          const p = data.project
+          setLevel(p.autonomy)
+          setAutoStart(p.autoStart === true)
+          setAutoApprove(p.autoApprove === true)
+          setMessage(t('setupSaved'))
+          onSaved()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      // Selected segment uses a soft brand wash + coloured label (Design #1):
+      // L0 grey, L1 blue, L2 orange — never a solid blue fill.
+      const segTone = { L0: [T.grayWash, T.gray], L1: [T.blueWash, T.blue], L2: [T.orangeWash, T.orange] }
+      const segBtn = (lv) => {
+        const on = level === lv
+        const [wash, ink] = segTone[lv]
+        return {
+          padding: '7px 12px', borderRadius: 6, border: `1px solid ${on ? ink : T.line}`,
+          background: on ? wash : T.card,
+          color: on ? ink : T.ink, fontSize: 12, fontWeight: 600, cursor: 'pointer', minHeight: 44,
+        }
+      }
+      const switchRow = (checked, onChange, label, inactive) => h('div', { className: 'df-switch-row', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '6px 0' } }, [
+        // 44px transparent hit area around a 38×22 visual track: meets the tap
+        // target rule without inflating the switch graphic.
+        h('button', {
+          type: 'button', role: 'switch', 'aria-checked': checked ? 'true' : 'false',
+          onClick: () => onChange(!checked),
+          style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
+        }, h('span', {
+          style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: checked ? T.info : T.line },
+        }, h('span', {
+          style: { position: 'absolute', top: 3, left: checked ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' },
+        }))),
+        h('span', { style: { ...small, color: inactive ? T.muted : T.ink, fontWeight: 600 } }, t(label)),
+        inactive ? h('span', { style: { fontSize: 10.5, color: T.muted, background: T.panel, borderRadius: 5, padding: '2px 7px' } }, t('inactiveAtLevel')) : null,
+      ])
+
+      // Explain card: two fixed lines — "machine does / you do" — that follow the
+      // PENDING choice so a first-time reader can tell what each level means.
+      const explainer = h('div', {
+        key: 'explain',
+        style: { background: T.accentWash, border: `1px solid ${T.line}`, borderLeft: `3px solid ${T.accent}`, borderRadius: 8, padding: '10px 12px', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 },
+      }, [
+        h('div', { key: 'h', style: { fontSize: 13, fontWeight: 700, color: T.accentInk } }, t(`lv${level}`)),
+        h('div', { key: 'm', style: small }, `${t('leMachine')}：${t(`le${level}M`)}`),
+        h('div', { key: 'y', style: small }, `${t('leYou')}：${t(`le${level}Y`)}`),
+      ])
+
+      const children = [
+        h('div', { key: 'seg', style: { display: 'inline-flex', gap: 4, flexWrap: 'wrap' } },
+          LEVELS.map((lv) => h('button', { key: lv, type: 'button', style: segBtn(lv), onClick: () => chooseLevel(lv) }, h('span', { className: 'df-tap' }, t(`lv${lv}`))))),
+        // Badge reflects the SAVED level only — never the pending choice, never
+        // the two switches (P4-2 first hard line).
+        h('div', { key: 'badgeRow', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
+          h('span', {
+            key: 'badge',
+            style: { display: 'inline-flex', gap: 7, alignItems: 'center', padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 650,
+              background: savedLevel === 'L2' ? T.orangeWash : savedLevel === 'L1' ? T.blueWash : T.grayWash,
+              color: savedLevel === 'L2' ? T.orange : savedLevel === 'L1' ? T.blue : T.gray },
+          }, [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t(LEVEL_BADGE[savedLevel])]),
+          project?.paused === true
+            ? h('span', { key: 'paused', style: { display: 'inline-flex', gap: 6, alignItems: 'center', padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 650, background: T.panel, color: T.muted } },
+              [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t('badgePaused')])
+            : null,
+          // The badge block ends with the unsaved marker; it shows only the saved
+          // level, never the preference switches below.
+          dirty ? h('span', { key: 'rb', style: { fontSize: 11, color: T.warning, fontWeight: 600 } }, t('unsaved')) : null,
+        ]),
+        explainer,
+        h('button', {
+          key: 'prefToggle', type: 'button',
+          style: { background: 'transparent', border: 'none', color: T.muted, fontSize: 12, cursor: 'pointer', textAlign: 'left', padding: '10px 0 0', minHeight: 44 },
+          onClick: () => setPrefsOpen(!prefsOpen),
+        }, `${prefsOpen ? '▾' : '▸'} ${t('prefHead')}`),
+        prefsOpen ? h('div', { key: 'prefs', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
+          switchRow(autoStart, setAutoStart, 'autoStart', inactiveStart),
+          switchRow(autoApprove, setAutoApprove, 'autoApprove', inactiveApprove),
+          h('div', { key: 'note', style: small }, t('prefNote')),
+        ]) : null,
+        h('div', { key: 'save', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
+          h('span', { key: 'btn', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('saveLevel'))),
+          message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+          error ? h('span', { key: 'err', style: { ...small, color: T.danger, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`) : null,
+        ]),
+      ]
+      if (l2Confirm) {
+        children.push(h(Modal, {
+          key: 'l2m', title: t('l2Title'), confirmLabel: t('enableL2'), busy: false, t,
+          onCancel: () => setL2Confirm(false), onConfirm: confirmL2,
+        }, t('l2Body')))
+      }
+      return h('div', { key: 'autonomy', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 2 } }, children)
+    }
+
+    function PauseSection({ project, t, onSaved, onTakeoverCard }) {
+      const [saving, setSaving] = useState(false)
+      const [error, setError] = useState('')
+      const [message, setMessage] = useState('')
+      const paused = project?.paused === true
+      const toggle = async () => {
+        setSaving(true); setError(''); setMessage('')
+        try {
+          await callApi('POST', `/projects/${encodeURIComponent(project.id)}/${paused ? 'resume' : 'pause'}`)
+          setMessage(t('setupSaved')); onSaved()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      return h('div', { key: 'pause', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } }, [
+        h('div', { key: 'sw', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
+          h('button', {
+            key: 't', type: 'button', role: 'switch', 'aria-checked': paused ? 'true' : 'false',
+            disabled: saving, onClick: () => void toggle(),
+            style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
+          }, h('span', {
+            style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: paused ? T.warning : T.line },
+          }, h('span', { style: { position: 'absolute', top: 3, left: paused ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' } }))),
+          h('span', { key: 'l', style: { ...small, color: T.ink, fontWeight: 600 } }, t('projPause')),
+          h('span', { key: 'b', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void toggle() }, paused ? t('engineResume') : t('enginePause'))),
+        ]),
+        h('div', { key: 'sem', style: small }, t('pauseSem')),
+        h('div', { key: 'takeHint', style: small }, t('takeover') + ' · ' + t('pauseSub')),
+        message ? h('div', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+        error ? h('div', { key: 'err', style: { ...small, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+      ])
+    }
+
+    function GlobalCapSection({ t, settings, onSaved }) {
+      const raw = settings?.globalMaxActive
+      const [value, setValue] = useState(raw === null || raw === undefined ? '' : String(raw))
+      const [saving, setSaving] = useState(false)
+      const [error, setError] = useState('')
+      const [message, setMessage] = useState('')
+      const save = async () => {
+        setError(''); setMessage('')
+        const trimmed = String(value).trim()
+        const parsed = trimmed === '' ? null : Number(trimmed)
+        if (parsed !== null && (!Number.isInteger(parsed) || parsed < 1)) { setError(t('gmInvalid')); return }
+        setSaving(true)
+        try {
+          const data = await callApi('PATCH', '/settings', { globalMaxActive: parsed })
+          const next = data.settings.globalMaxActive
+          setValue(next === null || next === undefined ? '' : String(next))
+          setMessage(t('setupSaved')); onSaved()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const eff = settings?.effectiveGlobalMaxActive
+      return h('div', { key: 'globalCap', style: { display: 'flex', flexDirection: 'column', gap: 8 } }, [
+        h('div', { key: 'label', style: { fontSize: 13, color: T.ink, fontWeight: 500 } }, t('globMaxLabel')),
+        h('input', {
+          key: 'in', inputMode: 'numeric', value, spellCheck: false, placeholder: t('blankDefault'),
+          style: { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' },
+          onChange: (e) => setValue(e.target.value),
+        }),
+        h('div', { key: 'help', style: small }, t('globHelp')),
+        eff ? h('div', { key: 'eff', style: { ...small, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } },
+          `${t('effLabel')}: ${eff.value} · ${t('src' + (eff.source === 'settings' ? 'Settings' : eff.source === 'config' ? 'Config' : 'Default'))}`) : null,
+        h('div', { key: 'save', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'btn', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('saveGlobal'))),
+          message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+          error ? h('span', { key: 'err', style: { ...small, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+        ]),
+      ])
+    }
+
+    function ConcurrencySection({ project, settings, t, onSaved }) {
+      const raw = project?.maxActiveSessions
+      const [value, setValue] = useState(raw === null || raw === undefined ? '' : String(raw))
+      const [saving, setSaving] = useState(false)
+      const [error, setError] = useState('')
+      const [message, setMessage] = useState('')
+      const save = async () => {
+        setError(''); setMessage('')
+        const trimmed = String(value).trim()
+        const parsed = trimmed === '' ? null : Number(trimmed)
+        if (parsed !== null && (!Number.isInteger(parsed) || parsed < 1)) { setError(t('pmInvalid')); return }
+        setSaving(true)
+        try {
+          const data = await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, { maxActiveSessions: parsed })
+          const next = data.project.maxActiveSessions
+          setValue(next === null || next === undefined ? '' : String(next))
+          setMessage(t('setupSaved')); onSaved()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const global = settings?.effectiveGlobalMaxActive
+      const projectDefault = settings?.projectDefaultMaxActive
+      // Effective slots = min(project value, effective global cap). Project value
+      // falls back to the launch-config default; neither number is hard-coded here.
+      const projectEffective = project?.maxActiveSessions > 0 ? project.maxActiveSessions : (projectDefault ?? null)
+      const globalValue = global?.value ?? null
+      const effective = projectEffective !== null && globalValue !== null ? Math.min(projectEffective, globalValue) : (projectEffective ?? globalValue)
+      const globalSrc = t('src' + (global?.source === 'settings' ? 'Settings' : global?.source === 'config' ? 'Config' : 'Default'))
+      return h('div', { key: 'conc', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } }, [
+        h('div', { key: 'label', style: { fontSize: 13, color: T.ink, fontWeight: 500 } }, t('projMaxLabel')),
+        h('input', {
+          key: 'in', inputMode: 'numeric', value, spellCheck: false, placeholder: t('blankDefault'),
+          style: { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' },
+          onChange: (e) => setValue(e.target.value),
+        }),
+        h('div', { key: 'help', style: small }, t('blankDefault')),
+        h('div', { key: 'eff', style: { ...small, background: T.panel, border: `1px solid ${T.line}`, borderRadius: 6, padding: '8px 10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, [
+          h('div', { key: 'v' }, `${t('effLabel')}: ${effective ?? '—'}`),
+          h('div', { key: 's', style: { opacity: .85 } }, t('effSrc', { src: globalSrc })),
+        ]),
+        h('div', { key: 'save', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'btn', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('saveConc'))),
+          message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+          error ? h('span', { key: 'err', style: { ...small, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+        ]),
+      ])
+    }
+
+    function DangerSection({ project, t, onDeleted }) {
+      const [confirm, setConfirm] = useState(false)
+      const [typed, setTyped] = useState('')
+      const [force, setForce] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const doDelete = async () => {
+        setError('')
+        if (typed.trim() !== project.name) { setError(t('delWrong')); return }
+        setBusy(true)
+        try {
+          await callApi('DELETE', `/projects/${encodeURIComponent(project.id)}`, { force })
+          setConfirm(false); onDeleted()
+        } catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+      return h('div', { key: 'danger', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12 } }, [
+        h('div', { key: 'row', style: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'hint', style: { ...small, maxWidth: 320 } }, t('deleteHint')),
+          h('span', { key: 'btn', className: 'df-tap' }, h(Button, {
+            disabled: busy, onClick: () => { setTyped(''); setForce(false); setError(''); setConfirm(true) },
+            style: { borderColor: T.danger, color: T.danger },
+          }, t('deleteProject'))),
+        ]),
+        confirm ? h(Modal, {
+          key: 'delm', title: t('delTitle'), tone: 'danger', confirmLabel: t('delConfirm'), confirmTone: 'danger', busy, t,
+          onCancel: () => setConfirm(false), onConfirm: () => void doDelete(),
+        }, [
+          h('p', { key: 'body', style: { margin: '0 0 11px' } }, t('delBody')),
+          h('label', { key: 'lbl', style: { display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5 } }, t('delType', { name: project.name })),
+          h('input', {
+            key: 'name', className: 'input mono', value: typed, spellCheck: false, placeholder: project.name,
+            style: { padding: '7px 9px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' },
+            onChange: (e) => setTyped(e.target.value),
+          }),
+          h('label', { key: 'force', style: { display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 12, cursor: 'pointer' } }, [
+            h('input', { key: 'cb', type: 'checkbox', checked: force, onChange: (e) => setForce(e.target.checked), style: { marginTop: 3 } }),
+            h('span', { key: 'ft' }, [
+              h('b', { key: 'h', style: { color: T.danger } }, t('forceHead')),
+              h('br', { key: 'br' }), t('forceBody'),
+            ]),
+          ]),
+          error ? h('div', { key: 'err', style: { ...small, color: T.danger, marginTop: 10 } }, `${t('errorPrefix')}${error}`) : null,
+        ]) : null,
+      ])
+    }
+
+    function EngineBar({ t, engine, onChanged }) {
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      const paused = engine?.paused === true
+      const toggle = async () => {
+        setBusy(true); setError('')
+        try {
+          await callApi('POST', `/engine/${paused ? 'resume' : 'pause'}`)
+          onChanged()
+        } catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+      return h('div', { key: 'engineBar', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+        h('span', {
+          key: 'pill', style: { display: 'inline-flex', gap: 7, alignItems: 'center', padding: '4px 11px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+            background: paused ? T.orangeWash : 'var(--df-green-wash, #e8f6ef)', color: paused ? T.orange : T.green },
+        }, [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t(paused ? 'enginePaused' : 'engineRunning')]),
+        h('span', { key: 'btn', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void toggle() }, paused ? t('engineResume') : t('enginePause'))),
+        error ? h('span', { key: 'err', style: { fontSize: 12, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+      ])
+    }
+
+    function NeedsAttention({ t, engine, cards }) {
+      const approvable = cards.filter((card) => card.status === 'plan-review' && card.takenOver !== true).length
+      const stalled = cards.filter((card) => card.stalled === true).length
+      const orphans = engine?.orphans?.length ?? 0
+      const lastError = engine?.lastError ?? null
+      const total = approvable + stalled + orphans + (lastError ? 1 : 0)
+      // Chips carry type colour (Design #5): approve/orphans orange, stalled/error
+      // red. The empty state stays a quiet green-bordered strip.
+      const chip = (key, label, value, tone) => {
+        const ink = tone === 'danger' ? T.danger : T.orange
+        const wash = tone === 'danger' ? T.dangerWash : T.orangeWash
+        return h('span', { key, style: { fontSize: 11, color: ink, background: wash, border: `1px solid ${ink}`, borderRadius: 6, padding: '3px 8px' } },
+          `${label} ${value}`)
+      }
+      return h('div', {
+        key: 'attention',
+        style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${total > 0 ? T.orange : T.green}`, borderRadius: 8, padding: '8px 12px' },
+      }, [
+        h('span', { key: 'title', style: { fontSize: 12.5, fontWeight: 700 } }, `${t('needsTitle')} · ${total}`),
+        total === 0 ? h('span', { key: 'clear', style: { fontSize: 12, color: T.muted } }, t('needsClear')) : null,
+        approvable > 0 ? chip('a', t('needsApprove'), approvable, 'warn') : null,
+        stalled > 0 ? chip('s', t('needsStalled'), stalled, 'danger') : null,
+        orphans > 0 ? chip('o', t('needsOrphan'), orphans, 'warn') : null,
+        lastError ? chip('e', t('needsEngineErr'), '1', 'danger') : null,
+      ].filter(Boolean))
+    }
+
+    // One-time scoped stylesheet for the mobile action bar, 44px tap targets and
+    // bottom-sheet confirm dialog. Injected via the host document, never a build
+    // step; selectors are scoped to this plugin's root attribute.
+    function ensureStyles() {
+      if (typeof document === 'undefined' || document.getElementById('dsh-factory-p4-css')) return
+      const css = [
+        // P4 brand tokens, scoped to this view only — never alter the host theme.
+        '[data-dsh-factory-p4]{--df-accent:#4f46d5;--df-accent-wash:#eef0ff;--df-accent-ink:#3b33b8;--df-blue:#2f7de1;--df-blue-wash:#eaf2fe;--df-orange:#c9771f;--df-orange-wash:#fdf1e3;--df-green:#1f8f63;--df-gray:#8b95a5;--df-gray-wash:#f1f3f6;--df-danger-wash:#fdf0f1;--df-radius:11px;--df-radius-sm:7px;--df-shadow:0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04)}',
+        // Unified card treatment (Design #2/#3): rounded, layered, radius system.
+        '[data-dsh-factory-p4] .df-card{border-radius:var(--df-radius, 11px);box-shadow:var(--df-shadow, 0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}',
+        // Large containers share the 11px radius; controls share 7px (Design #3).
+        '[data-dsh-factory-p4] .df-col,[data-dsh-factory-p4] .df-group,[data-dsh-factory-p4] .df-inbox{border-radius:var(--df-radius, 11px)!important}',
+        '[data-dsh-factory-p4] input,[data-dsh-factory-p4] textarea,[data-dsh-factory-p4] select{border-radius:var(--df-radius-sm, 7px)!important}',
+        '[data-dsh-factory-p4] .df-mobar{display:none}',
+        '[data-dsh-factory-p4] .df-tap button,[data-dsh-factory-p4] button.df-tap{min-height:44px}',
+        '[data-dsh-factory-p4] .df-board{display:flex;gap:8px;align-items:flex-start;overflow-x:auto}',
+        '@media (max-width:760px){',
+        // The host app-shell locks vertical scroll on narrow screens (its content
+        // column is overflow:hidden). Make THIS view's root fill the host's given
+        // height and scroll internally, so the overflow is reachable without ever
+        // touching the host shell. `height:100%` inherits the host's definite
+        // height; min-height:0 lets the flex child actually shrink; box-sizing
+        // keeps padding from pushing it past the host clip.
+        '  [data-dsh-factory-p4]{height:100%;min-height:0;box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}',
+        // Keep the board a bounded, self-scrolling region so a tall column can
+        // never stretch the whole page again. Horizontal scroll (above) is intact.
+        '  [data-dsh-factory-p4] .df-board{max-height:42vh;overflow-y:auto}',
+        '  [data-dsh-factory-p4] .df-mobar{display:flex;position:sticky;bottom:0;z-index:25;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--dsw-alias-bg, #fff);border-top:1px solid var(--dsw-alias-border, #e3e6ea);box-shadow:0 -4px 16px rgba(20,28,40,.06)}',
+        '  [data-dsh-factory-p4] .df-mobar button{flex:1;min-height:44px;text-align:center}',
+        '  [data-dsh-factory-p4] button{min-height:44px}',
+        '  [data-dsh-factory-p4] .df-hide-sm{display:none}',
+        `  [data-dsh-factory-p4] .df-modal{align-self:flex-end;margin-bottom:0;border-radius:14px 14px 0 0;max-width:100%}`,
+        '}',
+        '@media (prefers-reduced-motion:reduce){[data-dsh-factory-p4] *{transition:none!important;animation:none!important}}',
+      ].join('\n')
+      const style = document.createElement('style')
+      style.id = 'dsh-factory-p4-css'
+      style.textContent = css
+      document.head.appendChild(style)
+    }
+
     function BoardPage({ t }) {
       const [projects, setProjects] = useState([])
       const [boards, setBoards] = useState([])
       const [cards, setCards] = useState([])
+      const [engine, setEngine] = useState(null)
+      const [settings, setSettings] = useState(null)
       const [projectId, setProjectId] = useState('')
       const [boardId, setBoardId] = useState('')
       const [error, setError] = useState('')
@@ -481,19 +1102,25 @@ window.__ModuleLoader__.load({
       const [newProject, setNewProject] = useState({ name: '', rootPath: '' })
       const [newBoardName, setNewBoardName] = useState('')
       const [newCardTitle, setNewCardTitle] = useState('')
-      const [showSetup, setShowSetup] = useState(false)
-      const [showWtRoot, setShowWtRoot] = useState(false)
+      const [drawerOpen, setDrawerOpen] = useState(false)
+      const [scope, setScope] = useState('global')
+      const [openBlock, setOpenBlock] = useState('autonomy')
 
       const load = useCallback(async () => {
         setBusy(true)
         setError('')
         try {
-          const [p, b, c] = await Promise.all([
+          // Settings/status are read alongside the board so the config drawer
+          // and the effective-slots readout never show a stale value after a save.
+          const [p, b, c, st, se] = await Promise.all([
             callApi('GET', '/projects'), callApi('GET', '/boards'), callApi('GET', '/cards'),
+            callApi('GET', '/status'), callApi('GET', '/settings'),
           ])
           setProjects(p.projects || [])
           setBoards(b.boards || [])
           setCards(c.cards || [])
+          setEngine(st.engine ?? null)
+          setSettings(se.settings ?? null)
         } catch (err) {
           setError(err.message)
         } finally {
@@ -528,27 +1155,117 @@ window.__ModuleLoader__.load({
       const selectStyle = { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13 }
       const children = []
 
-      children.push(h('div', { key: 'header', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } }, [
-        h('div', { key: 'title', style: { fontSize: 16, fontWeight: 600, color: T.ink } }, t('navLabel')),
-        h(Button, { key: 'refresh', onClick: () => void load(), disabled: busy }, busy ? t('loading') : t('refresh')),
+      // One block of the project settings accordion (single-open). Mounted only
+      // when open so a stale pending level never hides in a collapsed panel.
+      const block = (key, num, titleKey, subKey, tone, body) => h('div', {
+        key, className: 'df-group', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, marginBottom: 10, overflow: 'hidden' },
+      }, [
+        h('button', {
+          type: 'button', onClick: () => setOpenBlock(openBlock === key ? '' : key),
+          style: { width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '11px 13px', background: 'transparent', border: 'none', color: T.ink, cursor: 'pointer', textAlign: 'left', minHeight: 44 },
+        }, [
+          h('span', { key: 'bar', style: { width: 3, height: 17, borderRadius: 2, background: tone === 'danger' ? T.danger : tone === 'warn' ? T.warning : T.info } }),
+          h('span', { key: 't', style: { fontSize: 13, fontWeight: 650 } }, t(titleKey)),
+          subKey ? h('span', { key: 's', style: { fontSize: 11, color: T.muted } }, t(subKey)) : null,
+          h('span', { key: 'c', style: { marginLeft: 'auto', color: T.muted } }, openBlock === key ? '▾' : '▸'),
+        ]),
+        openBlock === key ? h('div', { key: 'b', style: { borderTop: `1px solid ${T.line}`, padding: '12px 13px' } }, body) : null,
+      ])
+
+      // Shared page shell: every branch (empty / no-board / full) gets the config
+      // drawer, its scrim and the mobile action bar. Keeps the board the first-class
+      // citizen while config lives off-canvas (P4-0).
+      const renderPage = () => h('div', { 'data-dsh-factory-p4': '1', style: { display: 'flex', flexDirection: 'column', gap: 12, padding: 4, position: 'relative' } }, [
+        h('div', { key: 'main', style: { display: 'flex', flexDirection: 'column', gap: 12 } }, children),
+        // Scrim + right-side config drawer.
+        drawerOpen ? h('div', {
+          key: 'scrim', onClick: () => setDrawerOpen(false),
+          style: { position: 'fixed', inset: 0, background: 'rgba(18,24,32,.34)', zIndex: 40 },
+        }) : null,
+        h('aside', {
+          key: 'drawer', 'aria-label': t('mobileSettings'),
+          style: { position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(500px,94vw)', background: T.panel, zIndex: 50,
+            transform: drawerOpen ? 'translateX(0)' : 'translateX(102%)', transition: 'transform .24s cubic-bezier(.2,.7,.2,1)',
+            boxShadow: '-18px 0 50px rgba(16,22,30,.18)', display: 'flex', flexDirection: 'column' },
+        }, [
+          h('div', { key: 'dh', style: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: T.card, borderBottom: `1px solid ${T.line}` } }, [
+            h('h2', { style: { margin: 0, fontSize: 15, fontWeight: 650, flex: 1 } }, t('mobileSettings')),
+            h(Button, { onClick: () => setDrawerOpen(false), style: { padding: '4px 10px', minHeight: 44 } }, t('closeSettings')),
+          ]),
+          h('div', { key: 'tabs', style: { display: 'flex', gap: 4, padding: '10px 16px 0', background: T.card, borderBottom: `1px solid ${T.line}` } }, [
+            h('button', {
+              type: 'button', onClick: () => setScope('global'),
+              style: { border: 'none', background: 'transparent', color: scope === 'global' ? T.info : T.muted, fontSize: 13, fontWeight: 650, padding: '9px 14px', borderBottom: scope === 'global' ? `2px solid ${T.info}` : '2px solid transparent', minHeight: 44 },
+            }, `${t('scopeGlobal')} · ${t('scopeGlobalSub')}`),
+            h('button', {
+              type: 'button', onClick: () => setScope('project'),
+              style: { border: 'none', background: 'transparent', color: scope === 'project' ? T.info : T.muted, fontSize: 13, fontWeight: 650, padding: '9px 14px', borderBottom: scope === 'project' ? `2px solid ${T.info}` : '2px solid transparent', minHeight: 44 },
+            }, `${t('scopeProject')} · ${t('scopeProjectSub')}`),
+          ]),
+          h('div', { key: 'body', style: { overflow: 'auto', padding: '14px 16px 40px', flex: 1 } },
+            scope === 'global'
+              ? h('div', { key: 'gp' }, [
+                  h('div', { key: 'note', style: { fontSize: 12, color: T.muted, background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: '8px 10px', marginBottom: 12 } }, t('globalNote')),
+                  h(WorktreesRootSetting, { key: 'wr', t }),
+                  h('div', { key: 'gc', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: 12, marginTop: 12 } }, [
+                    h(GlobalCapSection, { key: 'gcap', t, settings, onSaved: () => void load() }),
+                    h('div', { key: 'rule', style: { height: 1, background: T.line, margin: '14px 0' } }),
+                    h(EngineBar, { key: 'egate', t, engine, onChanged: () => void load() }),
+                    h('div', { key: 'hint', style: { fontSize: 12, color: T.muted, marginTop: 8 } }, t('engineGateHint')),
+                  ]),
+                ])
+              : (project
+                  ? h('div', { key: 'pp' }, [
+                      h('div', { key: 'note', style: { fontSize: 12, color: T.muted, background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: '8px 10px', marginBottom: 12 } }, `${t('scopeProjectSub')} · ${project.name}`),
+                      block('prep', '01', 'setupTitle', 'setupPurpose', 'info', h(WorktreeSetup, { key: `${project.id}:setup`, project, t, onSaved: () => void load() })),
+                      block('autonomy', '02', 'autoPanelTitle', 'autoPanelPurpose', 'warn', h(AutonomySection, { key: `${project.id}:autonomy`, project, t, onSaved: () => void load() })),
+                      block('pause', '03', 'pauseTitle', 'pauseSub', 'info', h(PauseSection, { key: `${project.id}:pause`, project, t, onSaved: () => void load() })),
+                      block('conc', '04', 'concTitle', 'concSub', 'info', h(ConcurrencySection, { key: `${project.id}:conc`, project, t, settings, onSaved: () => void load() })),
+                      block('danger', '05', 'dangerTitle', 'dangerSub', 'danger', h(DangerSection, { key: `${project.id}:danger`, project, t, onDeleted: () => { setDrawerOpen(false); setProjectId(''); void load() } })),
+                    ])
+                  : h('div', { key: 'pn', style: { fontSize: 13, color: T.muted } }, t('noProjects'))
+                )
+          ),
+        ]),
+        // Mobile action bar: primary actions pinned to the bottom on narrow screens.
+        h('div', { key: 'mobar', className: 'df-mobar' }, [
+          h(Button, { onClick: () => { setScope('global'); setDrawerOpen(true) } }, h('span', { className: 'df-tap' }, t('mobileSettings'))),
+          // Pause & takeover live in the project scope's 'pause' block — not the
+          // danger zone. The per-card takeover button stays in CardActions.
+          h(Button, { onClick: () => { setScope('project'); setOpenBlock('pause'); setDrawerOpen(true) } }, h('span', { className: 'df-tap' }, t('pauseTitle'))),
+        ]),
+      ])
+
+      // View head: title + description, three headline stats, engine gate and the
+      // settings entry. The board below is the first-class citizen, full width.
+      const activeCount = cards.filter((card) => typeof card.sessionId === 'string' && card.sessionId !== '').length
+      const globalEff = settings?.effectiveGlobalMaxActive
+      const projDefault = settings?.projectDefaultMaxActive
+      const projEff = project?.maxActiveSessions > 0 ? project.maxActiveSessions : (projDefault ?? null)
+      const slots = projEff !== null && globalEff?.value != null ? Math.min(projEff, globalEff.value) : (projEff ?? globalEff?.value ?? '—')
+      const stat = (key, n, label) => h('div', { key, style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: '6px 12px', minWidth: 78 } }, [
+        h('div', { key: 'n', style: { fontSize: 18, fontWeight: 700, color: T.ink } }, String(n)),
+        h('div', { key: 'l', style: { fontSize: 10.5, color: T.muted } }, label),
+      ])
+      children.push(h('div', { key: 'viewHead', style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' } }, [
+        h('div', { key: 'vt', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
+          h('div', { key: 'crumb', style: { fontSize: 11.5, color: T.muted, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `dsh-factory / ${t('navLabel')}`),
+          h('div', { key: 'title', style: { fontSize: 21, fontWeight: 680, color: T.ink, letterSpacing: '-.02em' } }, t('navLabel')),
+          h('div', { key: 'desc', style: { fontSize: 12, color: T.muted } }, t('viewDesc')),
+        ]),
+        h('div', { key: 'tools', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'engine', className: 'df-hide-sm' }, h(EngineBar, { t, engine, onChanged: () => void load() })),
+          h(Button, { key: 'refresh', onClick: () => void load(), disabled: busy }, busy ? t('loading') : t('refresh')),
+          h('span', { key: 'cfg', className: 'df-tap' }, h(Button, {
+            onClick: () => { setScope('global'); setDrawerOpen(true) },
+            style: { background: T.accent, borderColor: T.accent, color: '#fff' },
+          }, t('mobileSettings'))),
+        ]),
       ]))
 
       if (error) {
-        children.push(h('div', { key: 'error', style: { color: T.danger, fontSize: 13, background: T.panel, border: `1px solid ${T.danger}`, borderRadius: 6, padding: '6px 10px' } }, `${t('errorPrefix')}${error}`))
+        children.push(h('div', { key: 'error', style: { color: T.danger, fontSize: 13, background: T.panel, border: `1px solid ${T.danger}`, borderRadius: 6, padding: '6px 10px', whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`))
       }
-
-      // Global worktrees-root bar: page-top, collapsible, always visible (even
-      // before any project exists). Not tied to a selected project — its value
-      // is the default used by projects created from now on.
-      children.push(h('div', { key: 'wtRootToggle', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
-        h('button', {
-          key: 'toggle', type: 'button',
-          style: { padding: '4px 10px', borderRadius: 6, border: `1px solid ${T.line}`, background: T.card, color: T.ink, fontSize: 12, cursor: 'pointer' },
-          onClick: () => setShowWtRoot(!showWtRoot),
-        }, t('wtRootTitle')),
-        h('span', { key: 'hint', style: { fontSize: 12, color: T.muted } }, t('wtRootPurpose')),
-      ]))
-      if (showWtRoot) children.push(h(WorktreesRootSetting, { key: 'wtRootBar', t }))
 
       if (projects.length === 0) {
         children.push(h('div', { key: 'empty', style: { color: T.muted, fontSize: 13 } }, t('noProjects')))
@@ -563,7 +1280,7 @@ window.__ModuleLoader__.load({
             }),
           }, t('create')),
         ]))
-        return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, padding: 4 } }, children)
+        return renderPage()
       }
 
       children.push(h('div', { key: 'selectors', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
@@ -585,22 +1302,16 @@ window.__ModuleLoader__.load({
         children.push(h('div', { key: 'warn', style: { fontSize: 12, color: T.warning } }, project.warning))
       }
 
-      // Project-level worktree setup, per design §12: opt-in panel, not part of
-      // the create form. Always active: worktree isolation is mandatory, so there
-      // is no "disabled when isolation is off" state to show.
-      if (project) {
-        children.push(h('div', { key: 'setupToggle', style: { display: 'flex', gap: 8, alignItems: 'center' } }, [
-          h('button', {
-            key: 'toggle', type: 'button',
-            style: { padding: '4px 10px', borderRadius: 6, border: `1px solid ${T.line}`, background: T.card, color: T.ink, fontSize: 12, cursor: 'pointer' },
-            onClick: () => setShowSetup(!showSetup),
-          }, t('setupTitle')),
-          h('span', { key: 'hint', style: { fontSize: 12, color: T.muted } }, t('setupPurpose')),
-        ]))
-        if (showSetup) {
-          children.push(h(WorktreeSetup, { key: `${project.id}:setup`, project, t, onSaved: () => void load() }))
-        }
-      }
+      // Headline stats — a first-class view header over the board.
+      children.push(h('div', { key: 'stats', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
+        stat('sc', boardCards.length, t('statCards')),
+        stat('sa', activeCount, t('statActive')),
+        stat('ss', slots, t('statSlots')),
+      ]))
+
+      // Needs-attention strip: a read-only roll-up of the existing engine status
+      // plus plan-review / stalled cards. No new capability — just presentation.
+      children.push(h(NeedsAttention, { key: 'attention', t, engine, cards: boardCards }))
 
       if (project && projectBoards.length === 0) {
         children.push(h('div', { key: 'newBoard', style: { display: 'flex', gap: 8, alignItems: 'flex-end', background: T.panel, padding: 10, borderRadius: 8 } }, [
@@ -610,10 +1321,10 @@ window.__ModuleLoader__.load({
             setNewBoardName('')
           }) }, t('create')),
         ]))
-        return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, padding: 4 } }, children)
+        return renderPage()
       }
 
-      children.push(h('div', { key: 'inbox', style: { background: T.panel, borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 } }, [
+      children.push(h('div', { key: 'inbox', className: 'df-inbox', style: { background: T.panel, borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 } }, [
         h('div', { key: 'ih', style: { fontSize: 12, fontWeight: 600, color: T.warning } }, `${t('inbox')} · ${inboxCards.length}`),
         inboxCards.length === 0 ? h('div', { key: 'ie', style: { fontSize: 12, color: T.muted } }, t('inboxEmpty')) : inboxCards.map(renderCard),
       ]))
@@ -626,7 +1337,7 @@ window.__ModuleLoader__.load({
         }) }, t('create')),
       ]))
 
-      children.push(h('div', { key: 'board', style: { display: 'flex', gap: 8, alignItems: 'flex-start', overflowX: 'auto' } },
+      children.push(h('div', { key: 'board', className: 'df-board', style: { display: 'flex', gap: 8, alignItems: 'flex-start', overflowX: 'auto' } },
         COLUMNS.map((column) => h(Column, {
           key: column.key,
           title: t(column.labelKey),
@@ -639,12 +1350,15 @@ window.__ModuleLoader__.load({
         children.push(h('div', { key: 'canceled', style: { fontSize: 12, color: T.muted } }, `${t('canceled')}: ${canceledCards.length}`))
       }
 
-      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, padding: 4 } }, children)
+      return renderPage()
     }
 
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        // Scoped mobile CSS (44px targets, pinned action bar, bottom-sheet modal).
+        // Injected once into the host document; no build step, no host token edits.
+        ensureStyles()
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-factory: dictionaries')
         const t = ctx.locale.bind(NS)
         // Primary surface: an icon row in the global panel list…

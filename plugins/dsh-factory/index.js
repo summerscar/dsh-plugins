@@ -38,7 +38,7 @@ export * as state from './state.js'
 export * as worktree from './worktree.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-16.39'
+export const BUILD = 'factory-2026-11-17.40'
 
 export const name = 'dsh-factory'
 
@@ -94,7 +94,10 @@ export function apply(ctx, config = {}) {
   // tools either all registered or none did, and that fact must be observable
   // instead of hidden behind a swallowed import error.
   const runtime = { toolsRegistered: false, engine: createEngineStatus() }
-  const handleApi = createApi({ store, build: BUILD, runtime })
+  // `config.engine` is the launch-config fallback for the global concurrency cap;
+  // the HTTP-written value in store.settings takes priority (P4 §3.3). The API
+  // needs it to report the effective value + source back to the UI.
+  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {} })
 
   // L1 autonomy engine: ONE plugin-level timer, owned by a ctx.effect. A missing
   // host timer service leaves `runtime.engine.timerReason` readable instead of
