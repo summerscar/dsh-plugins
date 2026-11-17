@@ -281,10 +281,15 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
 
         // Discovery is allowed even when dispatch is off (AE-1b). A failed gh
         // call is isolated and must not stop dispatch of already-known cards.
+        // The gh port is resolved PER PROJECT when the host supplies `ghPortFor`
+        // (identity ladder, PGH-9: no single global ghPort). Fake deps that only
+        // provide `ghPort` keep working unchanged.
         try {
+          let ghPort = deps.ghPort
+          if (typeof deps.ghPortFor === 'function') ghPort = await deps.ghPortFor(project)
           const result = await deps.intake({
             store, projectId: project.id, boardId, repo,
-            ghPort: deps.ghPort, origin: intakeOrigin(),
+            ghPort, origin: intakeOrigin(),
             // Per-project poll cap; null/undefined means "port default (100)".
             // Bounds a single tick against a busy upstream (no card flood).
             limit: Number.isInteger(project.intakeLimit) && project.intakeLimit > 0 ? project.intakeLimit : undefined,
@@ -374,9 +379,12 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
  * that one card (caught by runTick), never the whole tick. Injectable `deps` let
  * QA exercise the same runTick with a fake store and fake host, offline.
  */
-export function defaultEngineDeps({ ctx, ghPort = createGhPort() } = {}) {
+export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = {}) {
   return {
     intake: intakeIssues,
+    // Per-project gh port from the identity ladder (PGH-9). The host supplies it
+    // via index.js; when absent, runTick falls back to the single `ghPort` above.
+    ...(typeof ghPortFor === 'function' ? { ghPortFor } : {}),
     dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }) }),
     // L2 machine plan-approval: same store gate as a human button, write-before-
     // receipt prechecked, actor=autoRule. Ports left default (the approval value

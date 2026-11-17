@@ -52,21 +52,28 @@ dsh plugin --profile web add @summerscar/dsh-factory
 
 ## GitHub 接入
 
-按环境自动选择，优先级如下：
+每个项目自己判断用哪个 GitHub 身份，项目里的**身份卡**用大白话把结果摆出来：当前用的是哪个账号、来源是哪一档、本地目录是否绑到了正确的远端仓库、以及一项可以随点随查的权限检查。连一次，到处都能用。
 
-1. **复用 `gh` 登录态**——已经 `gh auth login` 过就直接可用，零配置。
-2. **自建 OAuth App + Device Flow**——去 [创建 OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)，**务必勾选 Enable Device Flow**；callback URL 在该流程中不使用，填 `http://127.0.0.1` 占位即可；把 Client ID（非密钥）填进插件，再到 [github.com/login/device](https://github.com/login/device) 输入八位码。
-3. **个人访问令牌**——存进 DSH 凭据，供前两者都不可用时兜底。
+来源分三种，作用域由种类定死：
 
-访问令牌一律存进 DSH 凭据，不写入配置、日志或状态文件。插件不内置任何 OAuth 凭据。
+- **一个 GitHub OAuth App**——通过设备码流程连一次，连接对所有项目共用（这一档没有按项目开的开关）。用它要自己[创建 OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)并勾选设备码流程，把它的 Client ID（不是密钥）填进插件，再到 [github.com/login/device](https://github.com/login/device) 输入 GitHub 给的八位码。
+- **你机器上的 `gh` 登录**——已经跑过 `gh auth login` 就直接用，不额外存任何东西。账号管理区会显示 `gh` 是否已登录成某个账号，没登录时告诉你怎么登。
+- **一个个人访问令牌**——只有这一档由你选作用域：**所有项目共用**，或**只给一个仓库**。
+
+插件按「谁能真正够到这个仓库」取第一档命中：先是共享连接，再是 `gh` 登录，再是部署环境里的令牌，最后是你存的令牌（共用的，或只给这个仓库的）。都没有时，身份卡显示「未连接」并告诉你下一步怎么办。
+
+令牌一律存进 DSH 凭据，不写进配置、日志或状态文件，也绝不回显。插件不内置任何 OAuth 凭据。在全局设置区，你可以对共享的 OAuth 连接**连接**、**重设**（用新连接替换旧的）或**断开**，`gh` 登录状态也在那里能看。
 
 参考：[授权流程](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) · [创建入口](https://github.com/settings/applications/new) · [设备码输入](https://github.com/login/device)
 
 ## 主要限制
 
 - **绝不自动执行 git 操作。** 没有人在卡片上按下批准控件，插件就不会 commit、push、开 PR 或合并。
-- **暂停与接管目前只能走 HTTP。** 引擎可全局暂停（`POST /api/dsh-factory/engine/pause`，用 `.../resume` 恢复，已在跑的会话不会被打断），单张卡可从引擎手里接管（`POST /api/dsh-factory/cards/<卡片 id>/takeover`——是 `takeover`，不是 `take-over`）。这两项在界面上都还没有入口。
+- **暂停不会停掉已在跑的会话。** 全局与项目级的暂停/恢复、卡片级接管现在在设置界面都有入口；暂停只挡之后的 tick，所以已在跑的会话会接着跑。接口仍是 `POST /api/dsh-factory/engine/pause` / `.../resume` 与 `POST /api/dsh-factory/cards/<卡片 id>/takeover`（是 `takeover`，不是 `take-over`）。
 - **远端状态只生成建议、不自动应用。** `POST /api/dsh-factory/cards/<卡片 id>/remote-sync` 接收远端 PR 快照，只记录一条待人处理的建议——绝不改变卡片所在列，也不会替你批准计划。
 - **没有 webhook。** 走 `gh` 与轮询，所以 issue 变化不是实时的，取决于轮询间隔。
 - **只支持 GitHub。** GitLab 的评审流程尚未实现。
 - **单机。** 面向在本机运行的 DSH，不提供多副本协调。
+- **OAuth 连接是活的设备码流程。** 它在你的浏览器里跑、只在当前这个页面会话内保持：跑的过程中刷新页面会取消它，码没在流程的时间窗内填完就得重新发起连接。
+- **重设只是本地断开。** 插件会清掉已存的连接、并给你一个去 GitHub 设置页撤销的链接，但它无法替你在 GitHub 上撤销令牌（它没有你那个 OAuth App 的 client secret）；远端撤销是你在 GitHub 网页上的动作。
+- **只给某个仓库存的令牌只帮那个仓库。** 存来共用的令牌对所有项目生效，存给单个仓库的只在那儿生效。

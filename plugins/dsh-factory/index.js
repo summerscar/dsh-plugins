@@ -26,6 +26,12 @@ import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
 import { registerFactorySkills } from './skills.js'
 import { FactoryStore } from './store.js'
+import { decideIdentity, identityView, OAUTH_KEY_ID, credentialKeyOf } from './identity.js'
+import { registerGithubOAuthFlow, verifyLogin } from './github-oauth.js'
+import {
+  identityCardFor, probePermission, createAuthorizationBridge, writeGithubToken, removeGithubToken,
+  disconnectOAuth, oauthState, ghCliState,
+} from './github-api.js'
 
 export { FactoryStore } from './store.js'
 export { createApi } from './api.js'
@@ -36,9 +42,17 @@ export { intakeIssues, createGhPort } from './intake.js'
 export { buildSessionContext, attachSessionContext } from './session-context.js'
 export * as state from './state.js'
 export * as worktree from './worktree.js'
+export * as identity from './identity.js'
+export {
+  registerGithubOAuthFlow, requestDeviceCode, pollDeviceToken, verifyLogin, storeUserToken,
+} from './github-oauth.js'
+export {
+  identityCardFor, probePermission, createAuthorizationBridge, writeGithubToken, removeGithubToken,
+  disconnectOAuth, oauthState, ghCliState,
+} from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-17.40'
+export const BUILD = 'factory-2026-11-18.2'
 
 export const name = 'dsh-factory'
 
@@ -99,10 +113,70 @@ export function apply(ctx, config = {}) {
   // needs it to report the effective value + source back to the UI.
   const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {} })
 
+  // The HTTP-written githubClientId (NON-secret) lives in store.settings; the
+  // actual GitHub identities live in the host credential service, never here.
+  // Both the two git chains and the identity card go through this ONE resolver.
+  let credentialsService = null
+  let authorizationService = null
+  let authBridge = null
+
+  // A liveness probe for token-backed tiers (PGH-22): a plain GET /user verifies
+  // the token still works AND returns the real login in the same call (坑⑦⑨).
+  // A dead/stale token makes that tier fall through — no false green. Uses the
+  // default fetch so QA can stub globalThis.fetch; no secret-bearing endpoint.
+  const verifyToken = async (token) => ({ login: await verifyLogin({ token }) })
+
+  async function resolveIdentity(project) {
+    const readRecord = async (key) => {
+      const svc = credentialsService
+      if (svc === null || typeof svc.readRecord !== 'function') return undefined
+      return svc.readRecord(key)
+    }
+    return decideIdentity({
+      project,
+      clientId: store.getGithubClientIdSetting(),
+      readRecord,
+      verifyToken,
+    })
+  }
+
+  // Credentials + authorization are optional host services. Register them the
+  // LAZY way (same as commands / timer): a profile without them keeps the board,
+  // API and engine fully working — only GitHub identity features go dormant with
+  // a readable error, instead of taking the whole plugin down at apply().
+  ctx.inject(['credentials', 'authorization'], (scope) => {
+    credentialsService = scope.credentials ?? null
+    authorizationService = scope.authorization ?? null
+    const disposeFlow = registerGithubOAuthFlow({
+      authorization: authorizationService,
+      getClientId: () => store.getGithubClientIdSetting(),
+    })
+    authBridge = createAuthorizationBridge({
+      authorization: authorizationService,
+      key: credentialKeyOf(OAUTH_KEY_ID),
+    })
+    return () => {
+      authBridge = null
+      credentialsService = null
+      authorizationService = null
+      if (typeof disposeFlow === 'function') disposeFlow()
+    }
+  })
+
   // L1 autonomy engine: ONE plugin-level timer, owned by a ctx.effect. A missing
   // host timer service leaves `runtime.engine.timerReason` readable instead of
   // silently not running (P1 lesson / PRD §3, Chief hard constraint #2).
-  startEngine({ ctx, store, status: runtime.engine, deps: defaultEngineDeps({ ctx, ghPort: createGhPort() }), config: config.engine })
+  // Engine intake resolves the identity PER PROJECT (no single global ghPort any
+  // more — PGH-9), using the same resolveIdentity the manual chains use.
+  startEngine({
+    ctx, store, status: runtime.engine,
+    deps: defaultEngineDeps({
+      ctx,
+      ghPort: createGhPort(),
+      ghPortFor: async (project) => createGhPort((await resolveIdentity(project)).git),
+    }),
+    config: config.engine,
+  })
   // /factory slash command. `ctx.inject` waits for the commands service to be
   // ready instead of racing apply(): a profile that loads commands later still
   // gets the command, and a profile without it just skips registration while
@@ -270,8 +344,15 @@ export function apply(ctx, config = {}) {
     const prMatch = /^\/cards\/([^/?]+)\/create-pr(?:\?.*)?$/.exec(route)
     if (method === 'POST' && prMatch !== null) {
       try {
-        const port = createGitPort()
-        const result = await createPrForCard({ store, cardId: decodeURIComponent(prMatch[1]), port, title: body.title, body: body.body })
+        const cardId = decodeURIComponent(prMatch[1])
+        const card = store.getCard(cardId)
+        const project = card?.projectId ? store.getProject(card.projectId) : undefined
+        // One decision, one env construction — the push chain uses the SAME
+        // resolver as engine/manual intake (PGH-9, pitfall ①). buildGitEnv itself
+        // is untouched; it only receives the winner's argument group.
+        const decision = await resolveIdentity(project)
+        const port = createGitPort(decision.git)
+        const result = await createPrForCard({ store, cardId, port, title: body.title, body: body.body })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -285,7 +366,150 @@ export function apply(ctx, config = {}) {
       try {
         const boardId = decodeURIComponent(intakeMatch[1])
         const board = store.getBoard(boardId)
-        const result = await intakeIssues({ store, projectId: board?.projectId, boardId, repo: body.repo, ghPort: createGhPort() })
+        const project = board?.projectId ? store.getProject(board.projectId) : undefined
+        const decision = await resolveIdentity(project)
+        const result = await intakeIssues({ store, projectId: board?.projectId, boardId, repo: body.repo, ghPort: createGhPort(decision.git) })
+        sendJson(res, 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // ---- GitHub identity (P4-github, backend) --------------------------------
+    // All identity routes are fail-closed: an absent credential/authorization
+    // service yields a readable error, never a silent "not connected" that could
+    // be mistaken for a real answer.
+
+    // Identity card: binding relationship + the single winning identity (six
+    // states) + its source. Token-free by construction (identityCardFor).
+    const identityMatch = /^\/identity\/([^/?]+)(?:\?.*)?$/.exec(route)
+    if (method === 'GET' && identityMatch !== null) {
+      try {
+        const id = decodeURIComponent(identityMatch[1])
+        const project = store.getProject(id)
+        if (project === undefined || project === null) throw new Error(`项目不存在：${id}`)
+        const decision = await resolveIdentity(project)
+        sendJson(res, 200, identityCardFor({ project, decision }))
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // Permission check: a user-triggered, READ-ONLY probe against the winning
+    // identity. Never runs per tick, never changes the decision, never echoes a
+    // token — only { status, reason } (PGH-7).
+    const permMatch = /^\/identity\/([^/?]+)\/check(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && permMatch !== null) {
+      try {
+        const id = decodeURIComponent(permMatch[1])
+        const project = store.getProject(id)
+        if (project === undefined || project === null) throw new Error(`项目不存在：${id}`)
+        const decision = await resolveIdentity(project)
+        const repo = typeof body.repo === 'string' && body.repo.trim() !== '' ? body.repo : project.issueRepo
+        const result = await probePermission({ decision, repo, env: process.env })
+        sendJson(res, 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // ---- Global account management (PGH-19~21) ------------------------------
+    // All three live in the GLOBAL settings area only; the per-repo identity
+    // card's "which account this repo uses" row is untouched.
+
+    // OAuth connection state (connected / in-flight / app-id present) for the
+    // global block. Read-only; never returns a token.
+    if (method === 'GET' && /^\/auth\/oauth\/state(?:\?.*)?$/.test(route)) {
+      try {
+        sendJson(res, 200, await oauthState({
+          credentials: credentialsService,
+          authorization: authorizationService,
+          clientId: store.getGithubClientIdSetting(),
+        }))
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // OAuth 撤销 = local disconnect only + honest revoke-on-website guidance.
+    // Idempotent; never calls a client_secret endpoint; never claims remote revoke.
+    if (method === 'POST' && /^\/auth\/oauth\/disconnect(?:\?.*)?$/.test(route)) {
+      try {
+        sendJson(res, 200, await disconnectOAuth({
+          credentials: credentialsService,
+          clientId: store.getGithubClientIdSetting(),
+        }))
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // gh CLI login state (global, read-only). Reported whether logged in or not.
+    if (method === 'GET' && /^\/auth\/ghcli\/state(?:\?.*)?$/.test(route)) {
+      try { sendJson(res, 200, ghCliState({ env: process.env })) }
+      catch (error) { sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) }) }
+      return
+    }
+
+    // Authorization bridge (device flow). Notices/prompts live in an in-memory
+    // session; the browser polls it and answers/cancels. A reload drops the
+    // session (seam constraint — UX says keep the page open).
+    if (method === 'POST' && /^\/auth\/connect\/begin(?:\?.*)?$/.test(route)) {
+      try {
+        if (authBridge === null) throw new Error('授权服务不可用，暂时无法连接 GitHub')
+        sendJson(res, 200, authBridge.begin())
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+    const connectMatch = /^\/auth\/connect\/([^/?]+)(?:\/answer|\/cancel)?(?:\?.*)?$/.exec(route)
+    if (connectMatch !== null) {
+      try {
+        if (authBridge === null) throw new Error('授权服务不可用，暂时无法连接 GitHub')
+        const sessionId = decodeURIComponent(connectMatch[1])
+        if (method === 'GET') {
+          const view = authBridge.read(sessionId)
+          if (view === null) { sendJson(res, 404, { error: '连接会话不存在或已过期，请重新开始' }); return }
+          sendJson(res, 200, view)
+        } else if (method === 'POST' && route.includes('/answer')) {
+          sendJson(res, 200, authBridge.answer(sessionId, body.value))
+        } else if (method === 'POST' && route.includes('/cancel')) {
+          sendJson(res, 200, authBridge.cancel(sessionId))
+        } else {
+          sendJson(res, 404, { error: `未知路由：${method} ${path}` })
+        }
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // User-supplied github token → credential store. The scope switch (global
+    // vs per-repo) exists ONLY here for gh token; the token itself never leaves
+    // the Host and is never echoed (PGH-18 / no echo).
+    if (method === 'POST' && /^\/auth\/token(?:\?.*)?$/.test(route)) {
+      try {
+        const result = await writeGithubToken({
+          store, credentials: credentialsService,
+          token: body.token, scope: body.scope, projectId: body.projectId,
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+    if (method === 'DELETE' && /^\/auth\/token(?:\?.*)?$/.test(route)) {
+      try {
+        const result = await removeGithubToken({
+          store, credentials: credentialsService, scope: body.scope, projectId: body.projectId,
+        })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })

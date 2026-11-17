@@ -14,6 +14,7 @@
 import { spawnSync } from 'node:child_process'
 
 import { cleanGitEnv } from './git-env.js'
+import { buildGitEnv } from './git-exec.js'
 
 /** Stable identity for an issue, used both as the card source and the dedupe key. */
 export function issueSourceKey(repo, issue) {
@@ -85,15 +86,27 @@ export async function intakeIssues({ store, projectId, boardId, repo, ghPort, or
   return { created, skipped: issues.length - fresh.length }
 }
 
-/** Real gh port: one `gh issue list --json` call per repo. `limit` defaults to 100. */
-export function createGhPort({ limit = 100 } = {}) {
+/**
+ * Real gh port: one `gh issue list --json` call per repo. `limit` defaults to 100.
+ *
+ * The child env now goes through the SAME `buildGitEnv` the push port uses, fed by
+ * the decision layer's winner (`credentialToken` / `ghLoggedIn`). That closes the
+ * old split where intake used bare `cleanGitEnv()` while push used `buildGitEnv`
+ * (PRD pitfall ① / PGH-9: one decision, one env construction, both chains).
+ * With no arguments it is behaviourally identical to bare cleanGitEnv — the
+ * inherited env is preserved — so existing callers and tests stay green.
+ */
+export function createGhPort({ limit = 100, credentialToken, ghLoggedIn } = {}) {
+  // buildGitEnv(process.env, {}) === cleanGitEnv(process.env) with no winner,
+  // so the default path is unchanged for callers that pass no identity.
+  const env = buildGitEnv(process.env, { credentialToken, ghLoggedIn })
   return {
     listIssues(repo, options = {}) {
       const effective = Number.isInteger(options.limit) && options.limit > 0 ? options.limit : limit
       const result = spawnSync('gh', [
         'issue', 'list', '--repo', repo, '--state', 'open', '--limit', String(effective),
         '--json', 'number,title,body,url,labels',
-      ], { encoding: 'utf8', env: cleanGitEnv() })
+      ], { encoding: 'utf8', env })
       if (result.error) throw result.error
       if (result.status !== 0) throw new Error(`gh issue list 失败：${(result.stderr || '').trim()}`)
       return result.stdout

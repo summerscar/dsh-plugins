@@ -27,6 +27,19 @@ import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-s
 
 export const SCHEMA_VERSION = 1
 
+/**
+ * Credential-key segment grammar, mirrored from the host's dsh-credentials seam
+ * (`/^[a-z][a-z0-9-]*$/`). Kept local so a custom project credential id is
+ * rejected BEFORE we ever ask the host to build a key — a bad id (uppercase,
+ * underscore, a path with `/`) must surface its own error, never a host TypeError
+ * deep inside the credential service. Pure and dependency-free for offline tests.
+ */
+export const CREDENTIAL_KEY_SEGMENT = /^[a-z][a-z0-9-]*$/
+
+export function isCredentialKeySegment(value) {
+  return typeof value === 'string' && CREDENTIAL_KEY_SEGMENT.test(value)
+}
+
 export const DEFAULT_PERMISSION = 'workspace-write'
 export const DEFAULT_AUTONOMY = 'L0'
 
@@ -145,7 +158,16 @@ function normalizeIntake(input, current = {}) {
   if (intakeLimit !== null && (!Number.isInteger(intakeLimit) || intakeLimit < 1)) {
     throw new Error('intakeLimit 必须是正整数或 null')
   }
-  return { issueRepo: repo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit }
+  // Optional per-project credential-key segment. When set, it is the id half of
+  // `credentialKey('dsh-factory', githubCredentialId)` — a repo-scoped fallback
+  // token. Validated against the host seam's segment grammar HERE, before any key
+  // is built, so a bad id (uppercase / underscore / slash) fails with this exact
+  // message. null means "use the project id as the segment". Not a token value.
+  const credentialId = pick('githubCredentialId')
+  if (credentialId !== null && !isCredentialKeySegment(credentialId)) {
+    throw new Error(`githubCredentialId 必须是小写字母/数字/连字符且以字母开头：${String(credentialId)}`)
+  }
+  return { issueRepo: repo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit, githubCredentialId: credentialId }
 }
 
 export function emptyState() {
@@ -156,7 +178,7 @@ export function emptyState() {
   // (null = fall back to launch config, then built-in default). It lives in the
   // SAME settings row so a reload restores it, but is validated and written by
   // its own method so it can never overwrite worktreeRoot, or vice versa (P4 §3.3).
-  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [], settings: { worktreeRoot: '', globalMaxActive: null } }
+  return { schemaVersion: SCHEMA_VERSION, projects: [], boards: [], cards: [], events: [], settings: { worktreeRoot: '', globalMaxActive: null, githubClientId: '' } }
 }
 
 export class FactoryStore {
@@ -277,6 +299,26 @@ export class FactoryStore {
     this.state.settings = { ...(this.state.settings ?? {}), globalMaxActive: raw }
     this._commit()
     return { globalMaxActive: raw }
+  }
+
+  /**
+   * The GitHub OAuth App client_id (P4-github). NON-secret by device-flow design —
+   * it goes into settings so it is HTTP-writable and persisted like globalMaxActive,
+   * NOT into a credential record. Empty string disables the global OAuth tier
+   * without affecting any other tier. Never a token: stored verbatim, no masking.
+   */
+  getGithubClientIdSetting() {
+    const raw = this.state.settings?.githubClientId
+    return typeof raw === 'string' ? raw.trim() : ''
+  }
+
+  updateGithubClientId(value) {
+    const raw = value === null || value === undefined ? '' : value
+    if (typeof raw !== 'string') throw new Error('githubClientId 必须是字符串')
+    const trimmed = raw.trim()
+    this.state.settings = { ...(this.state.settings ?? {}), githubClientId: trimmed }
+    this._commit()
+    return { githubClientId: trimmed }
   }
 
   // ---- projects -----------------------------------------------------------

@@ -52,21 +52,28 @@ Register a project from the conversation with `/factory`:
 
 ## GitHub access
 
-Chosen automatically from what your machine already has, in this order:
+Each project works out its own GitHub identity, and the project's **identity card** shows the result in plain terms: which account is in use, where it came from, whether your local checkout is bound to the right remote repository, and a permission check you can run on demand. Connect once and it is available across your projects.
 
-1. **Reuse the `gh` login** — if you have run `gh auth login`, it works with no setup.
-2. **Your own OAuth App with the device flow** — [create an OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) and **enable the device flow**; the callback URL is unused by that flow, so `http://127.0.0.1` is fine as a placeholder. Put the Client ID (not a secret) into the plugin, then enter the eight-character code at [github.com/login/device](https://github.com/login/device).
-3. **A personal access token** — stored in DSH credentials, the fallback when neither of the above is available.
+There are three kinds of source, and the scope is fixed by the kind:
 
-Access tokens always live in DSH credentials, never in configuration, logs or state files. The plugin ships no OAuth credentials of its own.
+- **A GitHub OAuth App** — you connect once through the device flow and the connection is shared across all projects (there is no per-project switch for it). To use one you create your own [OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the device flow enabled, put its client ID (not a secret) into the plugin, then enter the eight-character code GitHub gives you at [github.com/login/device](https://github.com/login/device).
+- **Your `gh` login** — if you already ran `gh auth login` on the machine, the plugin uses it as-is and stores nothing. The account manager shows whether `gh` is logged in as an account, and, when it is not, tells you how to log in.
+- **A personal access token** — the only kind where you choose the scope: keep it **shared across all projects**, or store it **for one repository only**.
+
+The plugin takes the first source that can actually reach the repository — a shared connection, then your `gh` login, then a token set in the deployment environment, then a token you stored (shared, or for that one repository). When none of them can reach it, the card says "not connected" and points you to what to do next.
+
+All tokens live in DSH credentials, never in configuration, logs or state files, and they are never shown back to you. The plugin ships no OAuth credentials of its own. In the global settings area you can **connect**, **reconnect** (a fresh connection that replaces the old one) or **disconnect** the shared OAuth connection, and you can see the `gh` login status there too.
 
 References: [authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) · [create an app](https://github.com/settings/applications/new) · [enter a device code](https://github.com/login/device)
 
 ## Limitations
 
 - **No automatic git.** Without a person pressing the approval control on a card, the plugin never commits, pushes, opens a pull request or merges.
-- **Pausing and taking over are HTTP-only for now.** The engine can be paused globally (`POST /api/dsh-factory/engine/pause`, resumed with `.../resume`; running sessions are not interrupted), and a single card can be taken out of the engine's control (`POST /api/dsh-factory/cards/<card id>/takeover` — `takeover`, not `take-over`). Neither has a control in the interface yet.
+- **A pause does not stop running sessions.** Global and per-project pause/resume and per-card takeover now have controls in the settings interface; a pause blocks only later ticks, so sessions already running keep going. The endpoints remain `POST /api/dsh-factory/engine/pause` / `.../resume` and `POST /api/dsh-factory/cards/<card id>/takeover` (`takeover`, not `take-over`).
 - **Remote status is suggestion-only.** `POST /api/dsh-factory/cards/<card id>/remote-sync` accepts a remote PR snapshot and only records a suggestion for a human: it never changes the card's column or approves its plan for you.
 - **No webhooks.** It uses `gh` and polling, so issue changes are not live; freshness follows the poll interval.
 - **GitHub only.** The GitLab review flow is not implemented.
 - **Single machine.** Built for a DSH running locally; it provides no multi-replica coordination.
+- **The OAuth connection is a live device flow.** It runs in your browser and is kept only for that page session: refreshing the page while it is in progress cancels it, and if the code is not finished before the flow's time window closes you start the connection again.
+- **Reconnecting is a local sign-out.** The plugin clears the stored connection and links you to GitHub's settings page to revoke it, but it cannot revoke the token on GitHub itself (it holds no client secret for your OAuth App); revoking remotely is your action on GitHub's site.
+- **A per-repository token only helps that repository.** A token stored to share across projects applies to all of them; a token stored for one repository applies only there.

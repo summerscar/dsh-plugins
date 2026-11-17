@@ -248,6 +248,63 @@ window.__ModuleLoader__.load({
       mobileTakeover: "我来接手",
       mobileApprove: "批准计划",
       mobileDispatch: "交给 AI",
+      // P4-github · project GitHub identity card (Design copy — plain words only)
+      ghCardTitle: "这个仓库的 GitHub 连接",
+      ghLocalLabel: "本地文件夹",
+      ghRepoLabel: "GitHub 仓库",
+      ghLinked: "已连好",
+      ghExpandPath: "展开完整路径",
+      ghNowUsing: "正在用：{account}",
+      ghFrom: "来源：{source}",
+      ghUnknownAccount: "暂时认不出是谁",
+      ghSharedTag: "所有项目共用",
+      srcConnected: "已连接",
+      srcComputer: "电脑上已登录",
+      srcSystem: "系统里已设置",
+      srcAddedShared: "自己填写的",
+      srcThisRepo: "只给这个仓库",
+      srcNone: "还没连接",
+      ghPermOk: "可以正常访问这个仓库",
+      ghPermBad: "访问不了这个仓库",
+      ghCheckPerm: "检查权限",
+      ghChecking: "正在确认…",
+      ghConnect: "连接 GitHub",
+      ghAddAccount: "填写账号",
+      ghGuideNone: "这个仓库还没连接账号。连一次（所有项目都能用），或电脑上登录一个，或自己填一个。",
+      ghGuideNoAccess: "已连接的账号访问不了这个仓库。换一个能访问的账号，或给这个仓库单独填一个。",
+      ghKeepOpen: "连接时请先别关这个页面",
+      ghStepOpen: "打开这个网址",
+      ghStepCode: "登录后把看到的码填进来",
+      ghStepConnecting: "正在连接…",
+      ghStepDone: "连好了，所有项目都能用",
+      ghScopeTitle: "这个账号给谁用？",
+      ghScopeAll: "所有项目都用",
+      ghScopeRepo: "只给这个仓库",
+      ghScopeHint: "选「所有项目都用」，以后新建的项目也会用这个账号；选「只给这个仓库」，只影响当前仓库。",
+      ghAppIdLabel: "连接用的应用编号",
+      ghAppIdHint: "在你自己的 GitHub 建一个连接用的应用，把编号填这里。建一次，所有项目共用。",
+      ghChangeSharedConfirm: "这会改变所有项目正在用的账号，确定吗？",
+      ghSaveAppId: "保存编号",
+      ghAccountLabel: "你的登录信息",
+      ghAccountHint: "填入你自己的登录信息，只存在你的账号里，不会显示出来。",
+      ghSaveAccount: "保存",
+      ghSaved: "已保存",
+      // P4-github increment · global account management (Design §7.7)
+      ghConnectState: "连接状态：{state}",
+      ghStateOn: "已连接",
+      ghStateOff: "还没连接",
+      ghReconnect: "重新连接",
+      ghDisconnect: "断开这台设备",
+      ghDisconnectDone: "已在这台设备上断开。",
+      ghRevokeGuide: "要彻底撤销，请到 GitHub 网页取消这个应用的授权。",
+      ghRevokeLink: "去 GitHub 网页撤销",
+      ghConnectBusy: "正在连接，请稍候。",
+      ghOneAtATime: "一次只能连接一次，正在连时请别重复点。",
+      ghComputerLoginTitle: "电脑上的登录",
+      ghComputerLoggedIn: "已登录",
+      ghComputerLoggedOut: "未登录",
+      ghComputerLoginGuide: "这台电脑还没登录。先登录，再回来看看。",
+      ghPermNotChecked: "还没检查权限",
     }
     const en = {
       settings: "Project Factory",
@@ -403,6 +460,63 @@ window.__ModuleLoader__.load({
       mobileTakeover: "Take back",
       mobileApprove: "Approve",
       mobileDispatch: "Hand to AI",
+      // P4-github · project GitHub identity card (Design copy — plain words only)
+      ghCardTitle: "GitHub connection for this repo",
+      ghLocalLabel: "Local folder",
+      ghRepoLabel: "GitHub repository",
+      ghLinked: "Linked",
+      ghExpandPath: "Show full path",
+      ghNowUsing: "Now using: {account}",
+      ghFrom: "Via: {source}",
+      ghUnknownAccount: "Can't tell who right now",
+      ghSharedTag: "Shared by all projects",
+      srcConnected: "Connected",
+      srcComputer: "Signed in on this computer",
+      srcSystem: "Set up on this system",
+      srcAddedShared: "Added by you",
+      srcThisRepo: "This repo only",
+      srcNone: "Not connected",
+      ghPermOk: "Can access this repo",
+      ghPermBad: "Can't access this repo",
+      ghCheckPerm: "Check access",
+      ghChecking: "Checking…",
+      ghConnect: "Connect GitHub",
+      ghAddAccount: "Add an account",
+      ghGuideNone: "No account connected for this repo. Connect once for all projects, sign in on this computer, or add one yourself.",
+      ghGuideNoAccess: "The connected account can't reach this repo. Use one that can, or add one just for this repo.",
+      ghKeepOpen: "Keep this page open while connecting",
+      ghStepOpen: "Open this link",
+      ghStepCode: "Sign in, then enter the code you see",
+      ghStepConnecting: "Connecting…",
+      ghStepDone: "Connected — all projects can use it",
+      ghScopeTitle: "Who should use this account?",
+      ghScopeAll: "All projects",
+      ghScopeRepo: "This repo only",
+      ghScopeHint: "\"All projects\" also covers projects you create later; \"This repo only\" affects just this one.",
+      ghAppIdLabel: "Connection app ID",
+      ghAppIdHint: "Create a connection app in your GitHub and paste its ID here. Set up once for all projects.",
+      ghChangeSharedConfirm: "This changes the account all projects use. Continue?",
+      ghSaveAppId: "Save ID",
+      ghAccountLabel: "Your sign-in details",
+      ghAccountHint: "Enter your own sign-in details; they are stored under your account only and never shown again.",
+      ghSaveAccount: "Save",
+      ghSaved: "Saved",
+      // P4-github increment · global account management (Design §7.7)
+      ghConnectState: "Connection: {state}",
+      ghStateOn: "Connected",
+      ghStateOff: "Not connected",
+      ghReconnect: "Reconnect",
+      ghDisconnect: "Disconnect this device",
+      ghDisconnectDone: "Disconnected on this device.",
+      ghRevokeGuide: "To fully revoke access, remove this app's permission on the GitHub website.",
+      ghRevokeLink: "Revoke on GitHub",
+      ghConnectBusy: "Connecting, please wait.",
+      ghOneAtATime: "Only one connection at a time — don't tap again while connecting.",
+      ghComputerLoginTitle: "Sign-in on this computer",
+      ghComputerLoggedIn: "Signed in",
+      ghComputerLoggedOut: "Not signed in",
+      ghComputerLoginGuide: "This computer isn't signed in. Sign in, then come back.",
+      ghPermNotChecked: "Access not checked yet",
     }
 
     async function callApi(method, path, body) {
@@ -866,6 +980,189 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    // P4-github · global "connection app ID" (non-secret client_id). Lives in
+    // settings, not a credential; UI calls it a "连接用的应用编号" in plain words.
+    function AppIdSetting({ t, settings, onSaved }) {
+      const [value, setValue] = useState(settings?.githubClientId ?? '')
+      const [saving, setSaving] = useState(false)
+      const [message, setMessage] = useState('')
+      const [error, setError] = useState('')
+      useEffect(() => { setValue(settings?.githubClientId ?? '') }, [settings?.githubClientId])
+
+      const save = async () => {
+        setSaving(true); setError(''); setMessage('')
+        try {
+          const data = await callApi('PATCH', '/settings', { githubClientId: value })
+          setValue(data?.settings?.githubClientId ?? '')
+          setMessage(t('ghSaved'))
+          if (typeof onSaved === 'function') onSaved()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const inputStyle = { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' }
+      return h('div', { key: 'appId', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: 12, marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } }, [
+        h('div', { key: 'label', style: { fontSize: 13, color: T.ink, fontWeight: 600 } }, t('ghAppIdLabel')),
+        h('div', { key: 'hint', style: small }, t('ghAppIdHint')),
+        h('input', {
+          key: 'input', value, spellCheck: false, onChange: (event) => setValue(event.target.value),
+          placeholder: t('ghAppIdLabel'), style: inputStyle,
+        }),
+        h('div', { key: 'row', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h(Button, { key: 'save', disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('ghSaveAppId')),
+          message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
+          error ? h('span', { key: 'err', style: { ...small, color: T.danger } }, `${t('errorPrefix')}${error}`) : null,
+        ].filter(Boolean)),
+      ])
+    }
+
+    // P4-github increment · GLOBAL account management (Design §7). OAuth
+    // connect/reconnect/disconnect + gh CLI status. All machine-level, NOT tied
+    // to a project — the per-repo identity card stays project-scoped (PGH-20/21).
+    function AccountManager({ t, onChanged }) {
+      const [oauth, setOauth] = useState(null) // { connected, inFlight, hasAppId }
+      const [ghcli, setGhcli] = useState(null) // { loggedIn, login }
+      const [error, setError] = useState('')
+      const [revokeUrl, setRevokeUrl] = useState('')
+      const [disconnected, setDisconnected] = useState(false)
+      const [busy, setBusy] = useState(false)
+      // shared connect bridge state (reconnect = disconnect + this flow)
+      const [sessionId, setSessionId] = useState('')
+      const [connecting, setConnecting] = useState(false)
+      const [notice, setNotice] = useState(null)
+      const [pendingPrompt, setPendingPrompt] = useState(false)
+      const [step, setStep] = useState('')
+
+      const load = useCallback(async () => {
+        setError('')
+        try {
+          const [o, g] = await Promise.all([
+            callApi('GET', '/auth/oauth/state'),
+            callApi('GET', '/auth/ghcli/state'),
+          ])
+          setOauth(o); setGhcli(g)
+        } catch (err) { setError(err.message) }
+      }, [])
+      useEffect(() => { void load() }, [load])
+
+      // Poll an in-flight connect session (same bridge the identity card uses).
+      useEffect(() => {
+        if (sessionId === '') return undefined
+        let active = true
+        let timer = null
+        const poll = async () => {
+          try {
+            const view = await callApi('GET', `/auth/connect/${encodeURIComponent(sessionId)}`)
+            if (!active) return
+            if (view.notices && view.notices.length) {
+              const last = view.notices[view.notices.length - 1]
+              setNotice(last)
+              if (last.code) setStep('code'); else if (last.url) setStep('open')
+            }
+            setPendingPrompt(view.status === 'running' && !!view.prompt)
+            if (view.status === 'authorized') {
+              setConnecting(false); setSessionId(''); setDisconnected(false); setRevokeUrl('')
+              await load(); if (typeof onChanged === 'function') onChanged()
+            }
+            if (view.status === 'failed' || view.status === 'cancelled') {
+              setConnecting(false); setSessionId(''); setError(view.error || t('ghPermBad'))
+            }
+            if (view.status === 'running' || view.status === 'pending') timer = setTimeout(poll, 2000)
+          } catch (err) { if (active) setError(err.message) }
+        }
+        void poll()
+        return () => { active = false; if (timer) clearTimeout(timer) }
+      }, [sessionId, load, onChanged, t])
+
+      const beginConnect = async () => {
+        setError(''); setBusy(true)
+        try {
+          const result = await callApi('POST', '/auth/connect/begin', {})
+          setDisconnected(false); setRevokeUrl(''); setNotice(null); setPendingPrompt(false)
+          setConnecting(true); setSessionId(result.sessionId); setStep('open')
+        } catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+
+      const reconnect = async () => {
+        // Reset = local disconnect first, then re-run the connect flow.
+        setError(''); setBusy(true)
+        try {
+          const d = await callApi('POST', '/auth/oauth/disconnect', {})
+          setBusy(false)
+          if (d?.revokeUrl) setRevokeUrl(d.revokeUrl)
+          await beginConnect()
+        } catch (err) { setError(err.message); setBusy(false) }
+      }
+
+      const disconnect = async () => {
+        setError(''); setBusy(true)
+        try {
+          const d = await callApi('POST', '/auth/oauth/disconnect', {})
+          setDisconnected(true); setRevokeUrl(d?.revokeUrl || '')
+          await load(); if (typeof onChanged === 'function') onChanged()
+        } catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+
+      const answer = async (value) => {
+        setError(''); setBusy(true)
+        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/answer`, { value }); setPendingPrompt(false); setStep('connecting') }
+        catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+      const cancel = async () => {
+        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/cancel`, {}) } catch { /* best effort */ }
+        setConnecting(false); setSessionId(''); setPendingPrompt(false)
+      }
+
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const connected = oauth?.connected === true
+      const inFlight = oauth?.inFlight === true || connecting
+      const stateText = connected ? t('ghStateOn') : t('ghStateOff')
+
+      return h('div', { key: 'acctMgr', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: 12, marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 } }, [
+        // OAuth connection block
+        h('div', { key: 'oauth', style: { display: 'flex', flexDirection: 'column', gap: 7 } }, [
+          h('div', { key: 'st', style: { fontSize: 13, fontWeight: 600, color: T.ink } }, t('ghConnectState', { state: stateText })),
+          h('div', { key: 'ops', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
+            !connected && !inFlight ? h('span', { key: 'c', className: 'df-tap' }, h(Button, {
+              disabled: busy || !oauth?.hasAppId,
+              onClick: () => void beginConnect(),
+            }, t('ghConnect'))) : null,
+            connected && !inFlight ? h('span', { key: 'r', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void reconnect() }, t('ghReconnect'))) : null,
+            connected && !inFlight ? h('span', { key: 'd', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void disconnect() }, t('ghDisconnect'))) : null,
+          ]),
+          !oauth?.hasAppId ? h('div', { key: 'noapp', style: small }, t('ghAppIdHint')) : null,
+          // Honest disconnect result + website revoke guidance (PGH-19)
+          disconnected ? h('div', { key: 'disc', style: { ...small, color: T.success, background: T.accentWash, borderRadius: 6, padding: '7px 9px' } }, [
+            h('div', { key: 'd1' }, t('ghDisconnectDone')),
+            h('div', { key: 'd2', style: { marginTop: 4 } }, t('ghRevokeGuide')),
+            revokeUrl ? h('a', { key: 'd3', href: revokeUrl, target: '_blank', rel: 'noreferrer', style: { display: 'inline-block', marginTop: 5, color: T.accent } }, t('ghRevokeLink')) : null,
+          ]) : null,
+          // In-flight connect: three steps + keep-open note, one-at-a-time guard
+          connecting ? h('div', { key: 'conn', style: { ...small, background: T.panel, borderRadius: 6, padding: '7px 9px' } }, [
+            h('div', { key: 'keep', style: { color: T.warning } }, t('ghKeepOpen')),
+            h('div', { key: 'one', style: { marginTop: 3 } }, t('ghOneAtATime')),
+            h('div', { key: 's', style: { marginTop: 3, color: T.ink } },
+              step === 'code' || step === 'connecting' ? t('ghStepCode') : t('ghStepOpen')),
+            notice?.url ? h('a', { key: 'url', href: notice.url, target: '_blank', rel: 'noreferrer', style: { display: 'inline-block', marginTop: 4, color: T.accent } }, t('ghStepOpen')) : null,
+            notice?.code ? h('div', { key: 'code', style: { marginTop: 5, fontSize: 19, fontWeight: 700, letterSpacing: 2, fontFamily: 'ui-monospace, monospace', color: T.ink } }, notice.code) : null,
+            pendingPrompt ? h('span', { key: 'go', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void answer('done') }, t('ghStepDone'))) : null,
+            step === 'connecting' ? h('div', { key: 'wait', style: { marginTop: 4 } }, t('ghStepConnecting')) : null,
+            h('span', { key: 'cx', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void cancel(), style: { marginTop: 6, padding: '4px 9px' } }, t('cancel'))),
+          ]) : null,
+          error ? h('div', { key: 'err', style: { ...small, color: T.danger, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`) : null,
+        ]),
+        // gh CLI status — shown whether logged in or not (PGH-21), read-only
+        h('div', { key: 'ghcli', style: { borderTop: `1px solid ${T.line}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 5 } }, [
+          h('div', { key: 'title', style: { fontSize: 12.5, fontWeight: 600, color: T.ink } }, t('ghComputerLoginTitle')),
+          h('div', { key: 'st', style: small }, ghcli === null
+            ? t('ghChecking')
+            : (ghcli.loggedIn
+              ? `${t('ghComputerLoggedIn')}${ghcli.login ? ` · ${ghcli.login}` : ''}`
+              : t('ghComputerLoggedOut'))),
+          ghcli !== null && !ghcli.loggedIn ? h('div', { key: 'guide', style: { ...small, color: T.warning } }, t('ghComputerLoginGuide')) : null,
+        ]),
+      ])
+    }
+
     function GlobalCapSection({ t, settings, onSaved }) {
       const raw = settings?.globalMaxActive
       const [value, setValue] = useState(raw === null || raw === undefined ? '' : String(raw))
@@ -996,6 +1293,241 @@ window.__ModuleLoader__.load({
             ]),
           ]),
           error ? h('div', { key: 'err', style: { ...small, color: T.danger, marginTop: 10 } }, `${t('errorPrefix')}${error}`) : null,
+        ]) : null,
+      ])
+    }
+
+    // Source id → user-facing copy (Design §2). Only the panel column is shown;
+    // internal ids never leak to the UI. 'none' means not connected.
+    const SRC_LABEL = {
+      'oauth-global': 'srcConnected',
+      'gh-cli': 'srcComputer',
+      'env-token': 'srcSystem',
+      'token-global': 'srcAddedShared',
+      'repo-key': 'srcThisRepo',
+      none: 'srcNone',
+    }
+
+    // P4-github · project GitHub identity card (Design §1–§5). Answers four
+    // questions: where this repo is linked, who it currently uses, whether that
+    // works, and what to do if not. All copy is plain words (PGH-13); the token
+    // itself is never fetched/echoed — identityCardFor strips it Host-side.
+    function IdentityCard({ project, t, onChanged }) {
+      const [card, setCard] = useState(null)
+      const [loading, setLoading] = useState(true)
+      const [error, setError] = useState('')
+      const [perm, setPerm] = useState(null) // 'ok' | 'insufficient' | 'not-connected'
+      const [permReason, setPermReason] = useState('')
+      const [checking, setChecking] = useState(false)
+      const [expanded, setExpanded] = useState(false)
+      const [dialog, setDialog] = useState('') // '' | 'add' | 'connect'
+      const [busy, setBusy] = useState(false)
+
+      // Add-account dialog state. The scope switch exists ONLY in this dialog and
+      // ONLY for a user-supplied credential — never for connected/CLI tiers (PGH-18).
+      const [credential, setCredential] = useState('')
+      const [scope, setScope] = useState('') // '' until the user explicitly picks; no silent default
+      const [confirmShared, setConfirmShared] = useState(false)
+
+      // Connect dialog state (device flow via the in-memory bridge).
+      const [sessionId, setSessionId] = useState('')
+      const [step, setStep] = useState('') // 'open' | 'code' | 'connecting' | 'done'
+      const [notice, setNotice] = useState(null) // { url, code, message }
+
+      const base = `/identity/${encodeURIComponent(project.id)}`
+      const load = useCallback(async () => {
+        setLoading(true); setError('')
+        try {
+          const data = await callApi('GET', base)
+          setCard(data)
+          setPerm(data?.identity?.connected ? null : 'not-connected')
+          setPermReason('')
+        } catch (err) { setError(err.message) } finally { setLoading(false) }
+      }, [base])
+      useEffect(() => { void load() }, [load])
+
+      // Poll a connect session while it is running. The browser cannot receive a
+      // server push, so notices/prompts are read from the bridge each tick.
+      useEffect(() => {
+        if (dialog !== 'connect' || sessionId === '') return undefined
+        let active = true
+        let timer = null
+        const poll = async () => {
+          try {
+            const view = await callApi('GET', `/auth/connect/${encodeURIComponent(sessionId)}`)
+            if (!active) return
+            if (view.notices && view.notices.length) {
+              const last = view.notices[view.notices.length - 1]
+              setNotice(last)
+              if (last.code) setStep('code'); else if (last.url) setStep('open')
+            }
+            if (view.status === 'running' && view.prompt && view.prompt.options) {
+              // The flow asks for one "I'm done / cancel" acknowledgement.
+              setStep('connecting')
+              setStep('code')
+              setNotice((prev) => prev) // keep URL+code visible next to the prompt
+              setPendingPrompt(true)
+            } else if (view.status === 'running') {
+              setPendingPrompt(false)
+            }
+            if (view.status === 'authorized') { setStep('done'); setPendingPrompt(false); await load(); if (typeof onChanged === 'function') onChanged() }
+            if (view.status === 'failed' || view.status === 'cancelled') { setError(view.error || t('ghPermBad')); setPendingPrompt(false) }
+            if (view.status === 'running' || view.status === 'pending') timer = setTimeout(poll, 2000)
+          } catch (err) { if (active) setError(err.message) }
+        }
+        void poll()
+        return () => { active = false; if (timer) clearTimeout(timer) }
+      }, [dialog, sessionId, load, onChanged, t])
+
+      const [pendingPrompt, setPendingPrompt] = useState(false)
+
+      const checkPermission = async () => {
+        setChecking(true); setPermReason(''); setError('')
+        try {
+          const result = await callApi('POST', `${base}/check`, {})
+          setPerm(result.status)
+          setPermReason(result.reason || '')
+        } catch (err) { setError(err.message); setPerm('insufficient'); setPermReason(err.message) }
+        finally { setChecking(false) }
+      }
+
+      const openAdd = () => { setCredential(''); setScope(''); setConfirmShared(false); setError(''); setDialog('add') }
+
+      const submitAdd = async () => {
+        if (scope === '') { setError(t('ghScopeTitle')); return }
+        setBusy(true); setError('')
+        try {
+          await callApi('POST', '/auth/token', { token: credential, scope })
+          setCredential(''); setDialog(''); await load(); if (typeof onChanged === 'function') onChanged()
+        } catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+
+      const beginConnect = async () => {
+        setBusy(true); setError(''); setNotice(null); setPendingPrompt(false)
+        try {
+          const result = await callApi('POST', '/auth/connect/begin', {})
+          setSessionId(result.sessionId); setStep('open')
+        } catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+
+      const answerConnect = async (value) => {
+        setBusy(true); setError('')
+        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/answer`, { value }); setPendingPrompt(false); setStep('connecting') }
+        catch (err) { setError(err.message) } finally { setBusy(false) }
+      }
+
+      const cancelConnect = async () => {
+        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/cancel`, {}) } catch { /* best effort */ }
+        setDialog(''); setSessionId(''); setPendingPrompt(false)
+      }
+
+      const small = { fontSize: 12, color: T.muted, lineHeight: 1.6 }
+      const id = card?.identity || {}
+      const binding = card?.binding || {}
+      const sourceLabel = id.source && SRC_LABEL[id.source] ? t(SRC_LABEL[id.source]) : t('srcNone')
+      const pathText = (v) => {
+        if (!v) return '—'
+        return !expanded && v.length > 46 ? `${v.slice(0, 22)}…${v.slice(-18)}` : v
+      }
+
+      return h('div', { key: 'identity', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, boxShadow: T.shadow, overflow: 'hidden' } }, [
+        // Header
+        h('div', { key: 'h', style: { padding: '10px 13px', borderBottom: `1px solid ${T.line}`, fontSize: 13, fontWeight: 650, color: T.ink } }, t('ghCardTitle')),
+        h('div', { key: 'body', style: { padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 11 } }, [
+          loading ? h('div', { key: 'ld', style: small }, t('loading')) : h('div', { key: 'sections' }, [
+            // ① binding relationship — local ↔ remote as ONE block
+            h('div', { key: 'bind', style: { display: 'flex', flexDirection: 'column', gap: 3, paddingBottom: 10, borderBottom: `1px solid ${T.line}` } }, [
+              h('div', { key: 'l', style: small }, `${t('ghLocalLabel')}：${pathText(binding.rootPath)}`),
+              h('div', { key: 'x', style: { fontSize: 11, color: binding.bound ? T.success : T.muted, paddingLeft: 2 } }, binding.bound ? `↕ ${t('ghLinked')}` : '↕'),
+              h('div', { key: 'r', style: small }, `${t('ghRepoLabel')}：${pathText(binding.issueRepo)}`),
+              ((binding.rootPath || '').length > 46 || (binding.issueRepo || '').length > 46)
+                ? h('button', { key: 'more', type: 'button', onClick: () => setExpanded(!expanded), style: { alignSelf: 'flex-start', marginTop: 3, border: 'none', background: 'transparent', color: T.accent, fontSize: 11, cursor: 'pointer', padding: '4px 0' } }, t('ghExpandPath'))
+                : null,
+            ]),
+            // ② current identity — account + source + permission light
+            h('div', { key: 'who', style: { display: 'flex', flexDirection: 'column', gap: 5, paddingTop: 10 } }, [
+              h('div', { key: 'u', style: { fontSize: 13, color: T.ink, fontWeight: 600 } },
+                id.connected ? t('ghNowUsing', { account: id.login || t('ghUnknownAccount') }) : t('srcNone')),
+              id.connected ? h('div', { key: 'f', style: small }, [
+                t('ghFrom', { source: sourceLabel }),
+                id.globalShared ? h('span', { key: 'sh', style: { marginLeft: 8, color: T.accent, background: T.accentWash, borderRadius: 5, padding: '1px 6px', fontSize: 10.5 } }, t('ghSharedTag')) : null,
+              ]) : null,
+              // permission row: positive green / red with reason / neutral checking
+              h('div', { key: 'p', style: { display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginTop: 2 } }, [
+                h('span', {
+                  key: 'dot', style: { width: 9, height: 9, borderRadius: '50', display: 'inline-block', background: perm === 'ok' ? T.green : (perm === 'insufficient' ? T.danger : T.gray) },
+                }),
+                h('span', { key: 'txt', style: { fontSize: 11.5, color: perm === 'ok' ? T.green : (perm === 'insufficient' ? T.danger : T.muted) } },
+                  // Neutral text when connected-but-not-yet-checked: "来源：xxx"
+                  // already renders in its own line above — don't repeat it here.
+                  checking ? t('ghChecking')
+                    : (perm === 'ok' ? t('ghPermOk')
+                      : (perm === 'insufficient' ? t('ghPermBad')
+                        : (id.connected ? t('ghPermNotChecked') : t('ghGuideNone')))),
+                ),
+                id.connected && !checking ? h('span', { key: 'chk', className: 'df-tap' }, h(Button, { onClick: () => void checkPermission(), disabled: busy, style: { padding: '3px 9px', fontSize: 11 } }, t('ghCheckPerm'))) : null,
+              ]),
+              perm === 'insufficient' && permReason ? h('div', { key: 'pr', style: { ...small, color: T.danger, whiteSpace: 'pre-line', background: T.dangerWash, borderRadius: 6, padding: '6px 8px' } }, permReason) : null,
+              perm === 'insufficient' ? h('div', { key: 'gd', style: { ...small, marginTop: 2 } }, t('ghGuideNoAccess')) : null,
+            ]),
+            // ③ actions + ④ not-connected guidance
+            h('div', { key: 'acts', style: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 10, borderTop: `1px solid ${T.line}` } }, [
+              h('span', { key: 'c', className: 'df-tap' }, h(Button, { onClick: () => void beginConnect(), disabled: busy }, t('ghConnect'))),
+              h('span', { key: 'a', className: 'df-tap' }, h(Button, { onClick: openAdd, disabled: busy }, t('ghAddAccount'))),
+            ]),
+            !id.connected ? h('div', { key: 'guide', style: { ...small, marginTop: 8, background: T.panel, borderRadius: 6, padding: '7px 9px' } }, t('ghGuideNone')) : null,
+          ]),
+          error ? h('div', { key: 'err', style: { ...small, color: T.danger, whiteSpace: 'pre-line', marginTop: 6 } }, `${t('errorPrefix')}${error}`) : null,
+        ]),
+
+        // Add-account modal. Scope switch lives HERE and nowhere else (PGH-18).
+        dialog === 'add' ? h(Modal, {
+          key: 'addm', title: t('ghAddAccount'), confirmLabel: t('ghSaveAccount'), busy, t,
+          onCancel: () => setDialog(''), onConfirm: () => {
+            if (scope === 'global') { setConfirmShared(true); return }
+            void submitAdd()
+          },
+        }, [
+          h('div', { key: 'hint', style: small }, t('ghAccountHint')),
+          h('input', {
+            key: 'cred', className: 'input mono', type: 'password', value: credential, spellCheck: false,
+            onChange: (e) => setCredential(e.target.value),
+            placeholder: t('ghAccountLabel'),
+            style: { padding: '7px 9px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box', marginTop: 8 },
+          }),
+          h('div', { key: 'scope', style: { marginTop: 14 } }, [
+            h('div', { key: 'st', style: { fontSize: 12, fontWeight: 600, color: T.ink, marginBottom: 4 } }, t('ghScopeTitle')),
+            h('div', { key: 'seg', style: { display: 'flex', gap: 6 } }, [
+              h(Button, { key: 'all', onClick: () => setScope('global'), style: scope === 'global' ? { background: T.accentWash, borderColor: T.accent, color: T.accentInk, fontWeight: 600 } : {} }, t('ghScopeAll')),
+              h(Button, { key: 'repo', onClick: () => setScope('project'), style: scope === 'project' ? { background: T.accentWash, borderColor: T.accent, color: T.accentInk, fontWeight: 600 } : {} }, t('ghScopeRepo')),
+            ]),
+            h('div', { key: 'sh', style: { ...small, marginTop: 7 } }, t('ghScopeHint')),
+            scope === '' ? h('div', { key: 'need', style: { ...small, color: T.warning, marginTop: 5 } }, t('ghScopeTitle')) : null,
+          ]),
+          error ? h('div', { key: 'err', style: { ...small, color: T.danger, whiteSpace: 'pre-line', marginTop: 8 } }, `${t('errorPrefix')}${error}`) : null,
+          confirmShared ? h(Modal, {
+            key: 'cfm', title: t('ghChangeSharedConfirm'), tone: 'danger', confirmLabel: t('ghSaveAccount'), confirmTone: 'danger', busy, t,
+            onCancel: () => setConfirmShared(false), onConfirm: () => { setConfirmShared(false); void submitAdd() },
+          }, h('p', { style: { margin: 0 } }, t('ghScopeHint'))) : null,
+        ]) : null,
+
+        // Connect modal — URL + code steps from the bridge, keep-page-open note.
+        dialog === 'connect' ? h(Modal, {
+          key: 'connm', title: t('ghConnect'), confirmLabel: step === 'done' ? t('closeSettings') : t('cancel'), confirmTone: step === 'done' ? undefined : 'danger', busy, t,
+          onCancel: () => void cancelConnect(), onConfirm: () => { if (step === 'done') { setDialog(''); setSessionId('') } else void cancelConnect() },
+        }, [
+          h('div', { key: 'keep', style: { ...small, color: T.warning, marginBottom: 10 } }, t('ghKeepOpen')),
+          h('ol', { key: 'steps', style: { margin: 0, paddingLeft: 20, ...small } }, [
+            h('li', { key: 's1', style: step ? { color: T.ink } : {} }, t('ghStepOpen')),
+            h('li', { key: 's2', style: step === 'code' || step === 'connecting' || step === 'done' ? { color: T.ink } : {} }, t('ghStepCode')),
+            h('li', { key: 's3', style: step === 'connecting' || step === 'done' ? { color: T.ink } : {} }, t('ghStepConnecting')),
+          ]),
+          notice?.url ? h('div', { key: 'url', style: { marginTop: 10, fontSize: 12, wordBreak: 'break-all' } },
+            h('a', { href: notice.url, target: '_blank', rel: 'noreferrer', style: { color: T.accent } }, t('ghStepOpen'))) : null,
+          notice?.code ? h('div', { key: 'code', style: { marginTop: 8, fontSize: 20, fontWeight: 700, letterSpacing: 2, fontFamily: 'ui-monospace, monospace', color: T.ink } }, notice.code) : null,
+          pendingPrompt ? h('span', { key: 'go', className: 'df-tap' }, h(Button, { onClick: () => void answerConnect('done'), disabled: busy }, t('ghStepDone'))) : null,
+          step === 'done' ? h('div', { key: 'done', style: { ...small, color: T.green, marginTop: 8 } }, t('ghStepDone')) : null,
+          error ? h('div', { key: 'err', style: { ...small, color: T.danger, whiteSpace: 'pre-line', marginTop: 8 } }, `${t('errorPrefix')}${error}`) : null,
         ]) : null,
       ])
     }
@@ -1207,6 +1739,10 @@ window.__ModuleLoader__.load({
               ? h('div', { key: 'gp' }, [
                   h('div', { key: 'note', style: { fontSize: 12, color: T.muted, background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: '8px 10px', marginBottom: 12 } }, t('globalNote')),
                   h(WorktreesRootSetting, { key: 'wr', t }),
+                  h(AppIdSetting, { key: 'appid', t, settings, onSaved: () => void load() }),
+                  // Global account management — OAuth connect/reconnect/disconnect
+                  // + gh CLI status, all machine-level (Design §7, PGH-19~21).
+                  h(AccountManager, { key: 'acctmgr', t, onChanged: () => void load() }),
                   h('div', { key: 'gc', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: 12, marginTop: 12 } }, [
                     h(GlobalCapSection, { key: 'gcap', t, settings, onSaved: () => void load() }),
                     h('div', { key: 'rule', style: { height: 1, background: T.line, margin: '14px 0' } }),
@@ -1217,6 +1753,10 @@ window.__ModuleLoader__.load({
               : (project
                   ? h('div', { key: 'pp' }, [
                       h('div', { key: 'note', style: { fontSize: 12, color: T.muted, background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, padding: '8px 10px', marginBottom: 12 } }, `${t('scopeProjectSub')} · ${project.name}`),
+                      // Identity card FIRST — the prerequisite for "can this repo
+                      // work at all" (Design §1), ahead of the settings blocks.
+                      h('div', { key: 'idcard', style: { marginBottom: 12 } },
+                        h(IdentityCard, { key: `${project.id}:identity`, project, t, onChanged: () => void load() })),
                       block('prep', '01', 'setupTitle', 'setupPurpose', 'info', h(WorktreeSetup, { key: `${project.id}:setup`, project, t, onSaved: () => void load() })),
                       block('autonomy', '02', 'autoPanelTitle', 'autoPanelPurpose', 'warn', h(AutonomySection, { key: `${project.id}:autonomy`, project, t, onSaved: () => void load() })),
                       block('pause', '03', 'pauseTitle', 'pauseSub', 'info', h(PauseSection, { key: `${project.id}:pause`, project, t, onSaved: () => void load() })),

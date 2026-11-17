@@ -32,6 +32,9 @@
     "intake.js",
     "sync.js",
     "audit.js",
+    "identity.js",
+    "github-oauth.js",
+    "github-api.js",
     "skills/*/SKILL.md",
     "cordis.patch.yml",
     "locale/*.json",
@@ -64,7 +67,9 @@
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": ">=0.2.2-rc.1",
-    "@deepseek-ai/dsh-home-paths": ">=0.2.2-rc.1"
+    "@deepseek-ai/dsh-home-paths": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-credentials": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-authorization": ">=0.2.2-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-tools": {
@@ -74,6 +79,12 @@
       "optional": true
     },
     "@deepseek-ai/dsh-home-paths": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-credentials": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-authorization": {
       "optional": true
     }
   },

@@ -121,6 +121,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           settings: {
             ...store.getWorktreeSettings(),
             globalMaxActive: store.getGlobalMaxActiveSetting(),
+            githubClientId: store.getGithubClientIdSetting(),
             ...concurrencyView(store, engineConfig),
           },
         })
@@ -131,9 +132,12 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         // worktreeRoot and vice versa (P4 §3.3.1). Both may be sent together only
         // if the client deliberately wants both — each still goes through its
         // own validation, and an error in either surfaces verbatim.
-        const out = { ...store.getWorktreeSettings(), globalMaxActive: store.getGlobalMaxActiveSetting() }
+        const out = { ...store.getWorktreeSettings(), globalMaxActive: store.getGlobalMaxActiveSetting(), githubClientId: store.getGithubClientIdSetting() }
         if ('worktreeRoot' in body) Object.assign(out, store.updateWorktreeRoot(body.worktreeRoot))
         if ('globalMaxActive' in body) Object.assign(out, store.updateGlobalMaxActive(body.globalMaxActive))
+        // githubClientId is a NON-secret OAuth App id (not a token): HTTP-writable
+        // settings, persisted, effective on the next connect with no reload.
+        if ('githubClientId' in body) Object.assign(out, store.updateGithubClientId(body.githubClientId))
         Object.assign(out, concurrencyView(store, engineConfig))
         return ok({ settings: out })
       }
@@ -177,7 +181,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'PATCH' && seg.length === 2) {
           const wantsAutonomy = ['autonomy', 'autoStart', 'autoApprove'].some((key) => key in body)
           const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
-          const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions', 'intakeLimit'].some((key) => key in body)
+          const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions', 'intakeLimit', 'githubCredentialId'].some((key) => key in body)
           const kinds = [wantsAutonomy, wantsPreparation, wantsIntake].filter(Boolean).length
           if (kinds > 1) {
             return { status: 400, body: { error: 'autonomy / preparation / intake 字段不能在同一次 PATCH 里混改' } }
