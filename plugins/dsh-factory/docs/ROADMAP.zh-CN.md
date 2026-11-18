@@ -75,6 +75,8 @@
 
 在 `L2` 下机器多走一条自动边 `plan-review -> build`，代卡片批准计划，并接着该卡的会话让 `build` 真跑起来——只批准不续会话会把卡晾在 `build`、没有 agent。它与其他转移一样走同一个 `autoRule` actor、过同一道 `assertTransition` 状态闸，所以到不了闸门不允许的状态。边界是有意收窄的：机器**只批准计划并续原会话**；武装交付授权（commit、push、开 PR）仍留给人，机器绝不碰 git、不创建 PR。这比「全自动到 draft PR」更窄——机器不武装、不交付。
 
+审批与派发共用同一份并发预算：项目级与全局上限约束活跃会话数，只有有名额时才批准计划。复用仍活着会话的接续（followup）不开新会话、不占名额；只有 `resume`/新建这种真会起会话的降级才扣预算。没有名额时**连审批一起扣住**，不只是扣接续：卡片留在 `plan-review`（记为因容量暂缓），由后续 tick 重试，绝不会把卡批进一个没有 agent 的 `build`。活跃判定在 tick 起点与决策点各做一次，会话若在 tick 中途死掉，不会趁快照判活绕过名额、多开一个超限会话。
+
 `pause` 与单卡 `takeover` 对批准也立即生效：被暂停的项目或被接管的卡不会被自动批准，暂停期间跳过的卡恢复后也不补跑。重复 tick 幂等，这条自动边没有通往 `done` 或 `canceled` 的路径。
 
 ## 3. 已经定死、不必再争的设计
@@ -134,6 +136,7 @@
 **按项目显式 opt-in**（默认关、无白名单）：机器可以批准计划，多走一条自动边 `plan-review -> build`，以 `autoRule` 走其他转移共用的同一道 `assertTransition` 状态闸，随后续原会话让 `build` 真跑。边界有意收窄——机器**只批准计划并续会话**：
 
 - 批准后接着该卡的会话让 `build` 真跑起来；**武装交付授权仍留给人**，机器绝不碰 git、不开 PR、不合并、不标记完成。这比「机器也武装交付」的最初设想更窄——那部分有意不做，是选定的边界、不是缺口。
+- 审批与派发取自同一份并发预算（项目级上限 + 全局兜底，都按活跃会话计）。把卡批进没有 agent 的 `build` 毫无意义，所以没有名额时**连审批和卡一起扣住**：卡留在 `plan-review`、记为因容量暂缓，后续 tick 重试。只有真会开新会话的接续才扣名额；接续到仍活着会话的 followup 复用已计数的会话、不占名额。会话若在 tick 起点的活跃扫描与审批决策之间死掉，决策点会再查一次，不会因此绕过上限。
 - `pause`（项目或全局）与单卡 `takeover` 立即挡住批准，不补跑暂停期跳过的卡；重复 tick 幂等；这条自动边无旁路到 `done`。
 - `L0` 与 `L1` 不变：即使设了 `autoApprove`，也只有 L2 项目会响应它。
 
@@ -178,6 +181,7 @@
 | **宿主 app-shell 在窄屏锁死纵向滚动** | 窄屏宿主（P4 视图把 ≤760px 当作窄屏断点）下，DSH app-shell 的主内容列按 `overflow:hidden` 渲染，纵向滚动被锁死：视图内容超过宿主给的高度时，超出部分既看不见也滚不到。这是宿主行为，插件够不到宿主那层 | **P4 已缓解、真机验过。** P4 视图把样式表限定在自身根属性 `[data-dsh-factory-p4]` 作用域内；窄屏 media query 里给视图根一个「高度受限、内部自滚」的容器（`height:100%; min-height:0; overflow-y:auto`），让溢出在我们自己的容器里滚、而不是被宿主裁剪列卡死；看板区再给 `max-height`，保持有界的横向滚动区、不把整页撑高。真机结果：第一屏可见看板、纵向能滚到各列、横滚与钉底操作条都正常。宿主那层的锁本身仍在（改宿主不在范围） |
 
 | ~~intake 拉取数量曾写死 `--limit 100`~~ | issue 很多的繁忙上游一次 tick 就可能灌满看板，随后每张新卡都被派发成真会话 | **已修并验证**：改为项目级可配的 `intakeLimit`（默认沿用原上限、保持向后兼容），由引擎 tick 传给 `intakeIssues`；设了值就按值限制每次拉取的建卡数 |
+| **批准后接续失败会把卡晾在 `build`** | 批准（`plan-review -> build`，人工按钮或 L2 引擎）之后会紧接着接续同一会话。若这次接续失败（例如 profile 没有 `agents` 服务），卡已经进了 `build`，没有自动重试、也没有续接按钮：只能人工接管或手动 `POST /cards/:id/continue` | 已知边界，未修。L2 引擎会记一条 `auto-approve-continue-failed` 事件并写 `status.lastError`、不回滚批准；L0 按钮路径没有审计事件。后续 tick 不会重试这张卡。另有一种「批准前」的首次接续失败只释放占用、可重试——本行指的是批准之后那一步 |
 | **intake 无 label 过滤** | 只能按「全部 open issue」拉，不能只拉指定 label 的 issue；配合不限量的上游仓仍可能拉进大量无关 issue | 保留为缺口，本轮不做（与 `intakeLimit` 是两个功能，别混）。可用 `intakeLimit` 先压量兜底 |
 | **派发消息曾未指定阶段技能（已修）** | `session-context.js` 的 `firstMessage` / `sectionText` 原本 `skill` 一词零命中——只说「用 `factory_transition_work_item` 推进」，没说「按 `factory-triage` 技能办事」。对比 `/factory add` 的 `buildAddIntent` 明确写了技能名 | **已修**：两段文案都点名当前阶段技能（`inbox`/`triage→factory-triage`、`plan→factory-plan`、`build→factory-build`、`review→factory-review`；`plan-review`/`done`/`canceled` 无技能）并写明先加载技能再动手，已提交。**注意：只修这条并没让 AE-2 通过**，还有更下层的模型路由问题（下一行）也要修；两者现已都修好，链路已端到端验通 |
 | **自动派发的会话曾停在 `triage` 不调工厂工具（AE-2 根因——已修并验通）** | 早几轮真机验证中，每轮都确认宿主 `build` 为新代码、前半链（建卡 / 自动派发 / `inbox→triage` / 审计可区分 / 无 push/PR）照常通；但派发会话始终停在 `triage`、`sessionTurn=1`、`report=null`，不调 `factory_transition_work_item`、没到 `plan-review`；引擎 `lastError:null`、无 orphan | **根因（Dev 追到源码行号，Chief 认可）**：`dispatch.js` 的 `createSession` 当时不解构也不使用 `model`（`dispatch.js:334`，注释自认「not yet wired」）→ `agents.create` 不传 `agentOptions`，agent-loop 补成 `{}`（`dsh-agent-loop:1706`）→ `assertAgentOptions({})` 只校验 maxTokens、放行（`1264-1266`），所以会话建得起来、不报错 → `preStep` 里 `model.current()` 返回 undefined 抛错（`684-685`），被 `kick()` 的 `catch(_error){}` **静默吞掉**（`667`）→ 表现就是「turn=1、啥都没干、无 error 上报」。**四轮已排除**：ESM 缓存、技能指引缺失、preset / `skill` 工具、正文内联（`.26` 仍无变化）。**用户定的模型语义**：会话默认跟随 DSH 默认模型，UI 后续可手动选。修法选 **B**（Chief 定）——port 层 `ctx.get('agentDefaultModel')` 读 `currentSelection()`，照 UI 入口用 getter 形式（**每次读取时现取、不缓存**，理由是与宿主 UI 同构；`currentSelection()` 无副作用，配置在多次读取间变化的极端竞态由下一轮自洽，不是设计缺陷）；`project.defaultModel` 有值时覆盖 model 部分、无值跟随宿主；`createSession` 真接上 `model`。**fail-fast 关键判据**：构造 `agentOptions` 前先探一次 `currentSelection()`，若 `provider` 或 `model` 拿不到就**立即抛错**、走 `dispatchCard` 失败回滚并记到卡上——把「静默停在 triage 什么都不说」变成「派发明确失败并说明原因」，因为宿主 `kick()` 的 `catch(_error){}` 会吞掉会话内部错误，不能依赖它。**已按方案 B 修好并在真机端到端验通——见 §4 P2。** |
