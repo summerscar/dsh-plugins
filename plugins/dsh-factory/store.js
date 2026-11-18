@@ -46,6 +46,9 @@ export const DEFAULT_AUTONOMY = 'L0'
 /** Consecutive failed dispatches before a card stops being re-dispatched. */
 export const DEFAULT_DISPATCH_FAILURE_LIMIT = 3
 export const DEFAULT_COLUMNS = ['planning', 'awaiting-approval', 'building', 'review', 'done']
+// One project owns one active board. Board names are no longer surfaced in the
+// UI; this label only identifies the auto-created board in persisted state/API.
+export const DEFAULT_BOARD_NAME = 'Default'
 
 function clone(value) {
   return value == null ? value : structuredClone(value)
@@ -197,6 +200,9 @@ export class FactoryStore {
     this._select = this.db.prepare('SELECT data FROM state WHERE id = 1')
     try {
       this.state = this._load()
+      // Idempotent, in-place convergence of legacy multi-board projects. Runs
+      // BEFORE anything can read boards, and never bumps schemaVersion.
+      this._convergeBoards()
     } catch (error) {
       // Do not leak an open handle on a failed construction — a retry must be
       // able to reopen the database immediately.
@@ -235,10 +241,67 @@ export class FactoryStore {
     return project
   }
 
+  _activeBoards() {
+    return (Array.isArray(this.state.boards) ? this.state.boards : []).filter((board) => board.archived !== true)
+  }
+
   _board(id) {
-    const board = this.state.boards.find((entry) => entry.id === id)
+    const board = this._activeBoards().find((entry) => entry.id === id)
     if (board === undefined) throw new Error(`看板不存在：${id}`)
     return board
+  }
+
+  _defaultBoard(project) {
+    return {
+      id: randomUUID(),
+      projectId: project.id,
+      name: DEFAULT_BOARD_NAME,
+      kind: 'dev',
+      columns: [...DEFAULT_COLUMNS],
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  /**
+   * Legacy convergence: keep the first active board of every project, move all
+   * cards from later boards into it, repoint intakeBoardId, and mark the extra
+   * boards `archived` (retained in state, hidden from the store/API surface).
+   * Projects without any board get a default one. No card or board is deleted,
+   * and a second run is a no-op.
+   */
+  _convergeBoards() {
+    if (!Array.isArray(this.state.projects) || !Array.isArray(this.state.boards)) return
+    let changed = false
+    for (const project of this.state.projects) {
+      const owned = this.state.boards.filter((board) => board.projectId === project.id)
+      // Prefer an existing active board; a previously archived first entry must
+      // never become the survivor just because of its array position.
+      const keep = owned.find((board) => board.archived !== true) ?? owned[0]
+      if (keep === undefined) {
+        this.state.boards.push(this._defaultBoard(project))
+        changed = true
+        continue
+      }
+      if (keep.archived === true) { keep.archived = false; changed = true }
+      for (const extra of owned) {
+        if (extra === keep || extra.archived === true) continue
+        for (const card of this.state.cards ?? []) {
+          if (card.boardId === extra.id) card.boardId = keep.id
+        }
+        if (project.intakeBoardId === extra.id) project.intakeBoardId = keep.id
+        extra.archived = true
+        changed = true
+      }
+      // Also heal an intake target that ALREADY points at an archived board
+      // (e.g. a state written by an older build). A converged state has one
+      // active board, so a second load finds nothing to change and skips _commit.
+      if (project.intakeBoardId !== null && project.intakeBoardId !== keep.id
+        && owned.some((board) => board.archived === true && board.id === project.intakeBoardId)) {
+        project.intakeBoardId = keep.id
+        changed = true
+      }
+    }
+    if (changed) this._commit()
   }
 
   _card(id) {
@@ -360,7 +423,10 @@ export class FactoryStore {
       warning: rootCheck.warning ?? null,
       createdAt: new Date().toISOString(),
     }
+    // Project and its default board are written in ONE transaction: a project
+    // can never exist without its board, even if the process dies at commit.
     this.state.projects.push(project)
+    this.state.boards.push(this._defaultBoard(project))
     this._commit()
     return clone(project)
   }
@@ -456,19 +522,27 @@ export class FactoryStore {
 
   listBoards(projectId) {
     const boards = projectId === undefined
-      ? this.state.boards
-      : this.state.boards.filter((board) => board.projectId === projectId)
+      ? this._activeBoards()
+      : this._activeBoards().filter((board) => board.projectId === projectId)
     return clone(boards)
   }
 
   getBoard(id) {
-    const board = this.state.boards.find((entry) => entry.id === id)
+    const board = this._activeBoards().find((entry) => entry.id === id)
     return clone(board)
   }
 
+  /**
+   * Idempotent by design: every project already owns a board from creation, so
+   * a repeated POST /boards (or a stale caller) returns the existing board
+   * instead of creating a second one. `name` is required for API compatibility
+   * but is ignored when the board already exists.
+   */
   createBoard(input = {}) {
     const projectId = reqString(input.projectId, 'projectId')
     this._project(projectId)
+    const existing = this._activeBoards().find((board) => board.projectId === projectId)
+    if (existing !== undefined) return clone(existing)
     const board = {
       id: optionalString(input.id) || randomUUID(),
       projectId,

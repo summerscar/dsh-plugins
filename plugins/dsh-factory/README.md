@@ -14,7 +14,7 @@ English · [简体中文](docs/README.zh-CN.md)
 
 ## What it does
 
-- **Kanban across projects.** Work is organised as project → board → card. A project is one absolute root path plus the repositories under it. A card's repository information is passed to its session as context only; the worktree a card runs in is always created from the project's root path, so a card never changes which directory it actually runs in.
+- **One board per project.** Work is organised as project → one board → card. Creating a project also creates its single board in the same transaction, and asking for another board on that project returns the existing one. Older multi-board data is converged when state loads: the first active board is kept, cards from the others are moved into it, intake targets are repointed, and the extra boards are archived rather than deleted. A project is one absolute root path plus the repositories under it. A card's repository information is passed to its session as context only; the worktree a card runs in is always created from the project's root path, so a card never changes which directory it actually runs in.
 - **A configurable worktrees root.** One global setting controls where new worktrees are created; leave it blank to use the HOME-resolved default `~/dsh-factory-worktrees`. It applies only to worktrees created from then on — existing projects and cards are unaffected. The root must stay outside the DSH data directory, with one narrow exception for the default home subtree.
 - **One session and one worktree per card.** Dispatching a card creates a dedicated session and isolates it in a git worktree under a per-project directory, so two cards never share a working tree.
 - **Stage continuation.** When a card moves to its next stage, the plugin carries on in the same worktree, trying in order: the session is still live and simply continues; the session ended but its history is on disk and is rebuilt onto; only when that history is unusable does it start a fresh session and record the fallback on the card. A continuation never creates a new worktree.
@@ -34,12 +34,13 @@ Refresh after installing, open **Settings** (the gear, bottom-left), then choose
 ## Use
 
 1. Create a project with its absolute root path.
-2. Create a board under it, then cards — or pull issues in through intake.
+2. Add cards to the project's board (created automatically with the project) — or pull issues in through intake.
 3. Dispatch a card; it runs in its own session and worktree.
 4. At `plan-review`, **Approve plan** is one click: it moves the card to `build` and continues the same session/worktree, so the agent starts implementing right away — no second click needed.
 5. At later stages the card continues: same worktree, same branch, only the session is re-obtained (still live → continue; ended but history on disk → rebuild onto it; no usable history → fresh session with the fallback recorded).
 6. Inspect the change at review, press **Commit**, then **Push branch and create PR** — both are your actions, never the plugin's. Every PR is opened as a **draft** (at all autonomy levels, including manual `L0`); merge stays with a person.
 7. The card stays at review once the draft PR is open; you decide whether to mark it done or send it back.
+8. Opening settings from a project lands on that project's settings; the **Global settings** tab (or the "Global settings ›" link on the project pane) holds the worktrees root, GitHub connection, global concurrency and the engine switch. With no project selected, the drawer opens on global settings.
 
 ## Commands
 

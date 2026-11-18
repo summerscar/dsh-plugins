@@ -369,11 +369,19 @@ test('PGH-13: no jargon tokens in the user-facing zh/en dictionaries', () => {
   mod.apply({ effect: (f) => { f(); return () => {} }, locale: { register: (_n, d) => { dicts = d; return () => {} }, bind: () => (k) => k }, slots: { inject: (_o, cb) => cb(), register: () => () => {} } })
   const zh = JSON.stringify(dicts.zh)
   const en = JSON.stringify(dicts.en)
-  for (const jargon of ['device flow', 'OAuth', 'client_id', '授权码', '兜底', '优先级', 'GitHub App']) {
+  // GitHub OAuth App is a required product term; bare OAuth or paraphrases
+  // like 授权登录 remain banned. Keep every other jargon token on the ban list.
+  for (const jargon of ['device flow', 'client_id', '授权码', '兜底', '优先级', 'GitHub App']) {
     assert.equal(zh.includes(jargon), false, `zh copy must not contain "${jargon}"`)
     assert.equal(en.toLowerCase().includes(jargon.toLowerCase()), false, `en copy must not contain "${jargon}"`)
   }
+  // Only the OAuth inside "GitHub OAuth App" is allowed; any isolated OAuth
+  // (or a paraphrase such as 授权登录) is still rejected in both languages.
+  assert.equal(/(?<!GitHub )OAuth/.test(zh), false, 'zh copy must not contain a bare OAuth outside GitHub OAuth App')
+  assert.equal(/(?<!GitHub )OAuth/.test(en), false, 'en copy must not contain a bare OAuth outside GitHub OAuth App')
   // Source labels are human copy, not the internal machine ids (PGH-11).
-  assert.match(zh, /自动连接|所有项目都能用/)
-  assert.match(en, /connect|all projects/i)
+  // The UI/UX iteration standardised the shared-account label on
+  // 「所有项目共用」/“Shared by all projects”; the old wording is gone.
+  assert.match(zh, /所有项目共用/)
+  assert.match(en, /shared by all projects|all projects \(shared\)/i)
 })

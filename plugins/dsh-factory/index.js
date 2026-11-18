@@ -52,7 +52,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-18.6'
+export const BUILD = 'factory-2026-11-18.7'
 
 export const name = 'dsh-factory'
 
@@ -366,7 +366,10 @@ export function apply(ctx, config = {}) {
       try {
         const boardId = decodeURIComponent(intakeMatch[1])
         const board = store.getBoard(boardId)
-        const project = board?.projectId ? store.getProject(board.projectId) : undefined
+        // Archived boards are hidden from the one-board-per-project surface;
+        // never let an old URL pull new cards into one.
+        if (board === undefined || board === null) throw new Error('目标看板不存在或已归档 (boardId)')
+        const project = board.projectId ? store.getProject(board.projectId) : undefined
         const decision = await resolveIdentity(project)
         const result = await intakeIssues({ store, projectId: board?.projectId, boardId, repo: body.repo, ghPort: createGhPort(decision.git) })
         sendJson(res, 200, result)

@@ -110,7 +110,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           engine: engineStatus(runtime.engine, effectiveGlobalMaxActive(store, engineConfig)),
           counts: {
             projects: store.state.projects.length,
-            boards: store.state.boards.length,
+            boards: store.listBoards().length,
             cards: store.state.cards.length,
           },
         })

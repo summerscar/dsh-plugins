@@ -1,6 +1,6 @@
 # dsh-factory roadmap
 
-> Status date: 2026-11-15. This document is for anyone taking over the project: after reading it you should be able to judge on your own what it can do today, what comes next, and why it was decided that way.
+> Status: describes behavior as implemented, not a schedule; every phase listed here is complete. This document is for anyone taking over the project: after reading it you should be able to judge on your own what it can do today, what comes next, and why it was decided that way.
 > The **reasons** behind each design choice live here, so they do not have to be argued again. For implementation details read the source; for how to run things read the repository's own `AGENTS.md` and per-directory conventions.
 
 ## 1. What this plugin is for
@@ -11,15 +11,16 @@ Three points that are not negotiable:
 
 1. **One card = one dedicated session + one dedicated working tree.** Cards never share a working directory, and never share dependencies.
 2. **commit / push / opening a pull request is always approved by a person.** The plugin may prepare everything automatically, but it never pushes changes out by itself.
-3. **Multiple projects are first-class.** Each project has its own root path, boards, cards and configuration, and they do not interfere with each other.
+3. **Multiple projects are first-class.** Each project has its own root path, one board, cards and configuration, and they do not interfere with each other.
 
 The long-term goal is "discover issues on a schedule → analyse → develop automatically → deliver a draft pull request", but **merging always stays with a person**.
 
-## 2. What it can do today (2026-11-15)
+## 2. What it can do today
 
 ### 2.1 Data and boards
 
-- Three levels: **project → board → card**.
+- **One board per project: project → board → card.** Creating a project writes its single board in the same transaction; a repeated board creation returns that board instead of adding another, so the boards listing never shows more than one active board per project. Legacy multi-board state is converged when it loads, without a schema bump: the first *active* board is kept, cards belonging to the other boards are moved to it, every project's `intakeBoardId` is repointed to it (including one already pointing at an archived board), and the extra boards are marked `archived` and kept in state. No card and no board is deleted, and repeating the load is a no-op. Manual intake through an old archived board id is refused with 400.
+- The schema version stays at `1`; loading state with a different version throws. Data repair for this change therefore goes through archival in place rather than a schema upgrade.
 - A card's lifecycle has 8 statuses: `inbox` / `triage` / `plan` / `plan-review` / `build` / `review` / `done` / `canceled`.
 - Every transition records who made it (person / agent / automatic rule) and is auditable globally.
 - The inbox is a data status shown separately in the interface; it does not take a board column.
@@ -34,7 +35,7 @@ The long-term goal is "discover issues on a schedule → analyse → develop aut
   - `copyFiles`: copy locally ignored files from the project root (such as environment files) into the worktree;
   - `postCreate`: run a preparation command the user supplied, inside the worktree.
   - Neither ships a default: what to install and what to verify is decided by the target repository's own conventions. If either step fails, the whole dispatch rolls back (the worktree and branch are removed and the card stays in the inbox).
-- **A single global "worktrees root" setting** decides where new worktrees are created. It lives in a collapsible section at the top of the Project Factory page. Leaving it empty uses the default `~/dsh-factory-worktrees` (resolved from the user's home): the input's placeholder shows that default and a "currently in effect" line shows the resolved absolute path. It affects only worktrees created from then on — existing projects and cards already in flight are untouched. A rejected value surfaces the backend's original error verbatim. Under the root, each project gets a directory named from a slug of the project name plus a short prefix of its id (so renaming cannot break the path and same-named projects stay distinct), with each card's worktree nested beneath it.
+- **A single global "worktrees root" setting** decides where new worktrees are created. It lives in the **global** pane of the settings drawer (under "Paths & concurrency"), not on the project page. Leaving it empty uses the default `~/dsh-factory-worktrees` (resolved from the user's home): the input's placeholder shows that default and a "currently in effect" line shows the resolved absolute path. It affects only worktrees created from then on — existing projects and cards already in flight are untouched. A rejected value surfaces the backend's original error verbatim. Under the root, each project gets a directory named from a slug of the project name plus a short prefix of its id (so renaming cannot break the path and same-named projects stay distinct), with each card's worktree nested beneath it.
 - **Worktree paths are kept out of the data root by one shared gate.** The root may sit outside the data root normally; the only in-root exception is the single exact `<home>/dsh-factory-worktrees` subtree, for layouts where HOME itself lives under the data root. Session storage, caches, other projects' state and a same-named directory elsewhere stay forbidden. Containment is resolved live on every call (`resolveDataRoot()` / `homedir()`, never cached), and `assertWorktreeRoot`, `worktreePathFor` and `createWorktree` all pass through the same `isAllowedWorktreePath` check. An explicit `DSH_FACTORY_WORKTREE_ROOT` override does not inherit the exception. On machines whose HOME is outside the data root, behaviour is unchanged.
 
 ### 2.3 Stage continuation (three-level fallback)
@@ -79,6 +80,12 @@ Approvals share the same concurrency budget as dispatch: a per-project and a glo
 
 `pause` and per-card `takeover` take effect immediately for approvals too: a paused project or a taken-over card is not auto-approved, and cards skipped during a pause are not made up for when it resumes. Repeated ticks are idempotent, and this automatic edge has no path to `done` or `canceled`.
 
+### 2.9 Configuration drawer, copy and narrow-screen board
+
+- **The settings drawer opens project-first.** Its scope starts at `auto` and resolves to the current project when one is selected, otherwise to global; clicking a tab pins an explicit scope for that page session only, and a reload starts over at `auto`. The project pane carries a "Global settings ›" link and the drawer heading follows the active pane. Project pause/resume calls the project endpoints; the engine pause/resume switch exists only on the global pane. The project pane keeps the identity card visible and merges autonomy with pause into one block, with the worktree setup, concurrency and danger blocks around it; the global pane groups GitHub connection, paths & concurrency, and engine.
+- **Runtime copy has one source.** Every `t()` string comes from the inline zh/en dictionaries registered with the locale service. The packaged locale JSON files carry the host-facing `meta` and mirror the same key set, with a completeness test over the shared keys. All shared keys have identical values in both sources and identical placeholder sets; `meta` was not changed. Product terms — GitHub Token, gh CLI, GitHub OAuth App, Client ID, worktree, commit, PR — are written verbatim in both languages. Six keys were added: `pauseProject`, `resumeProject`, `mobileProjectConfig`, `groupGithub`, `groupPaths`, `groupEngine`.
+- **Narrow-screen board.** At the plugin's 760px breakpoint the board becomes a horizontal scroll-snap strip: columns take 84% of the viewport width, column heads are sticky, the board is capped at 56% of the viewport height, and a stage indicator shows the current column out of five, computed from the rendered column's real width. QA's real-machine re-check at 390px found one column per screen with snapping intact and no page-level horizontal overflow; the rendered outer column width is about 348px because the column is `content-box` with padding, a recorded non-blocking discrepancy. Wide viewports — including a narrow host content column — keep ordinary horizontal scrolling with every column reachable.
+
 ## 3. Decisions already settled — no need to reopen them
 
 | Decision | Reason |
@@ -93,6 +100,10 @@ Approvals share the same concurrency budget as dispatch: a per-project and a glo
 | Resolve DSH home only through the host package | `@deepseek-ai/dsh-home-paths` is the single source of truth for config / `DSH_HOME` / default — a hand-written fallback would drift from the host layout |
 | Plan approval and delivery authorization stay with a person by default | The default keeps every gate human; L2 can delegate **only plan approval** through explicit per-project opt-in, never delivery |
 | Only L2 may auto-approve a plan, and only as an explicit opt-in | Off by default, no allowlist; the machine approves `plan-review -> build` via `autoRule` through the same state gate, then stops. Arming delivery, git writes and merge stay human |
+| One board per project, converged by archival rather than by deletion | A board is the project's intake surface, not a user-managed grouping; archival keeps historical cards and intake targets resolvable while the API still exposes one active board per project, and it avoids a schema-version bump |
+| Settings drawer defaults to the current project | Someone opening settings from a project almost always wants that project's settings; global stays reachable through the tab and the project-page link |
+| Inline dictionaries are the runtime copy source; locale JSON mirrors them | One place to change a string, with a key-set parity check so the two copies cannot silently drift |
+| Product names are written verbatim in both languages | Replacing GitHub Token / gh CLI / GitHub OAuth App / Client ID with generic wording made the configuration unintelligible |
 
 ## 4. What comes next (in priority order)
 
@@ -158,6 +169,15 @@ All four hard requirements are met: the interface reads the level field, not the
 
 **Two deliberate exceptions to "P4 adds no features"** (both user-decided): (1) project deletion cleans up its worktrees; (2) the global cap is now writable over HTTP instead of being launch-config-only. The write path is in place, and the fixture-level proof that a written cap caps the next tick and survives a reload (P4-7a/7b) was verified against a backend concurrency fixture.
 
+### P5 — UI/UX, copy and one-board round (**implemented; QA reported the full package green**)
+
+This round changed wording, information architecture and limited readability in the existing single-file `client.js` view — no component library and no build step. Its claims were re-read from the code rather than taken from the design draft.
+
+- **One board per project in the UI.** The header leads with the project name, followed by a quiet "board · <name>" subtitle only when the board has a non-default name; the board dropdown and the "new board" form are gone. The data-side behaviour is in §2.1.
+- **Project-first configuration.** Opening settings with a project selected lands on that project's pane; with no project it lands on global. An explicit tab choice is sticky for the page session; a reload returns to automatic. The project pane has a "Global settings ›" link and uses project pause/resume, while the global pane owns engine pause/resume.
+- **Terminology.** Proper nouns are preserved in both dictionaries; the six new keys are listed in §2.9. Six banned jargon terms have no hits in either dictionary.
+- **Verification.** QA added a dedicated acceptance test file covering dictionary parity, proper nouns and banned terms, schema/contract invariants, one-board CRUD/convergence and the archived-intake 400. An older identity test's jargon ban was narrowed so "GitHub OAuth App" is allowed while a bare OAuth, its paraphrases and the remaining jargon stay banned; a second assertion was updated to the now-standard shared-account wording. No skip was introduced. QA reported the full package at 315 tests / 315 pass / 0 skipped with the environment token unset, plus a real-machine re-check of the narrow-screen values. Those numbers are QA's; they were not re-run while writing this document.
+
 ## 5. Known gaps (do not mistake it for complete)
 
 | Gap | Impact | Note |
@@ -198,6 +218,19 @@ These are not behavioural gaps — they are a pending copy decision and a fix wh
 | **Approve button wording** | The control still reads **Approve plan** / 「批准计划」. One click now also moves the card to `build` and resumes the session, so the label understates what the button does (the design draft names it "approve plan and start building"). | Wording is a UX/copy decision owned by design, not by the engine. No copy change has been made here. |
 | **Double-click guard on card actions** | Card action buttons are disabled while an action is in flight (`busy` is passed to the button's `disabled`), so a fast second click cannot start a parallel run; even if it slipped through, the second transition would be rejected by the state gate. | The guard was verified in code only, not by a real browser double-click. A real-machine click check is still owed before calling it proven. |
 
+### 5.2 Deliberately out of scope in the UI/UX round
+
+These were considered and explicitly not done; they are not pending defects from that round:
+
+- Dark theme or a theme toggle.
+- A responsive redesign or new breakpoints beyond the narrow-screen readability fixes above.
+- New animation or motion work.
+- A component library or a rewrite onto host theme tokens; the view stays hand-written with `h()` and scoped CSS.
+- Changes to identity resolution order or credential storage.
+- Changes to the card state machine or approval gates.
+
+Two boundaries remain open and were judged non-blocking: `intakeBoardId` has no UI control (automation users set it through the project PATCH route), and the narrow-screen column's outer width is slightly above 84vw because of `content-box` padding.
+
 ## 6. Research basis (summary, so it is not researched twice)
 
 This plugin does not fork any existing implementation. It compared two reference implementations and took the best of each:
@@ -212,7 +245,7 @@ The wider comparison that followed — feature strengths and weaknesses across s
 ## 7. How to contribute
 
 - Read the conventions at the repository root and in the plugin directory before touching code.
-- Before changing anything, confirm which priority it belongs to; until P1 is done, new features queue behind it.
+- Before changing anything, confirm which priority it belongs to. P1–P4 and the UI/UX round in §4 are all complete; do not keep treating P1 as an unfinished blocker — re-prioritise against the current §4 status.
 - Any change that performs a git write must go through the human approval gate; tests must not bypass it.
 - Tests are maintained by a dedicated owner and are not self-certified; numbers come from an actual run, never from "it looks like it runs".
 - **Any test that touches the data root injects a temporary `DSH_HOME`**: point it at a directory under `tmpdir()`, then restore the original value and delete it. Never write the real data root, and never sidestep with `skip` — the data-root lookup is lazy, so changing the environment variable inside the process takes effect immediately; the cases really run, which covers more than skipping them would.
