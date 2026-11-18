@@ -22,6 +22,7 @@ import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
 import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
 import { commitCard, createGitPort, createPrForCard } from './git-exec.js'
+import { localeFromContext } from './session-context.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
 import { registerFactorySkills } from './skills.js'
@@ -295,7 +296,7 @@ export function apply(ctx, config = {}) {
     if (method === 'POST' && dispatch !== null) {
       try {
         const port = createHostPort({ ctx })
-        const result = await dispatchCard({ store, cardId: decodeURIComponent(dispatch[1]), port })
+        const result = await dispatchCard({ store, cardId: decodeURIComponent(dispatch[1]), port, locale: localeFromContext(ctx) })
         sendJson(res, 200, result)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -315,6 +316,7 @@ export function apply(ctx, config = {}) {
           store,
           cardId: decodeURIComponent(continuation[1]),
           port,
+          locale: localeFromContext(ctx),
           message: typeof body.message === 'string' ? body.message : undefined,
         })
         sendJson(res, 200, result)

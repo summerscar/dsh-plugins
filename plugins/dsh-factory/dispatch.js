@@ -53,14 +53,14 @@ import { hasPreparation, prepareWorktree } from './worktree-setup.js'
  * to undefined: the loop awaits setup then calls `setupCommit?.commit()`, so a
  * disposer return value would crash.
  */
-function makeAgentSetup({ store, cardId }) {
+function makeAgentSetup({ store, cardId, locale = 'zh' }) {
   return async (agentCtx) => {
     const presets = typeof agentCtx?.get === 'function' ? agentCtx.get('agentPresets') : undefined
     if (presets === undefined || presets === null || typeof presets.mount !== 'function') {
       throw new Error('无法派发会话：宿主未提供 agentPresets 服务，无法挂载预设（agent 会缺少 bash 等必需工具）')
     }
     await presets.mount(agentCtx)
-    attachSessionContext({ agentCtx, store, cardId })
+    attachSessionContext({ agentCtx, store, cardId, locale })
   }
 }
 
@@ -103,7 +103,7 @@ function resolveTargets({ store, cardId }) {
  *   { createWorktree, removeWorktree, prepareWorktree?, createSession,
  *     disposeSession, isSessionActive? }
  */
-export async function dispatchCard({ store, cardId, port, baseBranch = 'main', transitionActor = 'human', transitionMeta = undefined } = {}) {
+export async function dispatchCard({ store, cardId, port, baseBranch = 'main', transitionActor = 'human', transitionMeta = undefined, locale = 'zh' } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
   const gate = assertDispatchable(card)
   if (gate.ok !== true) throw new Error(`该卡当前不可派发：${gate.reason}`)
@@ -152,7 +152,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
       port.prepareWorktree({ project, worktreePath, branch, baseBranch })
     }
 
-    const built = buildSessionContext({ card: { ...card, worktreePath, branch }, project })
+    const built = buildSessionContext({ card: { ...card, worktreePath, branch }, project, locale })
 
     created = await port.createSession({
       cwd: worktreePath,
@@ -161,7 +161,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
       // `setup(agentCtx)` runs before the first prompt assembly: mount the user's
       // preset (gives the agent its real tool set) and register the per-session
       // work-item context. See makeAgentSetup for why mount must live here.
-      setup: makeAgentSetup({ store, cardId }),
+      setup: makeAgentSetup({ store, cardId, locale }),
       firstMessage: built.firstMessage,
     })
 
@@ -193,7 +193,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
  *
  * @returns {{ sessionId: string, worktreePath: string, mode: 'followup'|'resumed'|'created', fallbackRecorded?: boolean }}
  */
-export async function continueCard({ store, cardId, port, message, failureLimit } = {}) {
+export async function continueCard({ store, cardId, port, message, failureLimit, locale = 'zh' } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
   const gate = assertDispatchable(card)
   if (gate.ok !== true) throw new Error(`该卡当前不可接续：${gate.reason}`)
@@ -216,7 +216,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
     throw new Error('该卡正在被接续（并发锁），请稍后重试')
   }
 
-  const built = buildSessionContext({ card, project })
+  const built = buildSessionContext({ card, project, locale })
   const text = typeof message === 'string' && message !== '' ? message : built.firstMessage
   let created = null
   let resumeFailure
@@ -245,7 +245,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
         created = await port.resumeSession({
           resumeSessionId: previousSessionId,
           cwd: worktreePath,
-          setup: makeAgentSetup({ store, cardId }),
+          setup: makeAgentSetup({ store, cardId, locale }),
           firstMessage: text,
         })
         store.setWorktree(cardId, { sessionId: created.sessionId })
@@ -266,7 +266,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit 
       cwd: worktreePath,
       permission: project.defaultPermission,
       model: project.defaultModel,
-      setup: makeAgentSetup({ store, cardId }),
+      setup: makeAgentSetup({ store, cardId, locale }),
       firstMessage: text,
     })
     store.setWorktree(cardId, { sessionId: created.sessionId })

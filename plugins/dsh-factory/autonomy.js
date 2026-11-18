@@ -33,6 +33,7 @@
  */
 import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
 import { createGhPort, intakeIssues } from './intake.js'
+import { localeFromContext } from './session-context.js'
 import { precheckReceipt } from './receipt.js'
 
 /** Conservative, overridable defaults. Never hard-code a host-specific path/command. */
@@ -457,7 +458,7 @@ export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = 
     // Per-project gh port from the identity ladder (PGH-9). The host supplies it
     // via index.js; when absent, runTick falls back to the single `ghPort` above.
     ...(typeof ghPortFor === 'function' ? { ghPortFor } : {}),
-    dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }) }),
+    dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx) }),
     // L2 machine plan-approval: same store gate as a human button, write-before-
     // receipt prechecked, actor=autoRule. Ports left default (the approval value
     // schema is this repo's own, not a host tool's output — no host validator needed).
@@ -465,7 +466,7 @@ export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = 
     // L2 approval's second half: continue the same session so build runs. Same
     // lazy host port as dispatch, so a profile without `agents` fails only this
     // card (caught by runTick), never the whole tick.
-    continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }) }),
+    continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx) }),
     isSessionActive: (sessionId) => {
       const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
       if (agents === undefined || agents === null || typeof agents.get !== 'function') return false

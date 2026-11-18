@@ -231,6 +231,12 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'POST' && seg.length === 3 && seg[2] === 'takeover') {
           return ok({ card: store.takeOverCard(seg[1], 'human') })
         }
+        // Reverse of takeover: one card goes back to the engine. Deliberately a
+        // separate route from the dispatch concurrency lock (releaseClaim).
+        // Auth is inherited from the host connection gate in index.js.
+        if (method === 'POST' && seg.length === 3 && seg[2] === 'release') {
+          return ok({ card: store.releaseOverCard(seg[1], 'human') })
+        }
         // AE-2b remote-snapshot injection (controlled product entry). Feeds a
         // remote PR fact to the EXISTING applyRemoteSync, which only records a
         // suggestion and never changes the card's status. HARD CONSTRAINTS:

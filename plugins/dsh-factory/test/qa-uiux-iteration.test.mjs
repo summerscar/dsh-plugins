@@ -28,6 +28,16 @@ import { emptyState, FactoryStore, SCHEMA_VERSION } from '../store.js'
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '..')
 
+// Self-contained key contract (channel lesson): assert presence of the keys this
+// iteration added rather than a raw total that expires on the next key addition
+// or drifts with HEAD. Cross-dictionary consistency is asserted separately.
+const ADDED_KEYS = [
+  'cardBodyLabel', 'cardBodyPlaceholder', 'bodyUntrustedNotice',
+  'bodySnapshotNotice', 'bodyTruncatedHint', 'takenOverBadge',
+  'takenOverBadgeTitle', 'returnToEngine', 'returnToEngineTitle',
+  'toastReturned', 'returnWithSessionNotice',
+]
+
 function source(file) {
   return readFileSync(join(packageRoot, file), 'utf8')
 }
@@ -80,14 +90,14 @@ function placeholders(value) {
 // 1. Dictionary parity, banned words, proper nouns, contract constants
 // ---------------------------------------------------------------------------
 
-test('AC-1.5: all 228 overlapping keys are byte-equal across inline and locale dictionaries; meta is well-formed', () => {
+test('AC-1.5: all overlapping keys are byte-equal across inline and locale dictionaries; meta is well-formed', () => {
   const inline = inlineDictionaries(source('client.js'))
   for (const lang of ['zh', 'en']) {
     const { meta, ...ui } = localeJson(lang)
     const keys = Object.keys(inline[lang]).sort()
     const uiKeys = Object.keys(ui).sort()
     assert.deepEqual(keys, uiKeys, `${lang}: inline keys != locale UI keys`)
-    assert.equal(keys.length, 228, `${lang}: expected 228 overlapping keys, got ${keys.length}`)
+    for (const added of ADDED_KEYS) assert.ok(keys.includes(added), `${lang}: this iteration's key ${added} present`)
     const diff = keys.filter((key) => inline[lang][key] !== ui[key])
     assert.deepEqual(diff, [], `${lang}: drifted keys: ${diff.join(', ')}`)
     // meta is host-owned: present in the locale file only, never in the
@@ -120,7 +130,8 @@ test('AC-1.5: every key keeps an explicit placeholder contract, mirrored byte-fo
   }
   const keys = Object.keys(current.zh).sort()
   assert.deepEqual(keys, Object.keys(current.en).sort(), 'zh/en templates share one key set')
-  assert.equal(keys.length, 228)
+  for (const added of ADDED_KEYS) assert.ok(keys.includes(added), `placeholder contract: ${added} present`)
+  for (const templated of Object.keys(PLACEHOLDERS)) assert.ok(keys.includes(templated), `template key ${templated} present`)
   for (const lang of ['zh', 'en']) {
     const ui = localeJson(lang)
     for (const key of keys) {

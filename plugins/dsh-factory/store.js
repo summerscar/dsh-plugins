@@ -516,6 +516,20 @@ export class FactoryStore {
     return clone(card)
   }
 
+  /**
+   * Give a taken-over card back to the engine. ONLY `takenOver` changes: an
+   * active session / dispatch lock / worktree belongs to the running session and
+   * is never touched (the autonomy gate already skips such cards).
+   */
+  releaseOverCard(id, actor = 'human') {
+    const card = this._card(id)
+    if (card.takenOver !== true) return clone(card)
+    card.takenOver = false
+    card.history.push({ type: 'returned-to-engine', actor, at: new Date().toISOString() })
+    this.recordEvent({ type: 'engine-takeover', scope: 'card', targetId: id, actor, decision: 'returned-to-engine' })
+    return clone(card)
+  }
+
   /** Record a governance event on the state-wide stream (see collectAudit). */
   recordEvent({ type, scope, targetId = null, actor = 'autoRule', decision = type, rule = null, channel = null, tier = null, note = null } = {}) {
     const entry = { type, scope, targetId, actor, decision, rule, channel, tier, note, at: new Date().toISOString() }

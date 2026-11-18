@@ -18,6 +18,90 @@ import { join } from 'node:path'
 
 import { defaultSkillsDir, parseSkillMarkdown } from './skills.js'
 import { nextStatuses } from './state.js'
+// The session prompt must use the SAME copy as the UI; read the packaged
+// dictionaries instead of keeping a second, drifting literal copy here.
+import zhLocale from './locale/zh.json' with { type: 'json' }
+import enLocale from './locale/en.json' with { type: 'json' }
+
+/** Max characters of a card body injected into sectionText (Dev recommendation). */
+export const BODY_CHAR_LIMIT = 3000
+
+/**
+ * Read the host's UI locale without depending on one exact service shape.
+ * Unknown/missing service means zh (the long-standing default), so a profile
+ * that does not expose locale keeps working exactly as before.
+ */
+export function localeFromContext(ctx) {
+  const read = (value) => {
+    if (typeof value === 'function') {
+      try { return read(value()) } catch { return '' }
+    }
+    return typeof value === 'string' ? value : ''
+  }
+  const candidates = [
+    () => read(ctx?.locale?.current),
+    () => read(ctx?.locale?.language),
+    () => read(ctx?.locale?.locale),
+    () => read(ctx?.i18n?.locale),
+    () => read(ctx?.i18n?.language),
+    () => read(ctx?.config?.locale),
+    () => (typeof ctx?.config?.get === 'function' ? read(ctx.config.get('locale')) : ''),
+    () => {
+      const service = typeof ctx?.get === 'function' ? ctx.get('locale') : undefined
+      return read(service?.current ?? service?.language ?? service?.locale ?? service)
+    },
+  ]
+  for (const candidate of candidates) {
+    let value = ''
+    try { value = candidate() } catch { value = '' }
+    if (/^en([-_]|$)/i.test(value)) return 'en'
+    if (/^zh([-_]|$)/i.test(value)) return 'zh'
+  }
+  return 'zh'
+}
+
+/** Plain text only: never render a card body as Markdown or HTML in a prompt. */
+function plainBodyText(value) {
+  if (typeof value !== 'string' || value === '') return ''
+  return value
+    .replace(/```[\s\S]*?```/g, (fence) => fence.replace(/^```[^\n]*\n?/, '').replace(/```\s*$/, ''))
+    .replace(/<\/?(?:a|abbr|b|blockquote|br|code|dd|details|div|dl|dt|em|h[1-6]|hr|i|img|li|ol|p|pre|s|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|u|ul)\b[^>]*>/gi, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`\n]*)`/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}(?:[-*+]|\d+[.)])\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/(\*\*|__)([^*_]*?)\1/g, '$2')
+    .replace(/(^|\s)[*_](?=\S)([^*_\n]*?\S)[*_]/g, '$1$2')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function bodyNotice(locale, key) {
+  const dict = locale === 'en' ? enLocale : zhLocale
+  return typeof dict[key] === 'string' ? dict[key] : ''
+}
+
+/**
+ * Independent block injected ahead of the skill instructions: untrusted-data
+ * notice, snapshot notice for auto cards only, plain body, truncation hint.
+ */
+function bodyBlock(card, locale) {
+  const full = plainBodyText(card.body)
+  if (full === '') return []
+  const hasSource = typeof card.source === 'string' && card.source !== '' && card.source !== 'manual'
+  // A manual card has no issue to re-read: its description is the ONLY task
+  // content, so only source-backed cards are truncated and get the re-read hint.
+  const truncated = hasSource && Array.from(full).length > BODY_CHAR_LIMIT
+  const lines = [bodyNotice(locale, 'bodyUntrustedNotice')]
+  if (hasSource) lines.push(bodyNotice(locale, 'bodySnapshotNotice'))
+  lines.push(truncated ? Array.from(full).slice(0, BODY_CHAR_LIMIT).join('') : full)
+  if (truncated) lines.push(bodyNotice(locale, 'bodyTruncatedHint'))
+  return lines
+}
 
 const APPROVED_PHASES = new Set(['build', 'review', 'done'])
 
@@ -88,7 +172,7 @@ function repoOf(card, project) {
  * (cardId / title / phase / nextPhases / repo / branch / worktreePath /
  * planStatus / prUrl), plus the rendered `sectionText` and `firstMessage`.
  */
-export function buildSessionContext({ card, project } = {}) {
+export function buildSessionContext({ card, project, locale = 'zh' } = {}) {
   if (card === undefined || card === null) throw new Error('buildSessionContext needs a card')
   const fields = {
     cardId: card.id,
@@ -114,7 +198,10 @@ export function buildSessionContext({ card, project } = {}) {
     if (value === null || value === undefined) return '—'
     return Array.isArray(value) ? (value.length === 0 ? '—' : value.join(', ')) : String(value)
   }
+  const bodyLines = bodyBlock(card, locale)
   const sectionText = [
+    ...bodyLines,
+    ...(bodyLines.length === 0 ? [] : ['']),
     'You are working on exactly ONE factory card. Do not touch any other card.',
     'Advance through the agent-owned stages (\`triage\`, \`plan\`, \`build\`, \`review\`) continuously within this single session — finish the current stage and move the card yourself; do not end your turn expecting another session to take over. Only \`plan-review\`, \`done\` and \`canceled\` are stop-and-wait states where a human acts.',
     `- cardId: ${fields.cardId}`,
@@ -175,7 +262,7 @@ const DEFAULT_ORDER = 60
  *
  * @param {{ agentCtx: object, store: import('./store.js').FactoryStore, cardId: string }} args
  */
-export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill } = {}) {
+export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill, locale = 'zh' } = {}) {
   const systemPrompt = agentCtx?.systemPrompt
   if (systemPrompt === undefined || systemPrompt === null) {
     throw new Error('attachSessionContext needs an agent context exposing systemPrompt')
@@ -193,7 +280,7 @@ export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readS
   const current = () => {
     const card = store.getCard(cardId)
     if (card === undefined || card === null) return null
-    return buildSessionContext({ card, project: store.getProject(card.projectId) })
+    return buildSessionContext({ card, project: store.getProject(card.projectId), locale })
   }
 
   const disposers = []
