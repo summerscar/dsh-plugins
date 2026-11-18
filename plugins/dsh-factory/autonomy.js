@@ -248,9 +248,20 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
             // Without this a tick could open N sessions under a cap of 1.
             const approvalProjectActive = activeByProject.get(project.id) ?? 0
             let approvalSlots = Math.max(0, Math.min(projectMax - approvalProjectActive, globalMax - activeCount))
+            // Review P3 (TOCTOU): activeSessionIds is a tick-start snapshot, but
+            // continueCard re-checks liveness at call time. A session dying in
+            // between falls back to resume/fresh (a NEW session) even though the
+            // hold decision above already let it through slot-free. Re-check at
+            // the decision point too. Missing/failing port keeps the snapshot
+            // behaviour, so offline fakes are unaffected.
+            const liveAtDecision = async (sessionId) => {
+              if (typeof deps.isSessionActive !== 'function') return true
+              try { return (await deps.isSessionActive(sessionId)) === true } catch { return false }
+            }
             for (const card of approvable) {
-              const liveSession = typeof card.sessionId === 'string' && card.sessionId !== ''
+              const snapshottedLive = typeof card.sessionId === 'string' && card.sessionId !== ''
                 && activeSessionIds.has(card.sessionId)
+              const liveSession = snapshottedLive && await liveAtDecision(card.sessionId)
               // Hold the approval itself, not just the continuation: approving
               // without a slot would strand the card in build with no agent.
               if (!liveSession && approvalSlots <= 0) {

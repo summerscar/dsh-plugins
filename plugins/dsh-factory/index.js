@@ -52,7 +52,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-18.5'
+export const BUILD = 'factory-2026-11-18.6'
 
 export const name = 'dsh-factory'
 
