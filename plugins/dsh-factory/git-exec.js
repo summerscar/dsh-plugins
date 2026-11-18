@@ -45,7 +45,12 @@ export function isProtectedBranch(branch, protectedBranches = DEFAULT_PROTECTED_
   return protectedBranches.some((entry) => String(entry).toLowerCase() === name)
 }
 
-export async function createPrForCard({ store, cardId, port, title, body, protectedBranches = DEFAULT_PROTECTED_BRANCHES, draft = false } = {}) {
+/**
+ * Push the task branch and open a PR. Factory PRs are draft by default at every
+ * autonomy level: the PR is the last human review gate before merge, so opening
+ * it ready-for-review would skip that gate. Callers may still opt out explicitly.
+ */
+export async function createPrForCard({ store, cardId, port, title, body, protectedBranches = DEFAULT_PROTECTED_BRANCHES, draft = true } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
   if (card.status !== 'review') throw new Error(`「推送分支并创建 PR」仅 Review 可执行（当前 ${card.status}）`)
@@ -171,7 +176,7 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
       return Number.isFinite(count) && count > 0
     },
     push(cwd, branch) { run('git', ['push', '-u', 'origin', branch], cwd) },
-    createPr(cwd, { title, body, branch, draft = false }) {
+    createPr(cwd, { title, body, branch, draft = true }) {
       return run('gh', ['pr', 'create', '--title', title, '--body', body, '--head', branch, ...(draft ? ['--draft'] : [])], cwd)
     },
   }

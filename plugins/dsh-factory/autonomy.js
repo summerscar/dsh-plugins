@@ -13,8 +13,11 @@
  *     It never reads `autoApprove`, so `L1 + autoApprove=true` still stops at
  *     plan-review (AE-1d); it never touches a card outside Inbox.
  *   - L2 (explicit opt-in + autoApprove): adds ONE machine action — approving a
- *     plan (`plan-review -> build`, actor=autoRule) through the same state gate.
- *     arm-delivery and git stay human-only; pause/takeover stop approval at once.
+ *     plan (`plan-review -> build`, actor=autoRule) through the same state gate,
+ *     then continuing that card's session so build actually runs. Approving
+ *     alone strands the card in build with no agent — the same dead-end the
+ *     human button fixes. arm-delivery and git stay human-only; pause/takeover
+ *     stop approval at once.
  *
  * Default zero side effects (PRD §5): a project at L0, or a paused project, or
  * one without explicit intake config, produces no cards, no sessions, no git
@@ -23,12 +26,12 @@
  *
  * The engine deliberately does NOT reimplement dedupe, dispatch, continuation,
  * rollback, circuit breaking or the state machine — it calls the existing
- * `intakeIssues` / `dispatchCard` / `autoApprovePlan` / `isSessionActive` through
- * `deps`. All orchestration is pure over an injected `deps` port, so the whole
- * chain is exercised offline with a fake store and fake host — no real timer,
- * no real `gh`, no real sessions.
+ * `intakeIssues` / `dispatchCard` / `autoApprovePlan` / `continueCard` /
+ * `isSessionActive` through `deps`. All orchestration is pure over an injected
+ * `deps` port, so the whole chain is exercised offline with a fake store and
+ * fake host — no real timer, no real `gh`, no real sessions.
  */
-import { createHostPort, dispatchCard } from './dispatch.js'
+import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { precheckReceipt } from './receipt.js'
 
@@ -207,6 +210,8 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         intakeCreated: 0,
         dispatched: 0,
         approved: 0,
+        continued: 0,
+        approvalHeld: 0,
         queued: 0,
       }
       projectReports.push(report)
@@ -219,6 +224,11 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           report.reason = `autonomy=${level} (engine acts only at L1/L2)`
           continue
         }
+
+        // Shared per-project budget: L2 plan-approval continuations and Inbox
+        // dispatch both keep/create active sessions, so they draw from the SAME
+        // cap. Declared once here; each stage re-reads the live counters below.
+        const projectMax = positiveInt(project.maxActiveSessions, projectDefaultMax)
 
         // L2 machine plan-approval — the ONE extra action L2 takes. Independent
         // of intake config (issueRepo/board): it judges LOCAL card status only,
@@ -233,13 +243,62 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
             const approvable = allCards
               .filter((card) => card.projectId === project.id && card.status === 'plan-review')
               .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+            // A continue that reuses a still-live session (followup) adds no
+            // new session and needs no slot; a resume/fresh fallback does.
+            // Without this a tick could open N sessions under a cap of 1.
+            const approvalProjectActive = activeByProject.get(project.id) ?? 0
+            let approvalSlots = Math.max(0, Math.min(projectMax - approvalProjectActive, globalMax - activeCount))
             for (const card of approvable) {
+              const liveSession = typeof card.sessionId === 'string' && card.sessionId !== ''
+                && activeSessionIds.has(card.sessionId)
+              // Hold the approval itself, not just the continuation: approving
+              // without a slot would strand the card in build with no agent.
+              if (!liveSession && approvalSlots <= 0) {
+                report.approvalHeld += 1
+                continue
+              }
               try {
                 const result = await deps.approve({
                   store, cardId: card.id,
                   note: 'L2 auto-approve: plan approved by engine (opt-in)',
                 })
-                if (result?.approved === true) report.approved += 1
+                if (result?.approved === true) {
+                  report.approved += 1
+                  // plan-review is a stop-and-wait state: the plan session has
+                  // ended its turn. Approving alone strands the card in build,
+                  // so continue the same session here — the engine twin of the
+                  // human "Approve plan" button. The port reuses the worktree
+                  // and re-checks the state gate + per-card dispatch lock. A deps
+                  // without it (offline fakes) leaves the approval intact.
+                  if (typeof deps.continue === 'function') {
+                    try {
+                      const continued = await deps.continue({ store, cardId: card.id })
+                      report.continued += 1
+                      // Charge a genuinely new session against the same budget
+                      // dispatch uses; a followup keeps an already-counted id.
+                      const continuedId = typeof continued?.sessionId === 'string' ? continued.sessionId : undefined
+                      if (continuedId !== undefined && continuedId !== '' && !activeSessionIds.has(continuedId)) {
+                        activeSessionIds.add(continuedId)
+                        activeCount += 1
+                        activeByProject.set(project.id, (activeByProject.get(project.id) ?? 0) + 1)
+                        approvalSlots -= 1
+                      }
+                    } catch (continueError) {
+                      errors += 1
+                      const message = continueError instanceof Error ? continueError.message : String(continueError)
+                      status.lastError = `auto-approve continue failed for card ${card.id}: ${message}`
+                      // Never roll the approval back — it is a valid gate
+                      // decision. Make the stalled build observable instead.
+                      try {
+                        store.recordEvent({
+                          type: 'auto-approve-continue-failed', scope: 'card', targetId: card.id,
+                          actor: 'autoRule', decision: 'failed', note: message,
+                          tier: L2_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
+                        })
+                      } catch { /* audit write must never abort the tick */ }
+                    }
+                  }
+                }
               } catch (error) {
                 errors += 1
                 const message = error instanceof Error ? error.message : String(error)
@@ -256,9 +315,12 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
                 } catch { /* audit write must never abort the tick */ }
               }
             }
-            report.approvalReason = report.approved > 0
+            const approvalBase = report.approved > 0
               ? `approved ${report.approved} plan(s)`
               : approvable.length === 0 ? 'no plan-review card' : 'none approved'
+            report.approvalReason = report.approvalHeld > 0
+              ? `${approvalBase}; ${report.approvalHeld} held for capacity`
+              : approvalBase
           }
         }
 
@@ -321,7 +383,6 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           continue
         }
 
-        const projectMax = positiveInt(project.maxActiveSessions, projectDefaultMax)
         const projectActive = activeByProject.get(project.id) ?? 0
         let slots = Math.min(projectMax - projectActive, globalMax - activeCount)
         if (slots <= 0) {
@@ -390,6 +451,10 @@ export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = 
     // receipt prechecked, actor=autoRule. Ports left default (the approval value
     // schema is this repo's own, not a host tool's output — no host validator needed).
     approve: (args) => autoApprovePlan(args),
+    // L2 approval's second half: continue the same session so build runs. Same
+    // lazy host port as dispatch, so a profile without `agents` fails only this
+    // card (caught by runTick), never the whole tick.
+    continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }) }),
     isSessionActive: (sessionId) => {
       const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
       if (agents === undefined || agents === null || typeof agents.get !== 'function') return false

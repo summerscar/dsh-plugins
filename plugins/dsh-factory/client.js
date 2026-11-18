@@ -562,11 +562,20 @@ window.__ModuleLoader__.load({
     // Per-card action buttons. Each drives the gated backend (authorize, then the
     // git action, or a human transition); the backend refuses anything not armed,
     // so the UI can never bypass the approval gate even if a button is mis-clicked.
-    function CardActions({ card, run, t }) {
+    function CardActions({ card, run, t, busy }) {
       const buttons = []
-      const add = (label, fn) => buttons.push(h(Button, { key: label, onClick: () => void run(fn) }, label))
+      // Disable while a board action is in flight: a second click cannot start
+      // a parallel run, and the backend gates still guard the write regardless.
+      const add = (label, fn) => buttons.push(h(Button, { key: label, onClick: () => void run(fn), disabled: busy }, label))
       if (card.status === 'inbox') add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) })
-      if (card.status === 'plan-review') add(t('actApprovePlan'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'build', actor: 'human' }) })
+      // Approving IS the human gate: one click moves plan-review -> build AND
+      // continues the live session, so build starts running instead of leaving a
+      // card with no button. Both gates stay server-side — only a human may take
+      // this edge, and /continue reuses the existing worktree/session.
+      if (card.status === 'plan-review') add(t('actApprovePlan'), async () => {
+        await callApi('POST', `/cards/${card.id}/transition`, { to: 'build', actor: 'human' })
+        await callApi('POST', `/cards/${card.id}/continue`)
+      })
       // Take-over pulls one card out of the engine's control, persisted on the
       // card. Available on any live (non-terminal) card (P4-6, third entry).
       if (card.status !== 'done' && card.status !== 'canceled' && card.takenOver !== true) {
@@ -1681,7 +1690,7 @@ window.__ModuleLoader__.load({
 
       const renderCard = (card) => h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
         h(Card, { key: 'card', card }),
-        h(CardActions, { key: 'actions', card, run, t }),
+        h(CardActions, { key: 'actions', card, run, t, busy }),
       ])
 
       const selectStyle = { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: 6, background: T.card, color: T.ink, fontSize: 13 }

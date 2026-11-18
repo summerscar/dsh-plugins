@@ -36,9 +36,10 @@ Refresh after installing, open **Settings** (the gear, bottom-left), then choose
 1. Create a project with its absolute root path.
 2. Create a board under it, then cards — or pull issues in through intake.
 3. Dispatch a card; it runs in its own session and worktree.
-4. When the card moves to its next stage it continues: same worktree, same branch, only the session is re-obtained (still live → continue; ended but history on disk → rebuild onto it; no usable history → fresh session with the fallback recorded).
-5. Inspect the change at review, press **Commit**, then **Push branch and create PR** — both are your actions, never the plugin's.
-6. The card stays at review once the pull request is open; you decide whether to mark it done or send it back.
+4. At `plan-review`, **Approve plan** is one click: it moves the card to `build` and continues the same session/worktree, so the agent starts implementing right away — no second click needed.
+5. At later stages the card continues: same worktree, same branch, only the session is re-obtained (still live → continue; ended but history on disk → rebuild onto it; no usable history → fresh session with the fallback recorded).
+6. Inspect the change at review, press **Commit**, then **Push branch and create PR** — both are your actions, never the plugin's. Every PR is opened as a **draft** (at all autonomy levels, including manual `L0`); merge stays with a person.
+7. The card stays at review once the draft PR is open; you decide whether to mark it done or send it back.
 
 ## Commands
 

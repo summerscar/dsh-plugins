@@ -54,7 +54,7 @@ A card that fails dispatch repeatedly up to the threshold (currently 3) is marke
 ### 2.5 Approval gates
 
 - **Commit** and **push branch and create PR** are two separate human actions; without approval there is no git write at all.
-- Automatic modes may reach a draft pull request, but **never merge**, never mark done, and never escalate permissions on their own.
+- Every pull request is opened as a **draft** at all autonomy levels, including manual `L0`; automatic modes may reach a draft pull request, but **never merge**, never mark done, and never escalate permissions on their own.
 - Pushing to a protected branch is refused, an empty diff is refused, and it never force-pushes.
 
 ### 2.6 Project creation assistant
@@ -73,7 +73,7 @@ Seven: six phase skills (triage / plan / build / self-review / review / rereview
 
 There are three levels. `L0` does nothing. `L1` is the default: the engine takes only the `inbox -> triage` edge, and a card stops at `plan-review` for a person. `L2` is **off by default and must be opted into explicitly per project**; there is no allowlist of repositories or cards.
 
-Under `L2` the machine takes one more automatic edge — `plan-review -> build` — approving the plan on the card's behalf. It uses the same `autoRule` actor and the same `assertTransition` state gate as every other move, so it cannot reach a state the gate does not allow. The boundary is deliberate: the machine **only approves plans**. It stops once the card is in `build`; arming the delivery authorization (commit, push, opening a pull request) still belongs to a person, and the machine never touches git or creates a pull request. This is narrower than "fully automatic to a draft PR" — the machine does not arm or deliver.
+Under `L2` the machine takes one more automatic edge — `plan-review -> build` — approving the plan on the card's behalf, then continues that card's session so `build` actually runs; approving alone would strand the card in `build` with no agent. It uses the same `autoRule` actor and the same `assertTransition` state gate as every other move, so it cannot reach a state the gate does not allow. The boundary is deliberate: the machine **only approves plans and resumes their session**. Arming the delivery authorization (commit, push, opening a pull request) still belongs to a person, and the machine never touches git or creates a pull request. This is narrower than "fully automatic to a draft PR" — the machine does not arm or deliver.
 
 `pause` and per-card `takeover` take effect immediately for approvals too: a paused project or a taken-over card is not auto-approved, and cards skipped during a pause are not made up for when it resumes. Repeated ticks are idempotent, and this automatic edge has no path to `done` or `canceled`.
 
@@ -131,9 +131,9 @@ The `autonomy` / `autoStart` / `autoApprove` fields used to hold storage and wri
 
 ### P3 — L2, machine-assisted plan approval (**implemented and verified on a real machine**)
 
-An **explicit per-project opt-in** (off by default, no allowlist): the machine may approve a plan, taking one more automatic edge `plan-review -> build` as `autoRule` through the same `assertTransition` gate used by every other move. The boundary is deliberately narrow — **the machine only approves the plan**:
+An **explicit per-project opt-in** (off by default, no allowlist): the machine may approve a plan, taking one more automatic edge `plan-review -> build` as `autoRule` through the same `assertTransition` gate used by every other move, then resumes that card's session so `build` actually runs. The boundary is deliberately narrow — **the machine only approves the plan and resumes its session**:
 
-- It stops once the card is in `build`; **arming the delivery authorization still belongs to a person**, and the machine never touches git, opens a pull request, merges or marks done. This is a narrower scope than the original idea of the machine also arming delivery — that part is deliberately not built, a chosen boundary and not a gap.
+- After approval it continues the card's session so `build` runs; **arming the delivery authorization still belongs to a person**, and the machine never touches git, opens a pull request, merges or marks done. This is a narrower scope than the original idea of the machine also arming delivery — that part is deliberately not built, a chosen boundary and not a gap.
 - `pause` (project or global) and per-card `takeover` block approval immediately and do not replay cards skipped during a pause; repeated ticks stay idempotent; the automatic edge has no bypass to `done`.
 - `L0` and `L1` are unchanged: even with `autoApprove` set, only an L2 project acts on it.
 
