@@ -55,7 +55,7 @@ const ARCHIVE_PREFIX = 'mnemon-sync-'
  * Read it from `GET /api/mnemon-sync/status` (`build`), or grep the response
  * before trusting any conclusion about whether a change took effect.
  */
-export const BUILD = 'mnemon-sync-2026-11-11.4'
+export const BUILD = 'mnemon-sync-2026-11-11.5'
 
 export const name = 'dsh-mnemon-sync'
 // `connection` gates every HTTP route below. `mnemonMemory` stays optional on
@@ -254,6 +254,12 @@ export function apply(ctx, config = {}) {
   const scheduler = new SyncScheduler({
     readSettings: settings,
     run: performBackup,
+    // The in-memory `lastRunAt` resets on every Host load (container restart or
+    // HMR reload). Read the last successful scheduled run from durable history
+    // so a restart does not mistake "no record in memory" for "never backed
+    // up" and fire an immediate catch-up. Manual runs don't count: pressing
+    // "Back up now" should not shift the automatic cadence.
+    readLastRunAt: () => history.read().find((run) => run.ok === true && run.trigger === 'schedule')?.finishedAt,
     onError: () => {
       // History already records the failure; the timer must stay silent.
     },

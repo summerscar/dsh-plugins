@@ -365,6 +365,43 @@ test('the scheduler arms from the last completed run, not the arming moment', as
     scheduler.cancel()
   }
 
+  // After a Host restart / HMR reload the in-memory `lastRunAt` is gone, but a
+  // successful scheduled run is still on disk. The durable fallback must be
+  // used so a restart does NOT fire an immediate catch-up. Regression: without
+  // `readLastRunAt`, every container restart produced an extra backup even
+  // though one had finished minutes earlier.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = new SyncScheduler({
+      readSettings: () => settings,
+      run: async () => ({}),
+      readLastRunAt: () => new Date(clock.getTime() - 30 * MINUTE_MS).toISOString(),
+      now,
+    })
+    scheduler.schedule()
+    // 30 minutes past the durable run, 60-minute interval -> wait the
+    // remaining 30 minutes, not the one-minute catch-up.
+    assert.equal(scheduler.nextAt, new Date(clock.getTime() + 30 * MINUTE_MS).toISOString())
+    // The page's "last run" also survives a reload via the durable fallback.
+    assert.equal(scheduler.snapshot(settings).lastAt, new Date(clock.getTime() - 30 * MINUTE_MS).toISOString())
+    scheduler.cancel()
+  }
+
+  // A malformed / unreadable durable value falls back to the one-minute
+  // catch-up rather than throwing or arming a bogus far-future timer.
+  {
+    clock = new Date('2026-11-17T00:00:00Z')
+    const scheduler = new SyncScheduler({
+      readSettings: () => settings,
+      run: async () => ({}),
+      readLastRunAt: () => 'not-a-date',
+      now,
+    })
+    scheduler.schedule()
+    assert.equal(scheduler.nextAt, new Date(clock.getTime() + MINUTE_MS).toISOString())
+    scheduler.cancel()
+  }
+
   // Disabled settings arm nothing and keep `nextAt` absent from the snapshot.
   {
     clock = new Date('2026-11-17T00:00:00Z')

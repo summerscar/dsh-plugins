@@ -108,12 +108,14 @@ export class SyncScheduler {
    * @param {object} options
    * @param {() => object} options.readSettings current settings, read fresh each tick
    * @param {(trigger: string, settings: object, signal: AbortSignal) => Promise<object>} options.run performs one backup
+   * @param {() => string | undefined} [options.readLastRunAt] last successful backup time from durable history, used to avoid a catch-up after a Host restart
    * @param {() => Date} [options.now]
    * @param {(error: unknown) => void} [options.onError]
    */
   constructor(options) {
     this.readSettings = options.readSettings
     this.run = options.run
+    this.readLastRunAt = options.readLastRunAt
     this.now = options.now ?? (() => new Date())
     this.onError = options.onError
     this.timer = undefined
@@ -159,10 +161,13 @@ export class SyncScheduler {
   snapshot(settings) {
     const minutes = minutesOf(settings)
     const available = minutes > 0 && !this.stopped && settings.enabled === true
+    // `lastAt` is also in-memory-only; after a Host reload show the durable
+    // last successful scheduled run so the page keeps reporting it.
+    const lastAt = this.lastAt ?? (typeof this.readLastRunAt === 'function' ? this.readLastRunAt() : undefined)
     return {
       available,
       autoSyncMinutes: minutes,
-      ...this.lastAt === undefined ? {} : { lastAt: this.lastAt },
+      ...lastAt === undefined ? {} : { lastAt },
       ...this.nextAt === undefined || !available
         ? {}
         : { nextAt: this.nextAt },
@@ -189,9 +194,20 @@ export class SyncScheduler {
       return
     }
     const intervalMs = minutes * MINUTE_MS
-    const lastRunMs = this.lastRunAt === undefined
-      ? undefined
-      : Date.parse(this.lastRunAt)
+    // `lastRunAt` lives only in memory and is reset every time the Host module
+    // loads. Without a durable fallback, a restart looks like "no run on
+    // record" and arms a catch-up backup even when one finished minutes ago —
+    // which is why every container restart produced an extra scheduled run.
+    let lastRunMs
+    if (this.lastRunAt !== undefined) {
+      lastRunMs = Date.parse(this.lastRunAt)
+    } else if (typeof this.readLastRunAt === 'function') {
+      const stored = this.readLastRunAt()
+      lastRunMs = stored === undefined ? undefined : Date.parse(stored)
+    } else {
+      lastRunMs = undefined
+    }
+    if (!Number.isFinite(lastRunMs)) lastRunMs = undefined
     let delayMs
     if (lastRunMs === undefined || lastRunMs + intervalMs <= this.now().getTime()) {
       // No completed run on record, or the due time already passed: defer one
