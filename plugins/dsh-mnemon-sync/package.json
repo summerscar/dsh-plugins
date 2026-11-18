@@ -1,6 +1,6 @@
 {
   "name": "@summerscar/dsh-mnemon-sync",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Back up and restore dsh-mnemon memory and skill components (memory spaces, project documents, runtime memory, skill files, skill data) to S3-compatible storage or WebDAV.",
   "type": "module",
   "main": "index.js",
@@ -119,6 +119,6 @@
   },
   "icon": "./icon.svg",
   "dshRelease": {
-    "contentHash": "c571e5835c5cff164256a555dfaf2f1e019d6cb279299af51f3dd4cd36a2e868"
+    "contentHash": "4a26470530109c3143962fc95ca967674183e440ddadbea80cc02c10f502507d"
   }
 }
