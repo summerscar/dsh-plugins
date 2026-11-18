@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto'
 import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus } from './state.js'
 import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot, expandHome } from './worktree.js'
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
+import { detectGithubRepo, normalizeGithubRepo } from './git-exec.js'
 
 export const SCHEMA_VERSION = 1
 
@@ -148,7 +149,8 @@ function normalizeIntake(input, current = {}) {
     return typeof value === 'string' ? value.trim() : value
   }
   const repo = pick('issueRepo')
-  if (repo !== null && (typeof repo !== 'string' || repo === '')) throw new Error('issueRepo 必须是字符串')
+  const normalizedRepo = repo === null ? null : normalizeGithubRepo(repo)
+  if (repo !== null && normalizedRepo === null) throw new Error('issueRepo 必须是 owner/repo 格式')
   const boardId = pick('intakeBoardId')
   if (boardId !== null && (typeof boardId !== 'string' || boardId === '')) throw new Error('intakeBoardId 必须是字符串')
   const maxActive = pick('maxActiveSessions')
@@ -170,7 +172,7 @@ function normalizeIntake(input, current = {}) {
   if (credentialId !== null && !isCredentialKeySegment(credentialId)) {
     throw new Error(`githubCredentialId 必须是小写字母/数字/连字符且以字母开头：${String(credentialId)}`)
   }
-  return { issueRepo: repo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit, githubCredentialId: credentialId }
+  return { issueRepo: normalizedRepo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit, githubCredentialId: credentialId, bindingReason: current.bindingReason ?? null }
 }
 
 export function emptyState() {
@@ -404,8 +406,22 @@ export class FactoryStore {
       ? reqString(input.worktreeRoot, 'worktreeRoot')
       : this.defaultProjectWorktreeRoot()
     assertWorktreeRoot(worktreeRoot)
+    const id = optionalString(input.id) || randomUUID()
+    const board = this._defaultBoard({ id })
+    // One-shot detection at creation time only: never re-read a remote later.
+    // An explicitly supplied issueRepo wins and skips detection entirely.
+    const intake = normalizeIntake(input)
+    if (intake.issueRepo === null) {
+      const detected = detectGithubRepo(rootPath)
+      intake.issueRepo = detected.issueRepo
+      intake.bindingReason = detected.reason
+    } else {
+      intake.bindingReason = null
+    }
+    // A bound project must also have a target board, or L1/L2 still skip it.
+    intake.intakeBoardId = board.id
     const project = {
-      id: optionalString(input.id) || randomUUID(),
+      id,
       name,
       rootPath,
       repos: normalizeRepos(input.repos),
@@ -416,7 +432,7 @@ export class FactoryStore {
       autonomy: input.autonomy === 'L1' || input.autonomy === 'L2' ? input.autonomy : DEFAULT_AUTONOMY,
       autoStart: input.autoStart === true,
       autoApprove: input.autoApprove === true,
-      ...normalizeIntake(input),
+      ...intake,
       // Project-level pause gate. Persisted so a reload keeps the gate closed;
       // the engine checks it every tick rather than dropping the timer (PRD §8).
       paused: false,
@@ -426,7 +442,7 @@ export class FactoryStore {
     // Project and its default board are written in ONE transaction: a project
     // can never exist without its board, even if the process dies at commit.
     this.state.projects.push(project)
-    this.state.boards.push(this._defaultBoard(project))
+    this.state.boards.push(board)
     this._commit()
     return clone(project)
   }
@@ -470,6 +486,8 @@ export class FactoryStore {
   updateIntake(id, input = {}) {
     const project = this._project(id)
     const patch = normalizeIntake(input, project)
+    // A manual edit/clear resolves the old detection notice either way.
+    if ('issueRepo' in input) patch.bindingReason = null
     Object.assign(project, patch)
     this._commit()
     return clone(project)

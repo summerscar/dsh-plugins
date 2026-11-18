@@ -32,6 +32,7 @@ function loadClientModule({ fetchImpl } = {}) {
     useState: (v) => [v, () => {}],
     useEffect: () => {},
     useCallback: (fn) => fn,
+    useRef: (v) => ({ current: v }),
   }
   const sandbox = {
     window: { __ModuleLoader__: { load: (def) => { registered = def } } },
@@ -124,7 +125,7 @@ test('P4-2 render: L0 + both switches on still shows the manual badge, not auto-
 
 function captureZh() {
   let dicts = null
-  const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f }
+  const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f, useRef: (v) => ({ current: v }) }
   const sandbox = {
     window: { __ModuleLoader__: { load: (def) => { sandbox.__def = def } } },
     require: (n) => { if (n === 'react') return shim; throw new Error(n) },
@@ -145,7 +146,7 @@ test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE name
   const zh = captureZh()
   const en = (() => {
     let dicts = null
-    const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f }
+    const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f, useRef: (v) => ({ current: v }) }
     const sandbox = {
       window: { __ModuleLoader__: { load: (def) => { sandbox.__def = def } } },
       require: (n) => shim, fetch: async () => ({ ok: true, text: async () => '{}' }), console,

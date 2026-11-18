@@ -22,6 +22,8 @@ English · [简体中文](docs/README.zh-CN.md)
 - **Approval-gated delivery.** The plugin may draft the commit message and the pull request body, but commit, push and pull request happen only after you press the dedicated approval control on the card. It never commits, pushes, merges or escalates permissions on its own.
 - **Issue intake.** Open GitHub issues become cards, deduplicated by repository and number, so polling never produces duplicate cards.
 - **Bundled process skills.** Six phase skills ship with the package (triage / plan / build / self-review / review / rereview) and register on install, telling the session working a card what that phase requires. A further skill teaches the agent how to inspect a repository and register it as a project.
+- **One-shot GitHub binding when you create a project.** Creation reads the local git `origin` read-only; only a github.com HTTPS or SSH URL becomes an `owner/repo` binding, written with the project's default board in the same transaction. No remote, a non-GitHub or non-git root, or several origin URLs never block creation — each records a reason code. Detection happens once, at creation; the engine never guesses a repository at runtime. You can change or clear the binding in project settings.
+- **A project management page.** The view is designed as a whole page, with a sticky in-page header and two ways to browse projects — a sidebar or a top tab strip, picked with the **View** control and remembered across reloads. Each entry shows the project's autonomy level and card count.
 
 ## Install
 
@@ -33,7 +35,7 @@ Refresh after installing, open **Settings** (the gear, bottom-left), then choose
 
 ## Use
 
-1. Create a project with its absolute root path.
+1. Create a project with its absolute root path. If the root is a git checkout whose `origin` is a github.com HTTPS or SSH URL, the repository is filled in automatically; otherwise the project is still created and the reason shows in its settings. The page header shows the current binding — click it to open that project's binding field.
 2. Add cards to the project's board (created automatically with the project) — or pull issues in through intake.
 3. Dispatch a card; it runs in its own session and worktree.
 4. At `plan-review`, **Approve plan** is one click: it moves the card to `build` and continues the same session/worktree, so the agent starts implementing right away — no second click needed.
@@ -41,6 +43,7 @@ Refresh after installing, open **Settings** (the gear, bottom-left), then choose
 6. Inspect the change at review, press **Commit**, then **Push branch and create PR** — both are your actions, never the plugin's. Every PR is opened as a **draft** (at all autonomy levels, including manual `L0`); merge stays with a person.
 7. The card stays at review once the draft PR is open; you decide whether to mark it done or send it back.
 8. Opening settings from a project lands on that project's settings; the **Global settings** tab (or the "Global settings ›" link on the project pane) holds the worktrees root, GitHub connection, global concurrency and the engine switch. With no project selected, the drawer opens on global settings.
+9. Switch between the sidebar and the top tab strip with the **View** control; the choice survives a reload. The GitHub button on a project card only navigates to the global connection settings — connecting is done there, never from the project. Changing L2 asks for confirmation first, and saves show a short-lived toast.
 
 ## Commands
 
@@ -54,7 +57,9 @@ Register a project from the conversation with `/factory`:
 
 ## GitHub access
 
-Each project works out its own GitHub identity, and the project's **identity card** shows the result in plain terms: which account is in use, where it came from, whether your local checkout is bound to the right remote repository, and a permission check you can run on demand. Connect once and it is available across your projects.
+Each project works out its own GitHub identity, and the project's **identity card** shows the result in plain terms: which account is in use (resolved read-only from your `gh` login when needed), where it came from, whether your local checkout is bound to the right remote repository, and a permission check you can run on demand. When a connected source's account name cannot be read, the card shows the source instead of an "unknown account" placeholder. Connect once and it is available across your projects.
+
+Repository binding (`owner/repo`) is separate from identity: it is detected once when you create the project from a github.com `origin`, and can be edited or cleared in project settings (leave the field empty to unbind). Connections and OAuth stay in global settings; a GitHub button on a project only takes you there.
 
 There are three kinds of source, and the scope is fixed by the kind:
 

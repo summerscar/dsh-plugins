@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useCallback } = React
+    const { useState, useEffect, useCallback, useRef } = React
 
     const NS = 'dsh-factory'
     const API = '/api/dsh-factory'
@@ -326,6 +326,21 @@ window.__ModuleLoader__.load({
       groupGithub: "GitHub 连接",
       groupPaths: "路径与并发",
       groupEngine: "引擎",
+      viewLabel: "视图",
+      viewSidebar: "侧栏",
+      viewTabs: "标签",
+      toastSwitched: "已切换到项目 {name}",
+      toastTaken: "已接管卡片",
+      ghRepoBindLabel: "GitHub 仓库（owner/repo）",
+      ghRepoBindHint: "建项目时从 origin 自动识别；可手动修改，留空表示未绑定。",
+      ghRepoBindSave: "保存绑定",
+      ghRepoBindInvalid: "仓库格式必须是 owner/repo",
+      bindNoOrigin: "未识别到 GitHub 仓库：origin 不存在。",
+      bindNotGithub: "未识别到 GitHub 仓库：origin 不是 github.com。",
+      bindNotGit: "未识别到 GitHub 仓库：仓库根目录不是 git 仓。",
+      bindAmbiguous: "未识别到 GitHub 仓库：origin 有多个地址，需手动填写。",
+      bindInvalidUrl: "未识别到 GitHub 仓库：origin 不是有效的 GitHub 地址。",
+      repoNotBound: "未绑定",
     }
     const en = {
       settings: "Project Factory",
@@ -544,6 +559,21 @@ window.__ModuleLoader__.load({
       groupGithub: "GitHub connection",
       groupPaths: "Paths & concurrency",
       groupEngine: "Engine",
+      viewLabel: "View",
+      viewSidebar: "Sidebar",
+      viewTabs: "Tabs",
+      toastSwitched: "Switched to {name}",
+      toastTaken: "Card taken over",
+      ghRepoBindLabel: "GitHub repository (owner/repo)",
+      ghRepoBindHint: "Detected from origin when the project was created; edit it here, or clear it to unbind.",
+      ghRepoBindSave: "Save binding",
+      ghRepoBindInvalid: "Repository must be in owner/repo format",
+      bindNoOrigin: "No GitHub repository detected: origin is missing.",
+      bindNotGithub: "No GitHub repository detected: origin is not on github.com.",
+      bindNotGit: "No GitHub repository detected: the project root is not a git repository.",
+      bindAmbiguous: "No GitHub repository detected: origin has multiple URLs; enter one manually.",
+      bindInvalidUrl: "No GitHub repository detected: origin is not a valid GitHub URL.",
+      repoNotBound: "Not bound",
     }
 
     async function callApi(method, path, body) {
@@ -567,10 +597,10 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    function Button({ children, onClick, disabled }) {
+    function Button({ children, onClick, disabled, style, className }) {
       return h('button', {
-        onClick, disabled,
-        style: { padding: '6px 12px', borderRadius: T.radiusSm, border: `1px solid ${T.line}`, background: T.card, color: T.ink, fontSize: 13, lineHeight: 1.55, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1 },
+        onClick, disabled, className,
+        style: { padding: '6px 12px', borderRadius: T.radiusSm, border: `1px solid ${T.line}`, background: T.card, color: T.ink, fontSize: 13, lineHeight: 1.55, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1, ...(style || {}) },
       }, children)
     }
 
@@ -589,7 +619,7 @@ window.__ModuleLoader__.load({
     // Per-card action buttons. Each drives the gated backend (authorize, then the
     // git action, or a human transition); the backend refuses anything not armed,
     // so the UI can never bypass the approval gate even if a button is mis-clicked.
-    function CardActions({ card, run, t, busy }) {
+    function CardActions({ card, run, t, busy, onToast }) {
       const buttons = []
       // Disable while a board action is in flight: a second click cannot start
       // a parallel run, and the backend gates still guard the write regardless.
@@ -606,7 +636,10 @@ window.__ModuleLoader__.load({
       // Take-over pulls one card out of the engine's control, persisted on the
       // card. Available on any live (non-terminal) card (P4-6, third entry).
       if (card.status !== 'done' && card.status !== 'canceled' && card.takenOver !== true) {
-        add(t('takeover'), async () => { await callApi('POST', `/cards/${card.id}/takeover`) })
+        add(t('takeover'), async () => {
+          await callApi('POST', `/cards/${card.id}/takeover`)
+          if (onToast) onToast(t('toastTaken'), 'ok')
+        })
       }
       if (card.status === 'review') {
         if (!card.commitSha) add(t('actConfirmCommit'), async () => {
@@ -832,11 +865,11 @@ window.__ModuleLoader__.load({
       return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(18,24,32,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 18 } }, [
         h('div', {
           className: 'df-modal',
-          style: { background: T.card, borderRadius: 14, width: '100%', maxWidth: 480, boxShadow: '0 24px 70px rgba(10,16,24,.28)', overflow: 'hidden' },
+          style: { background: T.card, width: '100%', maxWidth: 500, boxShadow: '0 24px 70px rgba(10,16,24,.28)', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom)' },
         }, [
           h('div', { style: { padding: '16px 18px 12px', borderBottom: `1px solid ${T.line}` } },
             h('h3', { style: { margin: 0, fontSize: 16, fontWeight: 650, color: tone === 'danger' ? T.dangerInk : T.ink } }, title)),
-          h('div', { style: { padding: '14px 18px', fontSize: 13, color: T.mutedInk, lineHeight: 1.7 } }, children),
+          h('div', { style: { padding: '14px 18px', fontSize: 13, color: T.ink, lineHeight: 1.7 } }, children),
           h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: `1px solid ${T.line}`, background: T.panel } }, [
             h(Button, { key: 'cancel', onClick: onCancel, disabled: busy }, h('span', { className: 'df-tap' }, t('cancel'))),
             h(Button, {
@@ -844,14 +877,14 @@ window.__ModuleLoader__.load({
               onClick: onConfirm,
               style: confirmTone === 'danger'
                 ? { background: T.danger, borderColor: T.danger, color: '#fff' }
-                : { background: T.info, borderColor: T.info, color: '#fff' },
+                : { background: T.accent, borderColor: T.accent, color: '#fff' },
             }, h('span', { className: 'df-tap' }, confirmLabel)),
           ]),
         ]),
       ])
     }
 
-    function AutonomySection({ project, t, onSaved }) {
+    function AutonomySection({ project, t, onSaved, onModal }) {
       // `savedLevel` is what the backend stored; `level` is the pending choice.
       // Clicking a segment changes ONLY the pending value + explainer card; the
       // badge keeps showing the saved level until Save commits (P4-1b).
@@ -878,13 +911,27 @@ window.__ModuleLoader__.load({
         if (next === 'L2' && level !== 'L2') { setL2Confirm(true); return }
         setLevel(next)
       }
-      const confirmL2 = () => { setL2Confirm(false); setLevel('L2') }
+      // The L2 gate commits immediately on confirmation: cancelling leaves the
+      // stored level and badge untouched, and the badge follows the read-back.
+      const confirmL2 = () => { setL2Confirm(false); setLevel('L2'); return save('L2') }
+      // Render the confirm dialog at the page root: inside the transformed drawer
+      // a fixed overlay would be positioned relative to the drawer, not the page.
+      useEffect(() => {
+        if (!onModal) return undefined
+        if (!l2Confirm) { onModal(null); return undefined }
+        onModal(h(Modal, {
+          key: 'l2m', title: t('l2Title'), confirmLabel: t('enableL2'), busy: false, t,
+          onCancel: () => setL2Confirm(false), onConfirm: confirmL2,
+        }, t('l2Body')))
+        return () => onModal(null)
+      }, [l2Confirm, level, autoStart, autoApprove, saving, message, error, onModal, t])
 
-      const save = async () => {
+      const save = async (overrideLevel) => {
+        const nextLevel = overrideLevel || level
         setSaving(true); setError(''); setMessage('')
         try {
           const data = await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, {
-            autonomy: level, autoStart, autoApprove,
+            autonomy: nextLevel, autoStart, autoApprove,
           })
           // Silent-normalisation read-back: adopt the ACTUAL stored values from
           // the backend, never the form's originals (P4-3). After save the badge
@@ -975,12 +1022,6 @@ window.__ModuleLoader__.load({
           error ? h('span', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`) : null,
         ]),
       ]
-      if (l2Confirm) {
-        children.push(h(Modal, {
-          key: 'l2m', title: t('l2Title'), confirmLabel: t('enableL2'), busy: false, t,
-          onCancel: () => setL2Confirm(false), onConfirm: confirmL2,
-        }, t('l2Body')))
-      }
       return h('div', { key: 'autonomy', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 2 } }, children)
     }
 
@@ -997,7 +1038,9 @@ window.__ModuleLoader__.load({
         } catch (err) { setError(err.message) } finally { setSaving(false) }
       }
       const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
-      return h('div', { key: 'pause', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } }, [
+      // Rendered inside the 02 autonomy block: no separate top border, so it
+      // reads as part of that block rather than a fifth independent section.
+      return h('div', { key: 'pause', style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 } }, [
         h('div', { key: 'sw', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
           h('button', {
             key: 't', type: 'button', role: 'switch', 'aria-checked': paused ? 'true' : 'false',
@@ -1192,7 +1235,7 @@ window.__ModuleLoader__.load({
           h('div', { key: 'st', style: small }, ghcli === null
             ? t('ghChecking')
             : (ghcli.loggedIn
-              ? `${t('ghComputerLoggedIn')}${ghcli.login ? ` · ${ghcli.login}` : ''}`
+              ? (ghcli.login ? `${t('ghComputerLoggedIn')} · ${ghcli.login}` : t('srcComputer'))
               : t('ghComputerLoggedOut'))),
           ghcli !== null && !ghcli.loggedIn ? h('div', { key: 'guide', style: { ...small, color: T.warningInk } }, t('ghComputerLoginGuide')) : null,
         ]),
@@ -1286,7 +1329,7 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    function DangerSection({ project, t, onDeleted }) {
+    function DangerSection({ project, t, onDeleted, onModal }) {
       const [confirm, setConfirm] = useState(false)
       const [typed, setTyped] = useState('')
       const [force, setForce] = useState(false)
@@ -1302,15 +1345,11 @@ window.__ModuleLoader__.load({
           setConfirm(false); onDeleted()
         } catch (err) { setError(err.message) } finally { setBusy(false) }
       }
-      return h('div', { key: 'danger', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12 } }, [
-        h('div', { key: 'row', style: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' } }, [
-          h('span', { key: 'hint', style: { ...small, maxWidth: 320 } }, t('deleteHint')),
-          h('span', { key: 'btn', className: 'df-tap' }, h(Button, {
-            disabled: busy, onClick: () => { setTyped(''); setForce(false); setError(''); setConfirm(true) },
-            style: { borderColor: T.danger, color: T.dangerInk },
-          }, t('deleteProject'))),
-        ]),
-        confirm ? h(Modal, {
+      // Keep the dialog in the page root so fixed positioning is viewport-relative.
+      useEffect(() => {
+        if (!onModal) return undefined
+        if (!confirm) { onModal(null); return undefined }
+        onModal(h(Modal, {
           key: 'delm', title: t('delTitle'), tone: 'danger', confirmLabel: t('delConfirm'), confirmTone: 'danger', busy, t,
           onCancel: () => setConfirm(false), onConfirm: () => void doDelete(),
         }, [
@@ -1321,7 +1360,7 @@ window.__ModuleLoader__.load({
             style: { padding: '7px 9px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' },
             onChange: (e) => setTyped(e.target.value),
           }),
-          h('label', { key: 'force', style: { display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 12, cursor: 'pointer' } }, [
+          h('label', { key: 'force', style: { display: 'flex', gap: 9, alignItems: 'flex-start', marginTop: 12, padding: '10px 11px', border: `1px solid ${T.danger}`, borderRadius: T.radiusSm, background: T.dangerWash, cursor: 'pointer' } }, [
             h('input', { key: 'cb', type: 'checkbox', checked: force, onChange: (e) => setForce(e.target.checked), style: { marginTop: 3 } }),
             h('span', { key: 'ft' }, [
               h('b', { key: 'h', style: { color: T.dangerInk } }, t('forceHead')),
@@ -1329,7 +1368,17 @@ window.__ModuleLoader__.load({
             ]),
           ]),
           error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk, marginTop: 10 } }, `${t('errorPrefix')}${error}`) : null,
-        ]) : null,
+        ]))
+        return () => onModal(null)
+      }, [confirm, typed, force, error, busy, onModal, t, project.name])
+      return h('div', { key: 'danger', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12 } }, [
+        h('div', { key: 'row', style: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' } }, [
+          h('span', { key: 'hint', style: { ...small, maxWidth: 320 } }, t('deleteHint')),
+          h('span', { key: 'btn', className: 'df-tap' }, h(Button, {
+            disabled: busy, onClick: () => { setTyped(''); setForce(false); setError(''); setConfirm(true) },
+            style: { borderColor: T.danger, color: T.dangerInk },
+          }, t('deleteProject'))),
+        ]),
       ])
     }
 
@@ -1343,12 +1392,21 @@ window.__ModuleLoader__.load({
       'repo-key': 'srcThisRepo',
       none: 'srcNone',
     }
+    // Creation-time detection notices, stored as codes (never free text) so
+    // both dictionaries can localise them.
+    const BIND_REASON_KEY = {
+      'no-origin': 'bindNoOrigin',
+      'not-github': 'bindNotGithub',
+      'not-git-repo': 'bindNotGit',
+      'ambiguous-origin': 'bindAmbiguous',
+      'invalid-origin-url': 'bindInvalidUrl',
+    }
 
     // P4-github · project GitHub identity card (Design §1–§5). Answers four
     // questions: where this repo is linked, who it currently uses, whether that
     // works, and what to do if not. All copy is plain words (PGH-13); the token
     // itself is never fetched/echoed — identityCardFor strips it Host-side.
-    function IdentityCard({ project, t, onChanged }) {
+    function IdentityCard({ project, t, onChanged, onOpenGlobalGithub }) {
       const [card, setCard] = useState(null)
       const [loading, setLoading] = useState(true)
       const [error, setError] = useState('')
@@ -1356,19 +1414,18 @@ window.__ModuleLoader__.load({
       const [permReason, setPermReason] = useState('')
       const [checking, setChecking] = useState(false)
       const [expanded, setExpanded] = useState(false)
-      const [dialog, setDialog] = useState('') // '' | 'add' | 'connect'
+      const [dialog, setDialog] = useState('') // '' | 'add'
       const [busy, setBusy] = useState(false)
+      const [repoInput, setRepoInput] = useState('')
+      const [bindingBusy, setBindingBusy] = useState(false)
+      const [bindingError, setBindingError] = useState('')
+      const [bindingMessage, setBindingMessage] = useState('')
 
       // Add-account dialog state. The scope switch exists ONLY in this dialog and
       // ONLY for a user-supplied credential — never for connected/CLI tiers (PGH-18).
       const [credential, setCredential] = useState('')
       const [scope, setScope] = useState('') // '' until the user explicitly picks; no silent default
       const [confirmShared, setConfirmShared] = useState(false)
-
-      // Connect dialog state (device flow via the in-memory bridge).
-      const [sessionId, setSessionId] = useState('')
-      const [step, setStep] = useState('') // 'open' | 'code' | 'connecting' | 'done'
-      const [notice, setNotice] = useState(null) // { url, code, message }
 
       const base = `/identity/${encodeURIComponent(project.id)}`
       const load = useCallback(async () => {
@@ -1381,41 +1438,6 @@ window.__ModuleLoader__.load({
         } catch (err) { setError(err.message) } finally { setLoading(false) }
       }, [base])
       useEffect(() => { void load() }, [load])
-
-      // Poll a connect session while it is running. The browser cannot receive a
-      // server push, so notices/prompts are read from the bridge each tick.
-      useEffect(() => {
-        if (dialog !== 'connect' || sessionId === '') return undefined
-        let active = true
-        let timer = null
-        const poll = async () => {
-          try {
-            const view = await callApi('GET', `/auth/connect/${encodeURIComponent(sessionId)}`)
-            if (!active) return
-            if (view.notices && view.notices.length) {
-              const last = view.notices[view.notices.length - 1]
-              setNotice(last)
-              if (last.code) setStep('code'); else if (last.url) setStep('open')
-            }
-            if (view.status === 'running' && view.prompt && view.prompt.options) {
-              // The flow asks for one "I'm done / cancel" acknowledgement.
-              setStep('connecting')
-              setStep('code')
-              setNotice((prev) => prev) // keep URL+code visible next to the prompt
-              setPendingPrompt(true)
-            } else if (view.status === 'running') {
-              setPendingPrompt(false)
-            }
-            if (view.status === 'authorized') { setStep('done'); setPendingPrompt(false); await load(); if (typeof onChanged === 'function') onChanged() }
-            if (view.status === 'failed' || view.status === 'cancelled') { setError(view.error || t('ghPermBad')); setPendingPrompt(false) }
-            if (view.status === 'running' || view.status === 'pending') timer = setTimeout(poll, 2000)
-          } catch (err) { if (active) setError(err.message) }
-        }
-        void poll()
-        return () => { active = false; if (timer) clearTimeout(timer) }
-      }, [dialog, sessionId, load, onChanged, t])
-
-      const [pendingPrompt, setPendingPrompt] = useState(false)
 
       const checkPermission = async () => {
         setChecking(true); setPermReason(''); setError('')
@@ -1438,28 +1460,28 @@ window.__ModuleLoader__.load({
         } catch (err) { setError(err.message) } finally { setBusy(false) }
       }
 
-      const beginConnect = async () => {
-        setBusy(true); setError(''); setNotice(null); setPendingPrompt(false)
-        try {
-          const result = await callApi('POST', '/auth/connect/begin', {})
-          setSessionId(result.sessionId); setStep('open')
-        } catch (err) { setError(err.message) } finally { setBusy(false) }
-      }
-
-      const answerConnect = async (value) => {
-        setBusy(true); setError('')
-        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/answer`, { value }); setPendingPrompt(false); setStep('connecting') }
-        catch (err) { setError(err.message) } finally { setBusy(false) }
-      }
-
-      const cancelConnect = async () => {
-        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/cancel`, {}) } catch { /* best effort */ }
-        setDialog(''); setSessionId(''); setPendingPrompt(false)
-      }
-
       const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
       const id = card?.identity || {}
       const binding = card?.binding || {}
+      // Manual binding state follows the read-back, never the pending input.
+      useEffect(() => {
+        setRepoInput(typeof binding.issueRepo === 'string' ? binding.issueRepo : '')
+        setBindingError(''); setBindingMessage('')
+      }, [binding.issueRepo])
+      const saveBinding = async () => {
+        const value = repoInput.trim()
+        if (value !== '' && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) {
+          setBindingError(t('ghRepoBindInvalid')); setBindingMessage(''); return
+        }
+        setBindingBusy(true); setBindingError(''); setBindingMessage('')
+        try {
+          // Intake-only shape: never mix with autonomy/preparation PATCHes.
+          await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, { issueRepo: value === '' ? null : value })
+          setBindingMessage(t('saved'))
+          await load()
+          if (typeof onChanged === 'function') onChanged()
+        } catch (err) { setBindingError(err.message) } finally { setBindingBusy(false) }
+      }
       const sourceLabel = id.source && SRC_LABEL[id.source] ? t(SRC_LABEL[id.source]) : t('srcNone')
       const pathText = (v) => {
         if (!v) return '—'
@@ -1479,11 +1501,33 @@ window.__ModuleLoader__.load({
               ((binding.rootPath || '').length > 46 || (binding.issueRepo || '').length > 46)
                 ? h('button', { key: 'more', type: 'button', onClick: () => setExpanded(!expanded), style: { alignSelf: 'flex-start', marginTop: 3, border: 'none', background: 'transparent', color: T.accent, fontSize: 11, cursor: 'pointer', padding: '4px 0' } }, t('ghExpandPath'))
                 : null,
+              !binding.bound && binding.reason && BIND_REASON_KEY[binding.reason]
+                ? h('div', { key: 'why', style: { ...small, color: T.warningInk, marginTop: 4 } }, t(BIND_REASON_KEY[binding.reason]))
+                : null,
+              h('div', { key: 'edit', style: { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginTop: 9 } }, [
+                h('label', { key: 'lab', style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: T.mutedInk, flex: '1 1 220px' } }, [
+                  t('ghRepoBindLabel'),
+                  h('input', {
+                    key: 'input', value: repoInput, spellCheck: false, placeholder: 'owner/repo',
+                    onChange: (event) => setRepoInput(event.target.value),
+                    style: { padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, boxSizing: 'border-box', width: '100%' },
+                  }),
+                ]),
+                h('span', { key: 'save', className: 'df-tap' }, h(Button, {
+                  disabled: bindingBusy, onClick: () => void saveBinding(),
+                  style: { background: T.accent, borderColor: T.accent, color: '#fff' },
+                }, t('ghRepoBindSave'))),
+              ]),
+              h('div', { key: 'hint', style: { ...small, fontSize: 11, marginTop: 4 } }, t('ghRepoBindHint')),
+              bindingError ? h('div', { key: 'berr', style: { ...small, color: T.dangerInk, marginTop: 4, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${bindingError}`) : null,
+              bindingMessage ? h('div', { key: 'bok', style: { ...small, color: T.success, marginTop: 4 } }, bindingMessage) : null,
             ]),
             // ② current identity — account + source + permission light
             h('div', { key: 'who', style: { display: 'flex', flexDirection: 'column', gap: 5, paddingTop: 10 } }, [
               h('div', { key: 'u', style: { fontSize: 13, color: T.ink, fontWeight: 600 } },
-                id.connected ? t('ghNowUsing', { account: id.login || t('ghUnknownAccount') }) : t('srcNone')),
+                // A connected source is never "account unknown": when the login
+                // cannot be resolved, fall back to the readable source label.
+                id.connected ? t('ghNowUsing', { account: id.login || t(SRC_LABEL[id.source] || 'srcNone') }) : t('srcNone')),
               id.connected ? h('div', { key: 'f', style: small }, [
                 t('ghFrom', { source: sourceLabel }),
                 id.globalShared ? h('span', { key: 'sh', style: { marginLeft: 8, color: T.accent, background: T.accentWash, borderRadius: 5, padding: '1px 6px', fontSize: 10.5 } }, t('ghSharedTag')) : null,
@@ -1508,7 +1552,11 @@ window.__ModuleLoader__.load({
             ]),
             // ③ actions + ④ not-connected guidance
             h('div', { key: 'acts', style: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 10, borderTop: `1px solid ${T.line}` } }, [
-              h('span', { key: 'c', className: 'df-tap' }, h(Button, { onClick: () => void beginConnect(), disabled: busy }, t('ghConnect'))),
+              h('span', { key: 'c', className: 'df-tap' }, h(Button, {
+                // Connection is global; jump to the global GitHub block instead of
+                // starting an unreachable device flow from this project card.
+                onClick: () => { if (typeof onOpenGlobalGithub === 'function') onOpenGlobalGithub() },
+              }, `${t('scopeGlobal')} · ${t('groupGithub')}`)),
               h('span', { key: 'a', className: 'df-tap' }, h(Button, { onClick: openAdd, disabled: busy }, t('ghAddAccount'))),
             ]),
             !id.connected ? h('div', { key: 'guide', style: { ...small, marginTop: 8, background: T.panel, borderRadius: T.radiusSm, padding: '7px 9px' } }, t('ghGuideNone')) : null,
@@ -1547,24 +1595,6 @@ window.__ModuleLoader__.load({
           }, h('p', { style: { margin: 0 } }, t('ghScopeHint'))) : null,
         ]) : null,
 
-        // Connect modal — URL + code steps from the bridge, keep-page-open note.
-        dialog === 'connect' ? h(Modal, {
-          key: 'connm', title: t('ghConnect'), confirmLabel: step === 'done' ? t('closeSettings') : t('cancel'), confirmTone: step === 'done' ? undefined : 'danger', busy, t,
-          onCancel: () => void cancelConnect(), onConfirm: () => { if (step === 'done') { setDialog(''); setSessionId('') } else void cancelConnect() },
-        }, [
-          h('div', { key: 'keep', style: { ...small, color: T.warningInk, marginBottom: 10 } }, t('ghKeepOpen')),
-          h('ol', { key: 'steps', style: { margin: 0, paddingLeft: 20, ...small } }, [
-            h('li', { key: 's1', style: step ? { color: T.ink } : {} }, t('ghStepOpen')),
-            h('li', { key: 's2', style: step === 'code' || step === 'connecting' || step === 'done' ? { color: T.ink } : {} }, t('ghStepCode')),
-            h('li', { key: 's3', style: step === 'connecting' || step === 'done' ? { color: T.ink } : {} }, t('ghStepConnecting')),
-          ]),
-          notice?.url ? h('div', { key: 'url', style: { marginTop: 10, fontSize: 12, wordBreak: 'break-all' } },
-            h('a', { href: notice.url, target: '_blank', rel: 'noreferrer', style: { color: T.accent } }, t('ghStepOpen'))) : null,
-          notice?.code ? h('div', { key: 'code', style: { marginTop: 8, fontSize: 20, fontWeight: 700, letterSpacing: 2, fontFamily: 'ui-monospace, monospace', color: T.ink } }, notice.code) : null,
-          pendingPrompt ? h('span', { key: 'go', className: 'df-tap' }, h(Button, { onClick: () => void answerConnect('done'), disabled: busy }, t('ghStepDone'))) : null,
-          step === 'done' ? h('div', { key: 'done', style: { ...small, color: T.greenInk, marginTop: 8 } }, t('ghStepDone')) : null,
-          error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line', marginTop: 8 } }, `${t('errorPrefix')}${error}`) : null,
-        ]) : null,
       ])
     }
 
@@ -1644,7 +1674,9 @@ window.__ModuleLoader__.load({
         // Snap belongs only to the narrow 84vw columns below: on a wide viewport
         // inside a narrow host container, mandatory snap without snap-align would
         // make the middle columns unreachable (Review BLOCK-1).
-        '[data-dsh-factory-p4] .df-board{display:flex;gap:8px;align-items:flex-start;overflow-x:auto}',
+        // Page-as-whole-document: the board owns real vertical space even when
+        // a project has no cards, so the five columns keep their stage shape.
+        '[data-dsh-factory-p4] .df-board{display:flex;gap:8px;align-items:stretch;overflow-x:auto;min-height:440px}',
         // Column sizing lives in CSS so the ≤760px rule can override it; inline
         // flex/minWidth would win over the media query at 390px.
         '[data-dsh-factory-p4] .df-col{flex:1 1 0;min-width:140px}',
@@ -1652,6 +1684,32 @@ window.__ModuleLoader__.load({
         '[data-dsh-factory-p4] .df-stage{display:none}',
         // Keep the desktop gap here so the ≤520px override can win over inline styles.
         '[data-dsh-factory-p4] .df-stats{gap:8px}',
+        // Project navigation (A sidebar / B tabs) and its product-level switch.
+        // In-page header (the plugin page is treated as a whole document).
+        '[data-dsh-factory-p4] .df-topbar{position:sticky;top:0;z-index:30;display:flex;flex:0 0 auto;align-items:center;gap:12px;height:56px;min-height:56px;margin:-8px -8px 0;padding:0 12px;border-bottom:1px solid var(--dsw-alias-border,#e3e6ea);background:var(--dsw-alias-bg,#fff)}',
+        '[data-dsh-factory-p4] .df-brand{display:flex;align-items:center;gap:9px;font-weight:650;white-space:nowrap}',
+        '[data-dsh-factory-p4] .df-brand-mark{width:24px;height:24px;border-radius:6px;background:var(--df-accent,#4f46d5);color:#fff;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}',
+        '[data-dsh-factory-p4] .df-top-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}',
+        '[data-dsh-factory-p4] .df-shell{display:flex;gap:12px;align-items:stretch;align-self:stretch;min-height:calc(100vh - 88px);min-width:0}',
+        '[data-dsh-factory-p4] .df-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}',
+        '[data-dsh-factory-p4] .df-rail{box-sizing:border-box;width:252px;flex:0 0 252px;align-self:stretch;background:var(--dsw-alias-bg,#fff);border:1px solid var(--dsw-alias-border,#e3e6ea);border-radius:var(--df-radius,11px);padding:8px;display:flex;flex-direction:column;gap:4px;overflow:auto}',
+        '[data-dsh-factory-p4] .df-rail-scrim{display:none}',
+        '[data-dsh-factory-p4] .df-viewtoggle{display:inline-flex;align-items:center;gap:5px}',
+        '[data-dsh-factory-p4] .df-viewtoggle button{position:relative;border:1px solid var(--dsw-alias-border,#e3e6ea);border-bottom:2px solid transparent;background:var(--dsw-alias-bg,#fff);color:var(--df-muted-ink,#596273);border-radius:var(--df-radius-sm,7px);padding:0 9px;font-size:12px;font-weight:600;height:32px;min-height:32px;cursor:pointer}',
+        // 44px hit area without inflating the visual segment to 44px.
+        '[data-dsh-factory-p4] .df-viewtoggle button::after{content:"";position:absolute;inset:-6px 0}',
+        '[data-dsh-factory-p4] .df-viewtoggle button.on{background:var(--df-accent-wash,#eef0ff);color:var(--df-accent-ink,#3b33b8);border-color:var(--df-accent,#4f46d5);border-bottom-color:var(--df-accent,#4f46d5)}',
+        '[data-dsh-factory-p4] .df-rail-open{display:none}',
+        '[data-dsh-factory-p4] .df-bind-badge{display:inline-flex;align-items:center;gap:6px;min-height:28px;cursor:pointer}',
+        '[data-dsh-factory-p4] .df-modal{border-radius:14px}',
+        '[data-dsh-factory-p4][data-view="tabs"] .df-rail{display:none}',
+        '[data-dsh-factory-p4] .df-tabs{display:none}',
+        '[data-dsh-factory-p4][data-view="tabs"] .df-tabs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin}',
+        // Toast feedback: success/failure are distinguishable and auto-dismissed.
+        '[data-dsh-factory-p4] .df-toast{position:fixed;right:20px;bottom:20px;z-index:70;max-width:min(360px,calc(100vw - 32px));background:#20272f;color:#fff;border-radius:9px;padding:11px 15px;font-size:12.5px;line-height:1.5;box-shadow:0 12px 34px rgba(0,0,0,.25);pointer-events:none;animation:df-toast-in .2s ease-out}',
+        '[data-dsh-factory-p4] .df-toast[data-kind="ok"]{background:#166b4b}',
+        '[data-dsh-factory-p4] .df-toast[data-kind="err"]{background:#9d2f39}',
+        '@keyframes df-toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}',
         '@media (max-width:760px){',
         // The host app-shell locks vertical scroll on narrow screens (its content
         // column is overflow:hidden). Make THIS view's root fill the host's given
@@ -1662,17 +1720,30 @@ window.__ModuleLoader__.load({
         '  [data-dsh-factory-p4]{height:100%;min-height:0;box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}',
         // Keep the board a bounded, self-scrolling region so a tall column can
         // never stretch the whole page again. Horizontal scroll (above) is intact.
-        '  [data-dsh-factory-p4] .df-board{max-height:56vh;overflow-y:auto;scroll-snap-type:x mandatory;scroll-padding-left:12px}',
+        '  [data-dsh-factory-p4] .df-board{min-height:360px;max-height:56vh;overflow-y:auto;scroll-snap-type:x mandatory;scroll-padding-left:12px}',
         '  [data-dsh-factory-p4] .df-col{flex:0 0 84vw;min-width:0;scroll-snap-align:start}',
         '  [data-dsh-factory-p4] .df-stage{display:block;font-size:11px;color:var(--df-muted-ink,#596273);text-align:right}',
         '  [data-dsh-factory-p4] aside{width:100vw!important}',
+        // Narrow sidebar becomes a left drawer; tabs stay a horizontal strip.
+        '  [data-dsh-factory-p4] .df-shell{display:block}',
+        '  [data-dsh-factory-p4] .df-main{width:100%}',
+        '  [data-dsh-factory-p4][data-view="sidebar"] .df-rail{position:fixed;left:0;top:0;bottom:0;z-index:45;box-sizing:border-box;width:min(320px,86vw);max-height:none;border-radius:0 14px 14px 0;transform:translateX(-102%);transition:transform .24s cubic-bezier(.2,.7,.2,1);box-shadow:12px 0 40px rgba(16,22,30,.18)}',
+        '  [data-dsh-factory-p4][data-view="sidebar"] .df-rail.open{transform:translateX(0)}',
+        '  [data-dsh-factory-p4][data-view="sidebar"] .df-rail-scrim{display:block;position:fixed;inset:0;background:rgba(18,24,32,.34);z-index:44;opacity:0;pointer-events:none;transition:opacity .2s}',
+        '  [data-dsh-factory-p4][data-view="sidebar"] .df-rail-scrim.open{opacity:1;pointer-events:auto}',
+        '  [data-dsh-factory-p4][data-view="sidebar"] .df-rail-open{display:inline-flex;min-height:44px;padding:6px 10px;border:1px solid var(--dsw-alias-border,#e3e6ea);border-radius:var(--df-radius-sm,7px);background:var(--dsw-alias-bg,#fff);color:var(--df-accent-ink,#3b33b8);font-size:12px;font-weight:600}',
+        '  [data-dsh-factory-p4] .df-brand-name{display:none}',
+        '  [data-dsh-factory-p4] .df-bind-badge{min-height:44px;padding:6px 12px}',
+        '  [data-dsh-factory-p4] .df-toast{right:20px;left:auto;bottom:calc(20px + env(safe-area-inset-bottom));max-width:min(360px,calc(100vw - 40px))}',
         // aside children: 1 = header (dh), 2 = tabs, 3 = body; the sub-label lives in tabs.
         '  @media (max-width:520px){[data-dsh-factory-p4] aside>div:nth-child(2) span.df-tab-sub{display:none}[data-dsh-factory-p4] .df-stats{gap:6px}}',
         '  [data-dsh-factory-p4] .df-mobar{display:flex;position:sticky;bottom:0;z-index:25;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:var(--dsw-alias-bg, #fff);border-top:1px solid var(--dsw-alias-border, #e3e6ea);box-shadow:0 -4px 16px rgba(20,28,40,.06)}',
         '  [data-dsh-factory-p4] .df-mobar button{flex:1;min-height:44px;text-align:center}',
         '  [data-dsh-factory-p4] button{min-height:44px}',
+        // Visual segment stays 32px; the pseudo-element above carries the hit area.
+        '  [data-dsh-factory-p4] .df-viewtoggle button{height:32px;min-height:32px}',
         '  [data-dsh-factory-p4] .df-hide-sm{display:none}',
-        `  [data-dsh-factory-p4] .df-modal{align-self:flex-end;margin-bottom:0;border-radius:14px 14px 0 0;max-width:100%}`,
+        `  [data-dsh-factory-p4] .df-modal{align-self:flex-end;margin-bottom:0;border-radius:16px 16px 0 0;max-width:100%}`,
         '}',
         '@media (prefers-reduced-motion:reduce){[data-dsh-factory-p4] *{transition:none!important;animation:none!important}}',
       ].join('\n')
@@ -1700,6 +1771,40 @@ window.__ModuleLoader__.load({
       // starts over at 'auto' (state is in memory, not persisted).
       const [scope, setScope] = useState('auto')
       const [openBlock, setOpenBlock] = useState('autonomy')
+      // View form is a product control: sidebar by default, remembered across
+      // reloads in localStorage (no backend field, no schema change).
+      const VIEW_KEY = `${NS}:viewMode`
+      const [viewMode, setViewMode] = useState(() => {
+        try { return localStorage.getItem(VIEW_KEY) === 'tabs' ? 'tabs' : 'sidebar' } catch { return 'sidebar' }
+      })
+      useEffect(() => { try { localStorage.setItem(VIEW_KEY, viewMode) } catch {} }, [viewMode, VIEW_KEY])
+      const [railOpen, setRailOpen] = useState(false)
+      const [showNewProject, setShowNewProject] = useState(false)
+      const [toast, setToast] = useState(null)
+      const drawerBodyRef = useRef(null)
+      // Project-card GitHub actions are global; switch scope and put the first
+      // global group (GitHub connection) at the top of the drawer body.
+      const openGlobalGithub = () => {
+        setScope('global')
+        setDrawerOpen(true)
+        setTimeout(() => { if (drawerBodyRef.current) drawerBodyRef.current.scrollTop = 0 }, 0)
+      }
+      // Header binding badge: jump to this project's identity-card binding input.
+      const openProjectBinding = () => {
+        setScope('project')
+        setDrawerOpen(true)
+        setTimeout(() => { if (drawerBodyRef.current) drawerBodyRef.current.scrollTop = 0 }, 0)
+      }
+      // Dialogs are rendered at the page root so their fixed overlay is not
+      // trapped by the transformed config drawer.
+      const [pageModal, setPageModal] = useState(null)
+      useEffect(() => { if (!drawerOpen) setPageModal(null) }, [drawerOpen])
+      useEffect(() => {
+        if (!toast) return undefined
+        const timer = setTimeout(() => setToast(null), 2600)
+        return () => clearTimeout(timer)
+      }, [toast])
+      const showToast = useCallback((msg, kind = 'ok') => setToast({ msg, kind, id: Date.now() }), [])
 
       const load = useCallback(async () => {
         setBusy(true)
@@ -1731,6 +1836,14 @@ window.__ModuleLoader__.load({
       }, [projects, projectId])
 
       const project = projects.find((entry) => entry.id === projectId) || null
+      // Per-project card counts come from the data already loaded for the board;
+      // no API/schema change. Only cards on active boards are counted.
+      const boardProject = new Map(boards.map((entry) => [entry.id, entry.projectId]))
+      const cardCounts = {}
+      for (const card of cards) {
+        const pid = boardProject.get(card.boardId)
+        if (pid) cardCounts[pid] = (cardCounts[pid] || 0) + 1
+      }
       // 'auto' resolves from the CURRENT project; an explicit tab click still wins.
       const activeScope = scope === 'auto' ? (project ? 'project' : 'global') : scope
       // Keep the drawer heading consistent with the body (noProjects in project scope).
@@ -1746,15 +1859,14 @@ window.__ModuleLoader__.load({
 
       const run = async (fn) => {
         setBusy(true); setError('')
-        try { await fn(); await load() } catch (err) { setError(err.message) } finally { setBusy(false) }
+        try { await fn(); await load() } catch (err) { setError(err.message); showToast(`${t('errorPrefix')}${err.message}`, 'err') } finally { setBusy(false) }
       }
 
       const renderCard = (card) => h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
         h(Card, { key: 'card', card }),
-        h(CardActions, { key: 'actions', card, run, t, busy }),
+        h(CardActions, { key: 'actions', card, run, t, busy, onToast: showToast }),
       ])
 
-      const selectStyle = { padding: '6px 8px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13 }
       const children = []
 
       // One block of the project settings accordion (single-open). Mounted only
@@ -1776,11 +1888,80 @@ window.__ModuleLoader__.load({
         openBlock === key ? h('div', { key: 'b', style: { borderTop: `1px solid ${T.line}`, padding: 14 } }, body) : null,
       ])
 
+      // Project navigation: A sidebar / B top tabs, one shared projectId.
+      // Card counts are derived from the already-loaded boards+cards; no API change.
+      const initials = (name) => String(name || '').split('/').pop().slice(0, 2).toUpperCase()
+      const levelOf = (p) => LEVELS.includes(p?.autonomy) ? p.autonomy : 'L0'
+      const levelTone = (lv) => lv === 'L2' ? [T.orangeWash, T.orange] : lv === 'L1' ? [T.blueWash, T.blue] : [T.grayWash, T.gray]
+      const pickProject = (p) => { setProjectId(p.id); setRailOpen(false); showToast(t('toastSwitched', { name: p.name }), 'ok') }
+      const railContent = h('div', { key: 'railInner', style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
+        h('div', { key: 'railHead', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px 10px' } }, [
+          h('span', { key: 'h', style: { fontSize: 12, fontWeight: 700, color: T.mutedInk } }, t('project')),
+          h('button', { key: 'add', type: 'button', title: t('create'), onClick: () => { setShowNewProject(true); setRailOpen(false) },
+            style: { minWidth: 32, minHeight: 32, border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, cursor: 'pointer' } }, '+'),
+        ]),
+        projects.length === 0
+          ? h('div', { key: 'empty', style: { fontSize: 12, color: T.mutedInk, padding: 8 } }, t('noProjects'))
+          : projects.map((p) => {
+              const lv = levelOf(p)
+              const [wash, ink] = levelTone(lv)
+              return h('button', {
+                key: p.id, type: 'button', className: `df-proj-item${p.id === projectId ? ' active' : ''}`,
+                onClick: () => pickProject(p),
+                style: { display: 'flex', gap: 10, alignItems: 'flex-start', width: '100%', textAlign: 'left', border: `1px solid ${p.id === projectId ? '#dcd8ff' : 'transparent'}`, borderRadius: 9, background: p.id === projectId ? T.accentWash : 'transparent', padding: '9px 8px', cursor: 'pointer', color: T.ink },
+              }, [
+                h('span', { key: 'ava', style: { width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center', flex: '0 0 auto', background: p.id === projectId ? T.accent : T.panel, color: p.id === projectId ? '#fff' : T.mutedInk, fontSize: 11, fontWeight: 800 } }, initials(p.name)),
+                h('span', { key: 'meta', style: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 } }, [
+                  h('span', { key: 'name', style: { fontSize: 12, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, p.name),
+                  h('span', { key: 'sub', style: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' } }, [
+                    h('span', { key: 'lv', style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: wash, color: ink } }, lv),
+                    h('span', { key: 'cnt', style: { fontSize: 10.5, color: T.mutedInk } }, `${cardCounts[p.id] || 0} ${t('statCards')}`),
+                    p.paused === true ? h('span', { key: 'pz', style: { fontSize: 10, fontWeight: 700, color: T.orangeInk } }, t('badgePaused')) : null,
+                  ].filter(Boolean)),
+                ]),
+              ])
+            })
+      ])
+      const tabsContent = projects.length === 0 ? null : h('div', { key: 'tabs', className: 'df-tabs' }, projects.map((p) => {
+        const lv = levelOf(p)
+        const [wash, ink] = levelTone(lv)
+        return h('button', {
+          key: p.id, type: 'button', className: `df-proj-tab${p.id === projectId ? ' active' : ''}`,
+          onClick: () => pickProject(p),
+          style: { display: 'inline-flex', gap: 8, alignItems: 'center', flex: '0 0 auto', padding: '8px 12px', border: `1px solid ${p.id === projectId ? T.accent : T.line}`, borderRadius: T.radiusSm, background: p.id === projectId ? T.accentWash : T.card, color: p.id === projectId ? T.accentInk : T.ink, fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+        }, [
+          h('span', { key: 'lv', style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: wash, color: ink } }, lv),
+          h('span', { key: 'n', style: { whiteSpace: 'nowrap' } }, p.name),
+          h('span', { key: 'c', style: { fontSize: 10.5, color: T.mutedInk } }, `${cardCounts[p.id] || 0} ${t('statCards')}`),
+          p.paused === true ? h('span', { key: 'pz', style: { fontSize: 10, color: T.orangeInk } }, t('badgePaused')) : null,
+        ].filter(Boolean))
+      }))
+
       // Shared page shell: every branch (empty / no-board / full) gets the config
       // drawer, its scrim and the mobile action bar. Keeps the board the first-class
       // citizen while config lives off-canvas (P4-0).
-      const renderPage = () => h('div', { 'data-dsh-factory-p4': '1', style: { display: 'flex', flexDirection: 'column', gap: 16, padding: 8, position: 'relative' } }, [
-        h('div', { key: 'main', style: { display: 'flex', flexDirection: 'column', gap: 12 } }, children),
+      const renderPage = () => h('div', { 'data-dsh-factory-p4': '1', 'data-view': viewMode, style: { display: 'flex', flexDirection: 'column', gap: 16, padding: 8, position: 'relative' } }, [
+        h('header', { key: 'topbar', className: 'df-topbar' }, [
+          h('div', { key: 'brand', className: 'df-brand' }, [
+            h('span', { key: 'mark', className: 'df-brand-mark', dangerouslySetInnerHTML: { __html: navIconSvg(20) } }),
+            h('span', { key: 'name', className: 'df-brand-name' }, `dsh-factory / ${t('navLabel')}`),
+          ]),
+          h('div', { key: 'actions', className: 'df-top-actions' }, [
+            h(EngineBar, { key: 'engine', t, engine, onChanged: () => void load() }),
+            h('span', { key: 'cfg', className: 'df-tap' }, h(Button, {
+              onClick: () => { setScope('auto'); setDrawerOpen(true) },
+              style: { background: T.accent, borderColor: T.accent, color: '#fff' },
+            }, t('mobileSettings'))),
+          ]),
+        ]),
+        h('div', { key: 'shell', className: 'df-shell' }, [
+          h('div', { key: 'railScrim', className: `df-rail-scrim${railOpen ? ' open' : ''}`, onClick: () => setRailOpen(false) }),
+          h('nav', { key: 'rail', className: `df-rail${railOpen ? ' open' : ''}`, 'aria-label': t('project') }, railContent),
+          h('div', { key: 'main', className: 'df-main', style: { display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minWidth: 0 } }, [
+            tabsContent,
+            ...children,
+          ]),
+        ]),
         // Scrim + right-side config drawer.
         drawerOpen ? h('div', {
           key: 'scrim', onClick: () => setDrawerOpen(false),
@@ -1810,23 +1991,23 @@ window.__ModuleLoader__.load({
                 fontSize: 13, fontWeight: 650, padding: '10px 16px', borderBottom: activeScope === 'global' ? `2px solid ${T.accent}` : '2px solid transparent', minHeight: 44 },
             }, [h('span', { key: 't' }, t('scopeGlobal')), h('span', { key: 's', className: 'df-tab-sub', style: { fontSize: 11, fontWeight: 400, color: T.mutedInk } }, t('scopeGlobalSub'))]),
           ]),
-          h('div', { key: 'body', style: { overflow: 'auto', padding: '16px 16px 48px', flex: 1 } },
+          h('div', { key: 'body', ref: drawerBodyRef, className: 'df-drawer-body', style: { overflow: 'auto', padding: '16px 16px 48px', flex: 1 } },
             activeScope === 'global'
               ? h('div', { key: 'gp' }, [
                   h('div', { key: 'note', style: { fontSize: 12, color: T.mutedInk, background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '10px 12px', marginBottom: 12, lineHeight: 1.6 } }, t('globalNote')),
                   // Design §3.5: three lightweight groups, no new fold state.
                   h('div', { key: 'gt1', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '12px 0 8px' } }, t('groupGithub')),
-                  h(AppIdSetting, { key: 'appid', t, settings, onSaved: () => void load() }),
+                  h(AppIdSetting, { key: 'appid', t, settings, onSaved: () => { void load(); showToast(t('saved'), 'ok') } }),
                   // Global account management — OAuth connect/reconnect/disconnect
                   // + gh CLI status, all machine-level (Design §7, PGH-19~21).
                   h(AccountManager, { key: 'acctmgr', t, onChanged: () => void load() }),
                   h('div', { key: 'gt2', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '16px 0 8px' } }, t('groupPaths')),
                   h(WorktreesRootSetting, { key: 'wr', t }),
                   h('div', { key: 'gc', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: 12, marginTop: 12 } },
-                    h(GlobalCapSection, { key: 'gcap', t, settings, onSaved: () => void load() })),
+                    h(GlobalCapSection, { key: 'gcap', t, settings, onSaved: () => { void load(); showToast(t('saved'), 'ok') } })),
                   h('div', { key: 'gt3', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '16px 0 8px' } }, t('groupEngine')),
                   h('div', { key: 'ge', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: 12 } }, [
-                    h(EngineBar, { key: 'egate', t, engine, onChanged: () => void load() }),
+                    h(EngineBar, { key: 'egate', t, engine, onChanged: () => { void load(); showToast(t('saved'), 'ok') } }),
                     h('div', { key: 'hint', style: { fontSize: 12, color: T.mutedInk, marginTop: 8 } }, t('engineGateHint')),
                   ]),
                 ])
@@ -1840,20 +2021,22 @@ window.__ModuleLoader__.load({
                       // Identity card FIRST — the prerequisite for "can this repo
                       // work at all" (Design §1), ahead of the settings blocks.
                       h('div', { key: 'idcard', style: { marginBottom: 12, borderRadius: T.radiusLg, boxShadow: T.shadow } },
-                        h(IdentityCard, { key: `${project.id}:identity`, project, t, onChanged: () => void load() })),
-                      block('prep', '01', 'setupTitle', 'setupPurpose', 'info', h(WorktreeSetup, { key: `${project.id}:setup`, project, t, onSaved: () => void load() })),
+                        h(IdentityCard, { key: `${project.id}:identity`, project, t, onChanged: () => void load(), onOpenGlobalGithub: openGlobalGithub })),
+                      block('prep', '01', 'setupTitle', 'setupPurpose', 'info', h(WorktreeSetup, { key: `${project.id}:setup`, project, t, onSaved: () => { void load(); showToast(t('saved'), 'ok') } })),
                       // Design §3.4: autonomy + pause are the same mental model — one block.
                       block('autonomy', '02', 'autoPanelTitle', 'autoPanelPurpose', 'warn', h('div', { key: 'autoAndPause' }, [
-                        h(AutonomySection, { key: `${project.id}:autonomy`, project, t, onSaved: () => void load() }),
-                        h(PauseSection, { key: `${project.id}:pause`, project, t, onSaved: () => void load() }),
+                        h(AutonomySection, { key: `${project.id}:autonomy`, project, t, onModal: setPageModal, onSaved: () => { void load(); showToast(t('saved'), 'ok') } }),
+                        h(PauseSection, { key: `${project.id}:pause`, project, t, onSaved: () => { void load(); showToast(t('saved'), 'ok') } }),
                       ])),
-                      block('conc', '03', 'concTitle', 'concSub', 'info', h(ConcurrencySection, { key: `${project.id}:conc`, project, t, settings, onSaved: () => void load() })),
-                      block('danger', '04', 'dangerTitle', 'dangerSub', 'danger', h(DangerSection, { key: `${project.id}:danger`, project, t, onDeleted: () => { setDrawerOpen(false); setProjectId(''); void load() } })),
+                      block('conc', '03', 'concTitle', 'concSub', 'info', h(ConcurrencySection, { key: `${project.id}:conc`, project, t, settings, onSaved: () => { void load(); showToast(t('saved'), 'ok') } })),
+                      block('danger', '04', 'dangerTitle', 'dangerSub', 'danger', h(DangerSection, { key: `${project.id}:danger`, project, t, onModal: setPageModal, onDeleted: () => { setDrawerOpen(false); setProjectId(''); showToast(t('saved'), 'ok'); void load() } })),
                     ])
                   : h('div', { key: 'pn', style: { fontSize: 13, color: T.mutedInk } }, t('noProjects'))
                 )
           ),
         ]),
+        pageModal,
+        toast ? h('div', { key: 'toast', className: 'df-toast', 'data-kind': toast.kind, role: 'status' }, toast.msg) : null,
         // Mobile action bar: primary actions pinned to the bottom on narrow screens.
         h('div', { key: 'mobar', className: 'df-mobar' }, [
           h(Button, { onClick: () => { setScope('auto'); setDrawerOpen(true) } }, h('span', { className: 'df-tap' }, t('mobileProjectConfig'))),
@@ -1869,6 +2052,7 @@ window.__ModuleLoader__.load({
       const projDefault = settings?.projectDefaultMaxActive
       const projEff = project?.maxActiveSessions > 0 ? project.maxActiveSessions : (projDefault ?? null)
       const slots = projEff !== null && globalEff?.value != null ? Math.min(projEff, globalEff.value) : (projEff ?? globalEff?.value ?? '—')
+      const repoBound = Boolean(project && project.rootPath && project.issueRepo)
       const stat = (key, n, label) => h('div', { key, style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '8px 12px', minWidth: 78 } }, [
         h('div', { key: 'n', style: { fontSize: 20, fontWeight: 700, color: T.ink, lineHeight: 1.2 } }, String(n)),
         h('div', { key: 'l', style: { fontSize: 11, color: T.mutedInk } }, label),
@@ -1876,20 +2060,32 @@ window.__ModuleLoader__.load({
       children.push(h('div', { key: 'viewHead', style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' } }, [
         h('div', { key: 'vt', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
           h('div', { key: 'crumb', style: { fontSize: 11.5, color: T.mutedInk, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `dsh-factory / ${t('navLabel')} / ${project?.name ?? '—'}`),
-          h('div', { key: 'title', style: { fontSize: 20, fontWeight: 650, color: T.ink, letterSpacing: '-.01em' } }, project?.name ?? t('navLabel')),
+          h('div', { key: 'title', style: { fontSize: 22, fontWeight: 650, color: T.ink, letterSpacing: '-.01em' } }, project?.name ?? t('navLabel')),
           // board.name is retained in state/API; hide the system default name so
           // the header doesn't imply a board choice that no longer exists.
           board && board.name && board.name !== 'Default'
             ? h('div', { key: 'bname', style: { fontSize: 11, color: T.mutedInk } }, `${t('board')} · ${board.name}`) : null,
           h('div', { key: 'desc', style: { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 } }, t('viewDesc')),
+          project ? h('button', {
+            key: 'bind', type: 'button', className: 'df-bind-badge', onClick: openProjectBinding,
+            title: repoBound ? String(project.issueRepo) : t('repoNotBound'),
+            style: {
+              alignSelf: 'flex-start', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              border: `1px solid ${repoBound ? T.success : T.warning}`,
+              background: repoBound ? T.greenWash : T.panel,
+              color: repoBound ? T.greenInk : T.warningInk,
+              cursor: 'pointer', padding: '3px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 650,
+            },
+          }, repoBound ? `${t('ghLinked')} · ${project.issueRepo}` : t('repoNotBound')) : null,
         ].filter(Boolean)),
         h('div', { key: 'tools', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
-          h('span', { key: 'engine', className: 'df-hide-sm' }, h(EngineBar, { t, engine, onChanged: () => void load() })),
+          h('button', { key: 'railOpen', type: 'button', className: 'df-rail-open', onClick: () => setRailOpen(true) }, t('project')),
+          h('div', { key: 'view', className: 'df-viewtoggle', role: 'group', 'aria-label': t('viewLabel') }, [
+            h('span', { key: 'lab', style: { fontSize: 11, color: T.mutedInk } }, t('viewLabel')),
+            h('button', { key: 'sidebar', type: 'button', className: viewMode === 'sidebar' ? 'on' : '', onClick: () => setViewMode('sidebar') }, t('viewSidebar')),
+            h('button', { key: 'tabs', type: 'button', className: viewMode === 'tabs' ? 'on' : '', onClick: () => setViewMode('tabs') }, t('viewTabs')),
+          ]),
           h(Button, { key: 'refresh', onClick: () => void load(), disabled: busy }, busy ? t('loading') : t('refresh')),
-          h('span', { key: 'cfg', className: 'df-tap' }, h(Button, {
-            onClick: () => { setScope('auto'); setDrawerOpen(true) },
-            style: { background: T.accent, borderColor: T.accent, color: '#fff' },
-          }, t('mobileSettings'))),
         ]),
       ]))
 
@@ -1897,8 +2093,8 @@ window.__ModuleLoader__.load({
         children.push(h('div', { key: 'error', style: { color: T.dangerInk, fontSize: 13, background: T.panel, border: `1px solid ${T.danger}`, borderRadius: T.radiusSm, padding: '6px 10px', whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`))
       }
 
-      if (projects.length === 0) {
-        children.push(h('div', { key: 'empty', style: { color: T.mutedInk, fontSize: 13 } }, t('noProjects')))
+      if (projects.length === 0 || showNewProject) {
+        if (projects.length === 0) children.push(h('div', { key: 'empty', style: { color: T.mutedInk, fontSize: 13 } }, t('noProjects')))
         children.push(h('div', { key: 'newProject', style: { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', background: T.panel, padding: 10, borderRadius: T.radiusLg } }, [
           h(Field, { key: 'name', label: t('projectName'), value: newProject.name, onChange: (v) => setNewProject({ ...newProject, name: v }) }),
           h(Field, { key: 'root', label: t('rootPath'), value: newProject.rootPath, onChange: (v) => setNewProject({ ...newProject, rootPath: v }), placeholder: '/workspace/my-repo' }),
@@ -1907,20 +2103,12 @@ window.__ModuleLoader__.load({
             onClick: () => void run(async () => {
               await callApi('POST', '/projects', { name: newProject.name, rootPath: newProject.rootPath })
               setNewProject({ name: '', rootPath: '' })
+              setShowNewProject(false)
             }),
           }, t('create')),
         ]))
-        return renderPage()
+        if (projects.length === 0) return renderPage()
       }
-
-      children.push(h('div', { key: 'selectors', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
-        h('span', { key: 'plabel', style: { fontSize: 12, color: T.mutedInk } }, `${t('project')}:`),
-        h('select', {
-          key: 'project', value: projectId,
-          onChange: (event) => setProjectId(event.target.value),
-          style: selectStyle,
-        }, [h('option', { key: '', value: '' }, '—'), ...projects.map((entry) => h('option', { key: entry.id, value: entry.id }, entry.name))]),
-      ]))
 
       if (project && project.warning) {
         children.push(h('div', { key: 'warn', style: { fontSize: 12, color: T.warningInk } }, project.warning))
@@ -1941,6 +2129,7 @@ window.__ModuleLoader__.load({
         h(Button, { key: 'cc', disabled: busy || !newCardTitle || !board, onClick: () => void run(async () => {
           await callApi('POST', '/cards', { boardId: board.id, title: newCardTitle })
           setNewCardTitle('')
+          showToast(t('saved'), 'ok')
         }) }, t('create')),
       ]))
 
@@ -1954,7 +2143,7 @@ window.__ModuleLoader__.load({
           const step = first ? first.getBoundingClientRect().width + 8 : (el.clientWidth || 1)
           setStage(Math.min(COLUMNS.length, Math.max(1, Math.round(el.scrollLeft / step) + 1)))
         },
-        style: { display: 'flex', gap: 8, alignItems: 'flex-start', overflowX: 'auto' } },
+        style: { display: 'flex', gap: 8, alignItems: 'stretch', overflowX: 'auto' } },
         COLUMNS.map((column) => h(Column, {
           key: column.key,
           title: t(column.labelKey),

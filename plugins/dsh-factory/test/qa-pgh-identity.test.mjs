@@ -222,7 +222,12 @@ test('PGH-11: identityView yields the six states with correct sourceType/globalS
     assert.equal('token' in v, false, 'view must NEVER carry the token')
   }
   const card = identityCardFor({ project, decision: mk(IDENTITY_SOURCE.OAUTH, SOURCE_TYPE.OAUTH_APP, true) })
-  assert.deepEqual(card.binding, { rootPath: '/repo/local', issueRepo: 'owner/remote', bound: true })
+  assert.deepEqual(
+    { rootPath: card.binding.rootPath, issueRepo: card.binding.issueRepo, bound: card.binding.bound },
+    { rootPath: '/repo/local', issueRepo: 'owner/remote', bound: true },
+  )
+  assert.equal(Object.hasOwn(card.binding, 'reason'), true, 'binding exposes the detection reason field')
+  assert.equal(card.binding.reason, null, 'explicit issueRepo has no detection reason')
   assert.equal(JSON.stringify(card).includes('secret-tok'), false, 'card JSON has no token value')
   assert.equal(JSON.stringify(card).includes('token"'), false, 'card JSON has no token field')
   assert.equal(JSON.stringify(cases).toLowerCase().includes('github-app'), false)
@@ -293,13 +298,15 @@ test('PGH-18 source guard: scope switch exists ONLY in the add-account modal', (
   // dialog==='add'. ghScopeTitle alone is also used as a validation hint in
   // submitAdd, so it cannot mark the switch; the buttons are the reliable signal.
   const addModalStart = clientSrc.indexOf("dialog === 'add'")
-  const nextDialog = clientSrc.indexOf("dialog === 'connect'", addModalStart)
-  assert.ok(addModalStart > 0 && nextDialog > addModalStart, 'add-account modal boundaries found')
+  // The dead dialog==='connect' block was removed; use the next component as
+  // a stable right boundary for AccountManager's add-account modal.
+  const nextComponent = clientSrc.indexOf('function EngineBar', addModalStart)
+  assert.ok(addModalStart > 0 && nextComponent > addModalStart, 'add-account modal boundaries found')
   for (const key of ['ghScopeAll', 'ghScopeRepo']) {
     const calls = [...clientSrc.matchAll(new RegExp(`t\\('${key}'\\)`, 'g'))].map((m) => m.index)
     assert.equal(calls.length, 1, `${key} switch button rendered exactly once`)
-    assert.ok(calls[0] > addModalStart && calls[0] < nextDialog,
-      `${key} switch (${calls[0]}) must be inside the add-account modal [${addModalStart}, ${nextDialog}]`)
+    assert.ok(calls[0] > addModalStart && calls[0] < nextComponent,
+      `${key} switch (${calls[0]}) must be inside the add-account modal [${addModalStart}, ${nextComponent}]`)
   }
   // No scope switch in the connected / CLI tiers (guarded by the modal boundary above).
   assert.match(clientSrc, /if \(scope === ''\) \{ setError\(t\('ghScopeTitle'\)\); return \}/,
@@ -358,7 +365,7 @@ test('PGH-12: pollDeviceToken honours authorization_pending, slow_down and expir
 test('PGH-13: no jargon tokens in the user-facing zh/en dictionaries', () => {
   // Read the two inline dictionaries out of client.js via a vm, same as parity test.
   let dicts = null
-  const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f }
+  const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f, useRef: (v) => ({ current: v }) }
   const sandbox = {
     window: { __ModuleLoader__: { load: (def) => { sandbox.__def = def } } },
     require: (n) => (n === 'react' ? shim : (() => { throw new Error(n) })()),

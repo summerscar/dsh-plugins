@@ -393,6 +393,13 @@ export function apply(ctx, config = {}) {
         const project = store.getProject(id)
         if (project === undefined || project === null) throw new Error(`项目不存在：${id}`)
         const decision = await resolveIdentity(project)
+        // gh CLI is a local login with no token in the decision; its account
+        // name is resolved read-only by ghCliState (same probe env). Without
+        // this the card knows the source but shows "account unknown".
+        if (decision?.source === 'gh-cli' && decision.login === null) {
+          const login = ghCliState({ env: process.env }).login
+          if (login !== null) decision.login = login
+        }
         sendJson(res, 200, identityCardFor({ project, decision }))
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })

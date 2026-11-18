@@ -215,5 +215,20 @@
   "mobileProjectConfig": "Project config",
   "groupGithub": "GitHub connection",
   "groupPaths": "Paths & concurrency",
-  "groupEngine": "Engine"
+  "groupEngine": "Engine",
+  "viewLabel": "View",
+  "viewSidebar": "Sidebar",
+  "viewTabs": "Tabs",
+  "toastSwitched": "Switched to {name}",
+  "toastTaken": "Card taken over",
+  "ghRepoBindLabel": "GitHub repository (owner/repo)",
+  "ghRepoBindHint": "Detected from origin when the project was created; edit it here, or clear it to unbind.",
+  "ghRepoBindSave": "Save binding",
+  "ghRepoBindInvalid": "Repository must be in owner/repo format",
+  "bindNoOrigin": "No GitHub repository detected: origin is missing.",
+  "bindNotGithub": "No GitHub repository detected: origin is not on github.com.",
+  "bindNotGit": "No GitHub repository detected: the project root is not a git repository.",
+  "bindAmbiguous": "No GitHub repository detected: origin has multiple URLs; enter one manually.",
+  "bindInvalidUrl": "No GitHub repository detected: origin is not a valid GitHub URL.",
+  "repoNotBound": "Not bound"
 }

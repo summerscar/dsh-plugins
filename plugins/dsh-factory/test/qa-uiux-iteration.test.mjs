@@ -10,6 +10,7 @@
  * and injected services; no network, no token, no local machine state.
  */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -19,6 +20,8 @@ import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 
 import { createApi } from '../api.js'
+import { BIND_REASON, detectGithubRepo } from '../git-exec.js'
+import { ghCliState, identityCardFor } from '../github-api.js'
 import { apply } from '../index.js'
 import { emptyState, FactoryStore, SCHEMA_VERSION } from '../store.js'
 
@@ -35,6 +38,7 @@ function reactShim() {
     useState: (value) => [value, () => {}],
     useEffect: () => {},
     useCallback: (fn) => fn,
+    useRef: (v) => ({ current: v }),
   }
 }
 
@@ -76,14 +80,14 @@ function placeholders(value) {
 // 1. Dictionary parity, banned words, proper nouns, contract constants
 // ---------------------------------------------------------------------------
 
-test('AC-1.5: all 213 overlapping keys are byte-equal across inline and locale dictionaries; meta is well-formed', () => {
+test('AC-1.5: all 228 overlapping keys are byte-equal across inline and locale dictionaries; meta is well-formed', () => {
   const inline = inlineDictionaries(source('client.js'))
   for (const lang of ['zh', 'en']) {
     const { meta, ...ui } = localeJson(lang)
     const keys = Object.keys(inline[lang]).sort()
     const uiKeys = Object.keys(ui).sort()
     assert.deepEqual(keys, uiKeys, `${lang}: inline keys != locale UI keys`)
-    assert.equal(keys.length, 213, `${lang}: expected 213 overlapping keys, got ${keys.length}`)
+    assert.equal(keys.length, 228, `${lang}: expected 228 overlapping keys, got ${keys.length}`)
     const diff = keys.filter((key) => inline[lang][key] !== ui[key])
     assert.deepEqual(diff, [], `${lang}: drifted keys: ${diff.join(', ')}`)
     // meta is host-owned: present in the locale file only, never in the
@@ -111,11 +115,12 @@ test('AC-1.5: every key keeps an explicit placeholder contract, mirrored byte-fo
     ghFrom: ['{source}'],
     ghNowUsing: ['{account}'],
     setupPathMissing: ['{path}'],
+    toastSwitched: ['{name}'],
     wtRootResolved: ['{path}'],
   }
   const keys = Object.keys(current.zh).sort()
   assert.deepEqual(keys, Object.keys(current.en).sort(), 'zh/en templates share one key set')
-  assert.equal(keys.length, 213)
+  assert.equal(keys.length, 228)
   for (const lang of ['zh', 'en']) {
     const ui = localeJson(lang)
     for (const key of keys) {
@@ -132,7 +137,7 @@ const BANNED = [
 ]
 const PROPER_NOUNS = ['GitHub Token', 'gh CLI', 'GitHub OAuth App', 'Client ID']
 
-// The six copy keys introduced by this iteration: presence and exact wording
+// The twenty-one copy keys introduced by this iteration: presence and exact wording
 // are the contract now, not "different from whichever commit was HEAD".
 const ITERATION_COPY = {
   pauseProject: ['暂停本项目', 'Pause this project'],
@@ -141,9 +146,24 @@ const ITERATION_COPY = {
   groupGithub: ['GitHub 连接', 'GitHub connection'],
   groupPaths: ['路径与并发', 'Paths & concurrency'],
   groupEngine: ['引擎', 'Engine'],
+  viewLabel: ['视图', 'View'],
+  viewSidebar: ['侧栏', 'Sidebar'],
+  viewTabs: ['标签', 'Tabs'],
+  toastSwitched: ['已切换到项目 {name}', 'Switched to {name}'],
+  toastTaken: ['已接管卡片', 'Card taken over'],
+  ghRepoBindLabel: ['GitHub 仓库（owner/repo）', 'GitHub repository (owner/repo)'],
+  ghRepoBindHint: ['建项目时从 origin 自动识别；可手动修改，留空表示未绑定。', 'Detected from origin when the project was created; edit it here, or clear it to unbind.'],
+  ghRepoBindSave: ['保存绑定', 'Save binding'],
+  ghRepoBindInvalid: ['仓库格式必须是 owner/repo', 'Repository must be in owner/repo format'],
+  bindNoOrigin: ['未识别到 GitHub 仓库：origin 不存在。', 'No GitHub repository detected: origin is missing.'],
+  bindNotGithub: ['未识别到 GitHub 仓库：origin 不是 github.com。', 'No GitHub repository detected: origin is not on github.com.'],
+  bindNotGit: ['未识别到 GitHub 仓库：仓库根目录不是 git 仓。', 'No GitHub repository detected: the project root is not a git repository.'],
+  bindAmbiguous: ['未识别到 GitHub 仓库：origin 有多个地址，需手动填写。', 'No GitHub repository detected: origin has multiple URLs; enter one manually.'],
+  bindInvalidUrl: ['未识别到 GitHub 仓库：origin 不是有效的 GitHub 地址。', 'No GitHub repository detected: origin is not a valid GitHub URL.'],
+  repoNotBound: ['未绑定', 'Not bound'],
 }
 
-test('AC-1.4: the six iteration labels exist in all four dictionaries with the agreed copy', () => {
+test('AC-1.4: the twenty-one iteration labels exist in all four dictionaries with the agreed copy', () => {
   const inline = inlineDictionaries(source('client.js'))
   const locale = { zh: localeJson('zh'), en: localeJson('en') }
   for (const [key, [zh, en]] of Object.entries(ITERATION_COPY)) {
@@ -388,4 +408,232 @@ test('manual intake against an archived or nonexistent board returns an explicit
       assert.equal(new FactoryStore({ file: join(dir, 'factory.sqlite') }).listCards().length, 3, 'failed intake wrote no cards')
     } finally { h.cleanup() }
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+// ---------------------------------------------------------------------------
+// 4. GitHub repo binding: read-only detection at creation + manual rebinding
+// ---------------------------------------------------------------------------
+
+function tempGitRepo(label, origin, extraOrigin) {
+  const dir = mkdtempSync(join(tmpdir(), `qa-bind-${label}-`))
+  execFileSync('git', ['init', '-q', dir], { stdio: 'ignore' })
+  if (origin) execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', origin], { stdio: 'ignore' })
+  if (extraOrigin) execFileSync('git', ['-C', dir, 'remote', 'set-url', '--add', 'origin', extraOrigin], { stdio: 'ignore' })
+  return dir
+}
+
+test('AC-bind-1: HTTPS/SSH GitHub origin is detected once into issueRepo with a default intake board', () => {
+  const urls = [
+    ['https', 'https://github.com/owner/repo.git'],
+    ['https-plain', 'https://github.com/owner/repo'],
+    ['https-user', 'https://user@github.com/owner/repo.git'],
+    ['ssh-scp', 'git@github.com:owner/repo.git'],
+    ['ssh-scp-plain', 'git@github.com:owner/repo'],
+    ['ssh-url', 'ssh://git@github.com/owner/repo.git'],
+  ]
+  for (const [label, url] of urls) {
+    const dir = tempGitRepo(label, url)
+    const f = apiHarness()
+    try {
+      assert.deepEqual(detectGithubRepo(dir), { issueRepo: 'owner/repo', reason: null }, `${label}: remote parsed`)
+      const project = f.store.createProject({ name: `auto-${label}`, rootPath: dir })
+      assert.equal(project.issueRepo, 'owner/repo', `${label}: issueRepo written`)
+      assert.equal(project.bindingReason, null, `${label}: no failure reason`)
+      const boards = f.store.listBoards(project.id)
+      assert.equal(boards.length, 1, `${label}: exactly one board`)
+      assert.equal(project.intakeBoardId, boards[0].id, `${label}: intake points at the default board`)
+      assert.equal(f.store.state.schemaVersion, SCHEMA_VERSION, `${label}: no schema bump`)
+      assert.equal(identityCardFor({ project, decision: {} }).binding.bound, true, `${label}: identity card is bound`)
+    } finally { f.cleanup(); rmSync(dir, { recursive: true, force: true }) }
+  }
+})
+
+test('AC-bind-2: failed detection never blocks project creation and exposes a readable reason', () => {
+  // The branch itself is reachable when the exec port returns multiple URLs.
+  const multiUrlExec = (_cmd, args) => {
+    if (args.includes('--is-inside-work-tree')) return { status: 0, stdout: 'true\n' }
+    assert.ok(args.includes('--all'), 'origin lookup must request every URL')
+    assert.equal(args.at(-1), 'origin')
+    return { status: 0, stdout: 'https://github.com/owner/one.git\nhttps://github.com/owner/two.git\n' }
+  }
+  assert.equal(detectGithubRepo('/tmp/qa-ambiguous', multiUrlExec).reason, BIND_REASON.AMBIGUOUS, 'multi-line origin maps to ambiguous-origin')
+
+  const cases = [
+    ['not-git', () => mkdtempSync(join(tmpdir(), 'qa-bind-notgit-')), BIND_REASON.NOT_GIT, 'bindNotGit'],
+    ['no-origin', () => tempGitRepo('no-origin', null), BIND_REASON.NO_ORIGIN, 'bindNoOrigin'],
+    ['not-github', () => tempGitRepo('not-github', 'https://gitlab.com/owner/repo.git'), BIND_REASON.NOT_GITHUB, 'bindNotGithub'],
+    ['invalid-url', () => tempGitRepo('invalid-url', 'https://github.com/owner'), BIND_REASON.INVALID_URL, 'bindInvalidUrl'],
+    ['ambiguous', () => tempGitRepo('ambiguous', 'https://github.com/owner/one.git', 'https://github.com/owner/two.git'), BIND_REASON.AMBIGUOUS, 'bindAmbiguous'],
+  ]
+  const zh = inlineDictionaries(source('client.js')).zh
+  for (const [label, makeDir, reason, copyKey] of cases) {
+    const dir = makeDir()
+    const f = apiHarness()
+    try {
+      assert.equal(detectGithubRepo(dir).reason, reason, `${label}: reason code`)
+      const project = f.store.createProject({ name: `fail-${label}`, rootPath: dir })
+      assert.equal(project.issueRepo, null, `${label}: issueRepo stays empty`)
+      assert.equal(project.bindingReason, reason, `${label}: reason persisted`)
+      assert.equal(f.store.listBoards(project.id).length, 1, `${label}: project still created with its board`)
+      assert.ok(typeof zh[copyKey] === 'string' && zh[copyKey].trim().length > 0, `${label}: readable zh notice exists`)
+      assert.equal(identityCardFor({ project, decision: {} }).binding.reason, reason, `${label}: identity card carries reason`)
+    } finally { f.cleanup(); rmSync(dir, { recursive: true, force: true }) }
+  }
+})
+
+test('AC-bind-3: detection is one-shot, explicit issueRepo wins, and history is not backfilled', () => {
+  const dir = tempGitRepo('oneshot', 'https://github.com/original/repo.git')
+  const f = apiHarness()
+  try {
+    const created = f.store.createProject({ name: 'oneshot', rootPath: dir })
+    assert.equal(created.issueRepo, 'original/repo')
+    execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'https://github.com/changed/repo.git'], { stdio: 'ignore' })
+    const reopened = new FactoryStore({ file: join(f.dir, 'factory.sqlite') })
+    assert.equal(reopened.getProject(created.id).issueRepo, 'original/repo', 'remote change does not rebind')
+    assert.equal(reopened.getProject(created.id).bindingReason, null)
+
+    const explicit = f.store.createProject({ name: 'explicit', rootPath: dir, issueRepo: 'given/repo' })
+    assert.equal(explicit.issueRepo, 'given/repo', 'explicit issueRepo wins')
+    assert.equal(explicit.bindingReason, null, 'detection skipped')
+    assert.throws(() => f.store.createProject({ name: 'dirty', rootPath: dir, issueRepo: 'bad/repo/extra' }), /owner\/repo/)
+    assert.equal(f.store.listProjects().some((p) => p.name === 'dirty'), false, 'invalid issueRepo did not create a project')
+  } finally { f.cleanup(); rmSync(dir, { recursive: true, force: true }) }
+
+  const histDir = mkdtempSync(join(tmpdir(), 'qa-bind-history-'))
+  try {
+    const base = emptyState()
+    const board = { id: 'hist-board', projectId: 'hist', name: 'Default', kind: 'dev', columns: ['planning', 'awaiting-approval', 'building', 'review', 'done'], createdAt: '2026-01-01T00:00:00.000Z' }
+    base.boards = [board]
+    base.projects = [{ id: 'hist', name: 'hist', rootPath: '/workspace/hist', autonomy: 'L0', intakeBoardId: board.id }]
+    const file = join(histDir, 'factory.sqlite')
+    seedState(file, base)
+    const store = new FactoryStore({ file })
+    assert.equal(store.getProject('hist').issueRepo, undefined, 'no backfill on load')
+    assert.equal(store.getProject('hist').bindingReason, undefined, 'no backfilled reason')
+  } finally { rmSync(histDir, { recursive: true, force: true }) }
+})
+
+test('AC-bind-4: manual rebind persists, clears reason, rejects dirty/mixed PATCH, and never blocks on errors', () => {
+  const dir = tempGitRepo('manual', 'https://github.com/auto/repo.git')
+  const f = apiHarness()
+  try {
+    const created = f.api({ method: 'POST', route: '/projects', body: { name: 'manual', rootPath: dir } })
+    assert.equal(created.status, 201)
+    const id = created.body.project.id
+    assert.equal(created.body.project.issueRepo, 'auto/repo')
+
+    const rebound = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'manual/repo' } })
+    assert.equal(rebound.status, 200)
+    assert.equal(rebound.body.project.issueRepo, 'manual/repo')
+    assert.equal(rebound.body.project.bindingReason, null, 'manual edit clears detection reason')
+    assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, 'manual/repo', 'rebind persisted')
+
+    const cleared = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: null } })
+    assert.equal(cleared.status, 200)
+    assert.equal(cleared.body.project.issueRepo, null, 'clear returns to unbound')
+    assert.equal(identityCardFor({ project: cleared.body.project, decision: {} }).binding.bound, false)
+    assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'clear persisted')
+
+    for (const dirty of ['bad/repo/extra', 'https://github.com/owner/repo', 'not github', 'owner//repo']) {
+      const res = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: dirty } })
+      assert.equal(res.status, 400, `dirty value ${dirty} rejected`)
+      assert.match(res.body?.error ?? '', /owner\/repo/)
+    }
+    // The settings card says 「留空表示未绑定」: an empty string is the
+    // documented CLEAR path (200 -> null), not a dirty value. Keep this
+    // explicit so it is never mistaken for a validation hole; non-empty
+    // malformed values above must still be rejected with 400.
+    const empty = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: '' } })
+    assert.equal(empty.status, 200, 'empty string clears the binding by product design')
+    assert.equal(empty.body.project.issueRepo, null)
+    assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'clear persisted')
+
+    const mixed = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'a/b', autonomy: 'L1' } })
+    assert.equal(mixed.status, 400)
+    assert.match(mixed.body?.error ?? '', /混改/)
+    assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'failed PATCH changed nothing')
+  } finally { f.cleanup(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('AC-identity-display: connected sources never claim an unknown account', () => {
+  const client = source('client.js')
+  const zh = inlineDictionaries(client).zh
+  const render = (key, args = {}) => String(zh[key]).replace(/\{(\w+)\}/g, (_, name) => args[name] ?? `{${name}}`)
+  const cardFor = (decision) => identityCardFor({
+    project: { id: 'p', rootPath: '/repo/local', issueRepo: 'owner/repo' },
+    decision,
+  })
+
+  const named = cardFor({ source: 'gh-cli', sourceType: 'gh-cli', globalShared: true, login: 'summerscar', token: 'secret-tok' })
+  assert.equal(named.identity.login, 'summerscar')
+  assert.equal(render('ghNowUsing', { account: named.identity.login }), '当前身份：summerscar')
+  assert.equal(JSON.stringify(named).includes('secret-tok'), false, 'identity card never echoes a token')
+
+  // gh-cli connected with an unresolved login: fall back to the source label,
+  // never the misleading 「无法识别账号」.
+  const unnamed = cardFor({ source: 'gh-cli', sourceType: 'gh-cli', globalShared: true, login: null })
+  assert.equal(unnamed.identity.connected, true)
+  assert.equal(unnamed.identity.login, null)
+  assert.equal(render('ghNowUsing', { account: zh.srcComputer }), '当前身份：gh CLI 已登录')
+  assert.match(client, /id\.connected \? t\('ghNowUsing', \{ account: id\.login \|\| t\(SRC_LABEL\[id\.source\] \|\| 'srcNone'\) \}\) : t\('srcNone'\)/, 'UI falls back to SRC_LABEL')
+  assert.doesNotMatch(client, /id\.login \|\| t\('ghUnknownAccount'\)/, 'UI no longer shows the unknown-account label')
+
+  const offline = cardFor(null)
+  assert.equal(offline.identity.connected, false)
+  assert.equal(render('srcNone'), '未连接')
+
+  // The global gh CLI row mirrors the same rule: account when known, source label otherwise.
+  assert.match(client, /ghcli\.login \? `\$\{t\('ghComputerLoggedIn'\)\} · \$\{ghcli\.login\}` : t\('srcComputer'\)/, 'global row uses login or source label')
+  assert.equal(`${render('ghComputerLoggedIn')} · summerscar`, '已登录 · summerscar')
+  assert.equal(render('srcComputer'), 'gh CLI 已登录')
+
+  // Account lookup is read-only and no longer passes the mutually exclusive --silent flag.
+  const ghExec = (_cmd, args) => {
+    assert.deepEqual(args, ['api', 'user', '--jq', '.login'])
+    return { status: 0, stdout: 'summerscar\n' }
+  }
+  assert.deepEqual(ghCliState({ env: {}, probeGhLogin: () => true, ghExec }), { loggedIn: true, login: 'summerscar' })
+})
+
+test('AC-global-github-jump: project card delegates the GitHub action to the global drawer', () => {
+  const client = source('client.js')
+  const identityStart = client.indexOf('function IdentityCard(')
+  const identityEnd = client.indexOf('function BoardPage', identityStart)
+  assert.ok(identityStart > -1 && identityEnd > identityStart, 'IdentityCard source located')
+  const cardSource = client.slice(identityStart, identityEnd)
+
+  assert.match(cardSource, /onOpenGlobalGithub/, 'IdentityCard receives the global-jump callback')
+  assert.match(cardSource, /onOpenGlobalGithub\(\)/, 'button only calls the callback')
+  assert.match(cardSource, /\$\{t\('scopeGlobal'\)\} · \$\{t\('groupGithub'\)\}/, 'button reuses existing copy keys')
+  assert.doesNotMatch(cardSource, /auth\/connect\/begin/, 'no dead device-flow call in the project card')
+  assert.doesNotMatch(cardSource, /beginConnect|answerConnect|cancelConnect/, 'dead connect handlers removed')
+
+  // The real connect flow survives once, in the global AccountManager only.
+  assert.equal((client.match(/auth\/connect\/begin/g) ?? []).length, 1, 'only AccountManager can start OAuth')
+  assert.match(client, /const openGlobalGithub = \(\) => \{[\s\S]*?setScope\('global'\)[\s\S]*?setDrawerOpen\(true\)[\s\S]*?scrollTop = 0/, 'jump switches scope and scrolls the drawer body to the top')
+  assert.match(client, /ref: drawerBodyRef, className: 'df-drawer-body'/, 'drawer body is the scroll target')
+
+  const dict = inlineDictionaries(client)
+  assert.equal(`${dict.zh.scopeGlobal} · ${dict.zh.groupGithub}`, '全局设置 · GitHub 连接')
+  assert.equal(`${dict.en.scopeGlobal} · ${dict.en.groupGithub}`, 'Global settings · GitHub connection')
+})
+
+test('AC-bind-badge: header badge shows binding state and only navigates to project binding', () => {
+  const client = source('client.js')
+  assert.match(client, /key: 'bind', type: 'button', className: 'df-bind-badge'/, 'header badge is a button')
+  assert.match(client, /repoBound \? `\$\{t\('ghLinked'\)\} · \$\{project\.issueRepo\}` : t\('repoNotBound'\)/, 'bound/unbound copy composition')
+  assert.match(client, /onClick: openProjectBinding/, 'badge calls the project-binding jump')
+  const fnStart = client.indexOf('const openProjectBinding = () => {')
+  const fn = client.slice(fnStart, client.indexOf('// Dialogs are rendered', fnStart))
+  assert.ok(fnStart > -1 && fn.length > 0, 'openProjectBinding located')
+  assert.match(fn, /setScope\('project'\)/, 'switches to the project scope')
+  assert.match(fn, /setDrawerOpen\(true\)/, 'opens the drawer')
+  assert.match(fn, /drawerBodyRef\.current\.scrollTop = 0/, 'scrolls the drawer to the binding block')
+  assert.doesNotMatch(fn, /callApi|auth\/connect|PATCH|POST/, 'no OAuth, write or API side effect')
+  assert.match(client, /\.df-bind-badge\{[^}]*min-height:28px/, 'desktop min height 28')
+  assert.match(client, /\.df-bind-badge\{min-height:44px/, 'narrow touch target 44')
+
+  const dict = inlineDictionaries(client)
+  assert.equal(dict.zh.repoNotBound, '未绑定')
+  assert.equal(dict.en.repoNotBound, 'Not bound')
 })

@@ -24,6 +24,7 @@ function reactShim() {
     useState: (value) => [value, () => {}],
     useEffect: () => {},
     useCallback: (fn) => fn,
+    useRef: (v) => ({ current: v }),
   }
 }
 

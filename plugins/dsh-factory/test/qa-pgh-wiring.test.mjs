@@ -152,7 +152,12 @@ test('PGH-14/PGH-4: /identity/:id shows binding + reads an ambient global WITHOU
     const p = await createProject(h, { issueRepo: 'owner/repo' })
     const card = await h.call('GET', `/identity/${p.id}`)
     assert.equal(card.status, 200)
-    assert.deepEqual(card.body.binding, { rootPath: '/workspace/p', issueRepo: 'owner/repo', bound: true })
+    assert.deepEqual(
+      { rootPath: card.body.binding.rootPath, issueRepo: card.body.binding.issueRepo, bound: card.body.binding.bound },
+      { rootPath: '/workspace/p', issueRepo: 'owner/repo', bound: true },
+    )
+    assert.equal(Object.hasOwn(card.body.binding, 'reason'), true, 'HTTP binding exposes the detection reason field')
+    assert.equal(card.body.binding.reason, null, 'explicitly bound project has no detection reason')
     // With a controlled ambient token injected, the winner is an ambient global
     // (GH_CLI if a real login outranks it, else the injected ENV_TOKEN). It must
     // resolve to a connected global — never "not connected", never a repo record.

@@ -27,6 +27,8 @@ export function identityCardFor({ project, decision } = {}) {
       rootPath,
       issueRepo,
       bound: rootPath !== null && rootPath !== '' && issueRepo !== null && issueRepo !== '',
+      // Detection notice from project creation; null once manually edited/cleared.
+      reason: typeof project?.bindingReason === 'string' ? project.bindingReason : null,
     },
     identity: identityView(decision),
   }
@@ -311,7 +313,9 @@ export function ghCliState({ env = process.env, probeGhLogin = realProbeGhLogin,
   // stripped) — read-only. Failure to resolve the name must not flip the state.
   if (loggedIn && ghApi === true) {
     try {
-      const result = ghExec('gh', ['api', 'user', '--jq', '.login', '--silent'], { encoding: 'utf8', env: probeEnv(env) })
+      // Newer gh versions reject --jq together with --silent; drop --silent so
+      // the read-only account lookup actually returns the login.
+      const result = ghExec('gh', ['api', 'user', '--jq', '.login'], { encoding: 'utf8', env: probeEnv(env) })
       if (result?.status === 0 && typeof result.stdout === 'string') {
         const name = result.stdout.trim()
         if (name !== '') login = name

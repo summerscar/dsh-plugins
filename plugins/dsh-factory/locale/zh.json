@@ -215,5 +215,20 @@
   "mobileProjectConfig": "项目配置",
   "groupGithub": "GitHub 连接",
   "groupPaths": "路径与并发",
-  "groupEngine": "引擎"
+  "groupEngine": "引擎",
+  "viewLabel": "视图",
+  "viewSidebar": "侧栏",
+  "viewTabs": "标签",
+  "toastSwitched": "已切换到项目 {name}",
+  "toastTaken": "已接管卡片",
+  "ghRepoBindLabel": "GitHub 仓库（owner/repo）",
+  "ghRepoBindHint": "建项目时从 origin 自动识别；可手动修改，留空表示未绑定。",
+  "ghRepoBindSave": "保存绑定",
+  "ghRepoBindInvalid": "仓库格式必须是 owner/repo",
+  "bindNoOrigin": "未识别到 GitHub 仓库：origin 不存在。",
+  "bindNotGithub": "未识别到 GitHub 仓库：origin 不是 github.com。",
+  "bindNotGit": "未识别到 GitHub 仓库：仓库根目录不是 git 仓。",
+  "bindAmbiguous": "未识别到 GitHub 仓库：origin 有多个地址，需手动填写。",
+  "bindInvalidUrl": "未识别到 GitHub 仓库：origin 不是有效的 GitHub 地址。",
+  "repoNotBound": "未绑定"
 }

@@ -153,6 +153,60 @@ export function probeGhLogin(processEnv = process.env) {
   }
 }
 
+/**
+ * One-shot, read-only GitHub binding detected when a project is CREATED.
+ * The engine never guesses a repo at runtime; after creation only an explicit
+ * user PATCH may change it. No network, no identity change, no permission probe.
+ */
+export const BIND_REASON = {
+  NO_ORIGIN: 'no-origin',
+  NOT_GITHUB: 'not-github',
+  NOT_GIT: 'not-git-repo',
+  AMBIGUOUS: 'ambiguous-origin',
+  INVALID_URL: 'invalid-origin-url',
+}
+
+/** Accept only GitHub's `owner/repo` shape (the form stored in issueRepo). */
+export function normalizeGithubRepo(value) {
+  if (typeof value !== 'string') return null
+  const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(value.trim())
+  if (match === null) return null
+  const [, owner, repo] = match
+  if (owner === '.' || owner === '..' || repo === '.' || repo === '..') return null
+  return `${owner}/${repo}`
+}
+
+function parseGithubRemoteUrl(raw) {
+  const url = String(raw || '').trim()
+  // HTTPS (with an optional user@) and SSH/scp-like forms, github.com only.
+  const match = /^(?:https?:\/\/)(?:[^/@\s]+@)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url)
+    || /^(?:ssh:\/\/)?git@github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url)
+  return match === null ? null : normalizeGithubRepo(`${match[1]}/${match[2]}`)
+}
+
+/**
+ * @returns {{issueRepo: string|null, reason: string|null}} reason is a BIND_REASON
+ *   code when nothing was detected; it is null on success. Never throws.
+ */
+export function detectGithubRepo(rootPath, exec = spawnSync) {
+  const root = typeof rootPath === 'string' ? rootPath.trim() : ''
+  const failed = (reason) => ({ issueRepo: null, reason })
+  if (root === '') return failed(BIND_REASON.NOT_GIT)
+  const run = (args) => exec('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 })
+  let inside
+  try { inside = run(['rev-parse', '--is-inside-work-tree']) } catch { return failed(BIND_REASON.NOT_GIT) }
+  if (!inside || inside.status !== 0 || String(inside.stdout || '').trim() !== 'true') return failed(BIND_REASON.NOT_GIT)
+
+  let remote
+  try { remote = run(['remote', 'get-url', '--all', 'origin']) } catch { return failed(BIND_REASON.NO_ORIGIN) }
+  if (!remote || remote.status !== 0) return failed(BIND_REASON.NO_ORIGIN)
+  const urls = String(remote.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (urls.length !== 1) return failed(BIND_REASON.AMBIGUOUS)
+  const repo = parseGithubRemoteUrl(urls[0])
+  if (repo !== null) return { issueRepo: repo, reason: null }
+  return failed(/github\.com/i.test(urls[0]) ? BIND_REASON.INVALID_URL : BIND_REASON.NOT_GITHUB)
+}
+
 /** Real git/gh port. Commits use a neutral identity; nothing assumes the repo. */
 export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
   const loggedIn = typeof ghLoggedIn === 'boolean' ? ghLoggedIn : probeGhLogin()
