@@ -189,6 +189,15 @@ All four hard requirements are met: the interface reads the level field, not the
 | **AE-2b's remote "PR CLOSED" snapshot injection (real-machine entry added)** | `applyRemoteSync` used to exist only as a function plus unit-test calls, with no way to feed a remote snapshot on a real machine. It now has a controlled product entry — `POST /api/dsh-factory/cards/:id/remote-sync` (weakly idempotent) — which calls the existing `applyRemoteSync`: it only records a suggestion and never changes card state, the target column is derived from the remote status, the actor is fixed to `syncRule`, and authentication inherits the host's connection gate. Both READMEs document the route; a future webhook can reuse it | **Verified on a real machine** (entry-safety and remote-suggestion cases passed). The source logic stays unchanged: `SYNC_AUTO_EDGES` is empty and a "PR closed" suggestion is only recorded, never applied. **Known gaps**: ① an oversized request body returns a server error rather than the expected client error — pre-existing host-wide behaviour, not introduced here; ② the entry's unauthenticated fail-closed case was confirmed in code but not actively triggered on a real machine, since doing so would cross host boundaries |
 | **SQLite storage has deferred evolution work** | The bundled `node:sqlite` is experimental and not semver-stable; the whole state is written as one row on every change, so there is no fine-grained schema yet | Isolated in the store module, so adapting the API later touches one file; the repository's runtime floor already clears the no-flag line. **Splitting the state into tables is left for later.** **Old data is not migrated**: this is a development-stage decision, the previous JSON file stays where it is and the new database starts empty; recovering old records waits for a migration feature |
 
+### 5.1 Open follow-ups and unverified items
+
+These are not behavioural gaps — they are a pending copy decision and a fix whose evidence is code-level only. Neither blocks use; both are recorded so a later round does not have to rediscover them.
+
+| Item | Status | What is left |
+|---|---|---|
+| **Approve button wording** | The control still reads **Approve plan** / 「批准计划」. One click now also moves the card to `build` and resumes the session, so the label understates what the button does (the design draft names it "approve plan and start building"). | Wording is a UX/copy decision owned by design, not by the engine. No copy change has been made here. |
+| **Double-click guard on card actions** | Card action buttons are disabled while an action is in flight (`busy` is passed to the button's `disabled`), so a fast second click cannot start a parallel run; even if it slipped through, the second transition would be rejected by the state gate. | The guard was verified in code only, not by a real browser double-click. A real-machine click check is still owed before calling it proven. |
+
 ## 6. Research basis (summary, so it is not researched twice)
 
 This plugin does not fork any existing implementation. It compared two reference implementations and took the best of each:
