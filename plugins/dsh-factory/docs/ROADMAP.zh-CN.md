@@ -164,7 +164,7 @@
 - **`you-approve` 只走一条自动边**（其 `autoDispatch` 开关开时）：`inbox -> triage`，经 `dispatchCard` 完成，actor 记 `autoRule` 并带 `tier`/`rule`/`channel`。阶段推进仍由会话内技能以 `agent` 身份完成，**引擎不自己挪卡**；到 `plan-review` 停住等批。**agent preset 必须显式挂载**：派发会话以前从没挂 preset，所以没有 `tool-bash`、只能去抓宿主全局的 SSH 工具，沙箱也管不着它；现在在 `setup` 里调用 `agentPresets.mount(agentCtx)`（**不传 id，跟随用户当前选择的预设**），拿不到该服务就拒绝派发——这条是真 bug，已修。技能指引与技能正文的注入也已落地。
 - **开关不泄漏能力**：唯一的开关是 `autoDispatch`，只在 `you-approve` 档被读；`machine-approve` 一次不读开关（档位即真相源），`manual` 严格零动作——「开关开着、代码顺手就用了」没有路径。
 - **并发两级上限**（项目级 + 全局兜底），按运行时活跃会话计，不按 `sessionId` 字段计；满额排队不丢卡、不标 stalled，有空位后由后续 tick 取走。
-- **暂停 / 恢复 / 单卡接管**是三个独立动作、各自持久化并留治理记录。暂停与接管都**不打断**已在运行的会话，只影响后续 tick 的自动派发——硬杀会话会留下 worktree 和半截改动。
+- **暂停 / 恢复 / 单卡接管**是三个独立动作、各自持久化并留治理记录。暂停在界面上是一个状态开关（开＝已暂停、关＝运行中、标签固定不翻转）而非动作按钮；暂停与接管都**不打断**已在运行的会话，只影响后续 tick 的自动派发——硬杀会话会留下 worktree 和半截改动。
 - **默认零副作用**：`manual` 严格零动作；缺 issue 源或目标看板的项目被跳过，原因在 `status` 可见，**运行时不猜、不从 git remote 反推、不自动建板**。仓库识别是另一个独立的只读步骤，只在用户建项目时发生（§2.6），不是引擎行为。
 - **同步不代批**：`sync.js` 改用独立 `syncRule` actor + 空白名单 `SYNC_AUTO_EDGES`，远端「PR 关闭」建议只记待人处理、不会把等批的卡推进 `build`；`machine-approve` 档下的计划审批改用 `autoRule` actor，与同步严格分开。
 - **权限档不虚报**：`permissionEnforced` 恒为 `false`，界面与状态不得宣称写入限制已生效。
@@ -217,6 +217,8 @@
 - **身份与绑定显示。** 当前账号由 `gh` CLI 只读解析（`gh api user --jq .login`，去掉 `--silent`）；已连接但拿不到登录名时退回来源表述。项目卡上的 GitHub 按钮只跳全局连接设置——不在项目里发起 OAuth。页头有仓库绑定状态徽标，点它打开该项目的绑定输入框。
 - **文案一致性。** 四个字典新增一批 key（`pauseProject`、`resumeProject` 等），重叠值逐字一致、占位符集合固定、四个产品专名原样保留；数量以实际运行为准，这里不记写死的总数。
 
+**增量（GitHub 身份设置）：** 全局 GitHub 区按用户可见的四层身份重排——① GitHub OAuth App（全局）→ ② `gh` CLI 登录（全局，本机）→ ③ GitHub Token（全局，所有项目共用）→ ④ GitHub Token（仅此仓库，最后兜底）。Client ID 输入框并入 ① 块内，位于状态行下、连接按钮上，独立卡片与重复提示已删；指引写明创建时要勾选 Device flow，Homepage URL 与 Authorization callback URL 是 GitHub 创建页的必填项但设备流程不用、随便填个网址即可，插件只需要 Client ID，且 Client ID 不是密钥、配置一次所有项目共用。项目身份卡标出当前生效层，检查通过时写明是哪一层通过的；环境变量里的 Token 会点亮全局 Token 那一行并标注为该层默认值，另存的全局 Token 使用时优先、环境变量本身不改动。卡片底部常驻的入口行（全局设置 · GitHub 连接；为本仓库填写 GitHub Token）只在仓库已绑定且检查结果尚未出（未检查、或检查中）时渲染；未绑定仓库、检查通过、检查失败三种情况都不显示。检查失败时，卡片下方的修复块（打开全局设置；为本仓库填写 Token）是唯一一套入口，不再与入口行重复。全局 Token 状态由只读的 `GET /api/dsh-factory/auth/token/state` 提供：configured / source（`none` / `env` / `stored`）/ state / login / 掩码指纹 / 独立的 `env` 块 / `overridden` / `reason`，掩码只露头尾各四位（八位及以下整体遮成「…」），任何响应都不含完整 Token。四份字典保持逐字节一致。QA 已真机复核新文案、①→②→③ 顺序与 Client ID 位置；失败态修复块、真机保存 Client ID、Token 保存/清除写操作与英文界面仍未真机验证。数字以实际运行为准，这里不记。
+
 ### P7 — 卡片正文注入与单卡交还（**已实现；Review 无阻断、Design UI 审稿通过、QA 报告全绿**）
 
 本轮两条线都在既有零构建视图与引擎里做，没有组件库、构建步骤或 schema 变更；以下从源码逐条复核。
@@ -236,7 +238,7 @@
 | **写入与回执之间没有事务边界（工厂侧窗口已焊死，宿主侧窗口仍在）** | 工具过去先 `execute`（写入已落库）再 snapshot/lossless 校验/render；任一步失败就变成「写入已发生但报错」，回执丢失。真机上表现为重名项目堆积 | **由用户拍板选方案 A、已在工厂侧修好**：三个写工具（transition / report / createProject）在落盘前先做回执自检——lossless → schema → render → render lossless 全过才写库。schema 校验生产注入宿主的公开校验器；lossless 用本仓的最小实现、置于可注入端口之后。失败抛原始错误、日志可观测；已端到端验证并做变异验证（摘掉预检则用例变红）与全量回归。**引擎四项措施保留**（幂等、单飞、孤儿对账只报不清理、`dispatchCard` 回滚）：与本修复正交、是防御纵深，不是被替代。**如实记录已知缺口**：① 宿主对任意工具的 write/receipt 窗口仍在，方案 A 只堵工厂自身这条链路；② 本仓 lossless 最小实现与宿主快照函数是两份同语义实现，宿主规则若变动会漂移（schema 那半边已注入宿主真函数消除）；③ 宿主真成功回执流水线本仓不可 import（peer-only），那一环在此测不到。宿主侧 B/C 方案未立项——记为已知缺口，不单独立项 |
 | **`card.repo` 与 `card.repoPath` 已拆分** | `intake.js` 把远端 GitHub 标识写入 `repo`、本地根路径写入 `repoPath`；`session-context.js` 的 `repoOf` 优先用 `repoPath`，`repo` 只作展示标识渲染 | **已解决**：两种语义不再共用一个字段，agent 不会再拿到「当路径用的远端标识」。（原为 `machine-approve` 档前置，见 PRD §10） |
 | **真实自动派发（AE-2）已端到端验通** | 「真实 GitHub issue 源 → 建卡 → 自动派发 → 停 plan-review」这条链现已在真机跑通，全程无人工点击 | **已验通**：引擎只走 `inbox -> triage` 这一条自动边（记为 `autoRule`），派发的 agent 把卡片推进过 `triage`、`plan`，停在 `plan-review`。链路细节见 §4 P2。（此前因缺真实 issue 源与匹配夹具而未验） |
-| ~~接管无 UI 入口~~ | 接管现在有真实 UI 入口：卡片操作区的「接管」按钮 + 设置抽屉里项目级的「暂停与接管」块，都调同一条 `POST /cards/:id/takeover`（另有项目/全局暂停开关） | **P4 已解决**（界面上线） |
+| ~~接管无 UI 入口~~ | 接管现在有真实 UI 入口：卡片操作区的「接管」按钮 + 设置抽屉里项目级的「暂停与接管」块，都调同一条 `POST /cards/:id/takeover`（另有项目/全局暂停开关；项目级暂停现在是状态开关而非动作按钮：开＝已暂停、关＝运行中） | **P4 已解决**（界面上线） |
 | **路由命名易混** | 实际路径是 `/cards/:id/takeover`，不是 `/take-over`；照着猜会 404（QA 真机已踩） | 已请 Docs 在 README 接口说明写清实际路径 |
 | **agent 行为漂移（观察中）** | 第 5、6 轮 agent 改用提问卡等确认再建项目，前 3 轮是直接建。判据未要求「不许问」，项目也确实建成 | 倾向判定为技能生效后的正常表现（技能正文写了「先把配置给用户看」），非缺陷。记在此观察，别等到 P2 才发现 agent 到处问 |
 | 只支持 GitHub | GitLab 相关技能未实现 | 有明确落点再补 |

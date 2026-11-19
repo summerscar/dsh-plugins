@@ -5,12 +5,13 @@
  * (github-api.js) and the OAuth primitives (github-oauth.js) are all pure or
  * injected-seam factories, so the five-tier ladder is exercised offline against
  * the REAL code with fake credentials/fetch/gh — no host, no network, no token
- * ever leaves a closure. Client-only judgements (PGH-13 copy, PGH-18 scope-switch
- * placement) use source guards, the same discipline the repo already uses.
+ * ever leaves a closure. Client-only judgements (PGH-13 copy, PGH-18 project-only
+ * single-repo modal) use source guards, the same discipline the repo already uses.
  *
  * Covers the Chief's named focuses: PGH-16 (digit-leading id → repoCredentialSegment
- * derivation, read/write same function, no TypeError), PGH-18 (scope switch only on
- * gh token, global tiers never show it, chosen shared is reused), PGH-13 (no jargon),
+ * derivation, read/write same function, no TypeError), PGH-18 (single-repo modal is
+ * project-only; global Token save/clear stays in global settings; shared is reused),
+ * PGH-13 (no jargon),
  * PGH-11 (six source states from the PANEL view), PGH-15 (judge-before-inject mapping),
  * PGH-8 (locked five-tier order), PGH-4 (ambient globals read, no hard-binding).
  */
@@ -114,7 +115,7 @@ test('PGH-16: read and write use the SAME derived key — digit-leading id round
 // PGH-8 / PGH-15 — locked five-tier order + one-winner mapping (judge before inject).
 // ---------------------------------------------------------------------------
 
-test('PGH-8: five-tier priority — OAuth > gh CLI > env > shared > repo; stops at first hit', async () => {
+test('PGH-8: five-tier priority — OAuth > gh CLI > token-global(stored) > env > repo; stops at first hit', async () => {
   const project = { id: '1111-aaaa', githubCredentialId: null }
   const allRecords = {
     [`${CREDENTIAL_SCOPE}/${OAUTH_KEY_ID}`]: grant('oauth-tok', 'oauth-user', 'oauth-device-flow'),
@@ -128,22 +129,28 @@ test('PGH-8: five-tier priority — OAuth > gh CLI > env > shared > repo; stops 
   assert.equal(d.source, IDENTITY_SOURCE.OAUTH)
   assert.equal(d.login, 'oauth-user')
 
-  // Remove OAuth → gh CLI wins (tier 2), even though env/shared/repo all present.
+  // Remove OAuth → gh CLI wins (tier 2), even though env/stored/repo all present.
   creds.calls.reads.length = 0
   const creds2 = credStore({ [`${CREDENTIAL_SCOPE}/${SHARED_KEY_ID}`]: allRecords[`${CREDENTIAL_SCOPE}/${SHARED_KEY_ID}`], [`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`]: allRecords[`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`] })
   d = await decideIdentity({ project, clientId: 'client-123', env: { GH_TOKEN: 'env-tok' }, readRecord: creds2.readRecord, probeGhLogin: () => true })
   assert.equal(d.source, IDENTITY_SOURCE.GH_CLI)
 
-  // gh not logged in → env wins (tier 3).
+  // gh not logged in → the MANUALLY SAVED global token (tier 3) wins over the
+  // env default, even though env is set. Saving a separate token-global must
+  // be preferred in use; env is only the default of the same global tier.
   d = await decideIdentity({ project, clientId: '', env: { GITHUB_TOKEN: 'env-tok' }, readRecord: creds2.readRecord, probeGhLogin: noProbe })
-  assert.equal(d.source, IDENTITY_SOURCE.ENV_TOKEN)
-
-  // env empty → shared wins (tier 4), repo present but not reached.
-  d = await decideIdentity({ project, clientId: '', env: EMPTY_ENV, readRecord: creds2.readRecord, probeGhLogin: noProbe })
   assert.equal(d.source, IDENTITY_SOURCE.SHARED_TOKEN)
-  assert.equal(creds2.calls.reads.includes(`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`), false, 'repo key not even read when shared wins')
+  assert.equal(d.login, 'shared-user')
+  assert.equal(creds2.calls.reads.includes(`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`), false, 'repo key not read once the stored global token wins')
 
-  // shared removed → repo fallback wins (tier 5).
+  // stored global token removed but env still set → env default wins (tier 4),
+  // repo present but not reached.
+  const credsEnvRepo = credStore({ [`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`]: allRecords[`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`] })
+  d = await decideIdentity({ project, clientId: '', env: { GITHUB_TOKEN: 'env-tok' }, readRecord: credsEnvRepo.readRecord, probeGhLogin: noProbe })
+  assert.equal(d.source, IDENTITY_SOURCE.ENV_TOKEN)
+  assert.equal(credsEnvRepo.calls.reads.includes(`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`), false, 'repo key not even read when env wins')
+
+  // env empty too → repo fallback wins (tier 5).
   const creds3 = credStore({ [`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`]: allRecords[`${CREDENTIAL_SCOPE}/${repoCredentialSegment(project)}`] })
   d = await decideIdentity({ project, clientId: '', env: EMPTY_ENV, readRecord: creds3.readRecord, probeGhLogin: noProbe })
   assert.equal(d.source, IDENTITY_SOURCE.REPO_KEY)
@@ -293,26 +300,54 @@ test('PGH-1: githubClientId is a non-secret settings field with no token echo', 
   assert.doesNotMatch(appIdHint[0], /token|密码|凭据/, 'client_id hint must not ask for a token')
 })
 
-test('PGH-18 source guard: scope switch exists ONLY in the add-account modal', () => {
-  // The two switch BUTTONS (ghScopeAll/ghScopeRepo) are rendered only inside
-  // dialog==='add'. ghScopeTitle alone is also used as a validation hint in
-  // submitAdd, so it cannot mark the switch; the buttons are the reliable signal.
+test('PGH-18 source guard: single-repo modal is project-only — no scope switch, no global path', () => {
+  // The single-repo entry now opens a dialog that can ONLY write a token for
+  // this repo. The scope switch (ghScopeAll/ghScopeRepo), the empty-scope block
+  // and the shared-token danger confirm were removed with that design; global
+  // Token save/clear now lives solely in GlobalTokenSetting (checked below).
   const addModalStart = clientSrc.indexOf("dialog === 'add'")
-  // The dead dialog==='connect' block was removed; use the next component as
-  // a stable right boundary for AccountManager's add-account modal.
+  // The next component is a stable right boundary for AccountManager's dialog.
   const nextComponent = clientSrc.indexOf('function EngineBar', addModalStart)
   assert.ok(addModalStart > 0 && nextComponent > addModalStart, 'add-account modal boundaries found')
-  for (const key of ['ghScopeAll', 'ghScopeRepo']) {
-    const calls = [...clientSrc.matchAll(new RegExp(`t\\('${key}'\\)`, 'g'))].map((m) => m.index)
-    assert.equal(calls.length, 1, `${key} switch button rendered exactly once`)
-    assert.ok(calls[0] > addModalStart && calls[0] < nextComponent,
-      `${key} switch (${calls[0]}) must be inside the add-account modal [${addModalStart}, ${nextComponent}]`)
+  const modalSrc = clientSrc.slice(addModalStart, nextComponent)
+  const accountSrc = clientSrc.slice(clientSrc.indexOf('function AccountManager'), nextComponent)
+  const globalTokenSrc = clientSrc.slice(clientSrc.indexOf('function GlobalTokenSetting'), clientSrc.indexOf('function AccountManager'))
+
+  // 1) no scope switch, no scope-key rendering in or behind the dialog.
+  for (const key of ['ghScopeAll', 'ghScopeRepo', 'ghScopeTitle', 'ghScopeHint']) {
+    assert.equal(new RegExp(`t\\('${key}'\\)`).test(modalSrc), false,
+      `${key} must not be rendered in the single-repo dialog`)
   }
-  // No scope switch in the connected / CLI tiers (guarded by the modal boundary above).
-  assert.match(clientSrc, /if \(scope === ''\) \{ setError\(t\('ghScopeTitle'\)\); return \}/,
-    'unpicked scope is blocked in submitAdd, not defaulted')
-  assert.match(clientSrc, /if \(scope === 'global'\) \{ setConfirmShared\(true\); return \}/,
-    'shared choice needs an explicit danger confirm')
+  assert.equal(/\bscope\b/i.test(modalSrc), false, 'the dialog has no scope state or switch control')
+  assert.equal(/setConfirmShared|confirmShared|ghChangeSharedConfirm/.test(accountSrc), false,
+    'the shared-token danger confirm is gone from the single-repo entry')
+
+  // 2) the only write path in AccountManager is scope=project with projectId,
+  //    and that component has no global write path at all.
+  const writes = [...accountSrc.matchAll(/callApi\('POST', '\/auth\/token',[^)]*\)/g)].map((m) => m[0])
+  assert.equal(writes.length, 1, 'AccountManager has exactly one token write path')
+  assert.match(writes[0], /scope: 'project'/, 'the write is pinned to project scope')
+  assert.match(writes[0], /projectId: project\.id/, 'the write carries the current project id')
+  assert.equal(/'global'/.test(accountSrc), false, 'no scope=global path in the single-repo component')
+
+  // 3) the dialog title and hint name the project level in both languages.
+  const copies = (key) => [...clientSrc.matchAll(new RegExp(`${key}:\\s*"([^"]*)"`, 'g'))].map((m) => m[1])
+  const titles = copies('ghAddAccount')
+  const hints = copies('ghAccountHint')
+  assert.equal(titles.length, 2, 'ghAddAccount defined in both inline dictionaries')
+  assert.equal(hints.length, 2, 'ghAccountHint defined in both inline dictionaries')
+  for (const values of [titles, hints]) {
+    assert.ok(values.some((v) => /本仓库|当前仓库|当前项目|项目独立/.test(v)),
+      'zh copy must say the token applies to this repo only')
+    assert.ok(values.some((v) => /this repo|this project/i.test(v)),
+      'en copy must say the token applies to this repo only')
+  }
+
+  // 4) global Token save/clear still exists — but only in the global settings component.
+  assert.match(globalTokenSrc, /callApi\('POST', '\/auth\/token', \{ token, scope: 'global' \}\)/,
+    'global settings still saves a global token')
+  assert.match(globalTokenSrc, /callApi\('DELETE', '\/auth\/token', \{ scope: 'global' \}\)/,
+    'global settings still clears the global token')
 })
 
 // ---------------------------------------------------------------------------
@@ -377,8 +412,10 @@ test('PGH-13: no jargon tokens in the user-facing zh/en dictionaries', () => {
   const zh = JSON.stringify(dicts.zh)
   const en = JSON.stringify(dicts.en)
   // GitHub OAuth App is a required product term; bare OAuth or paraphrases
-  // like 授权登录 remain banned. Keep every other jargon token on the ban list.
-  for (const jargon of ['device flow', 'client_id', '授权码', '兜底', '优先级', 'GitHub App']) {
+  // like 授权登录 remain banned. device flow / 兜底 / 优先级 are approved
+  // user-facing product words (Client ID guide and layer copy, per PM/Design),
+  // so they are deliberately NOT on the ban list. Keep the rest banned.
+  for (const jargon of ['client_id', '授权码', 'GitHub App']) {
     assert.equal(zh.includes(jargon), false, `zh copy must not contain "${jargon}"`)
     assert.equal(en.toLowerCase().includes(jargon.toLowerCase()), false, `en copy must not contain "${jargon}"`)
   }

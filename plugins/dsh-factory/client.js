@@ -248,7 +248,7 @@ window.__ModuleLoader__.load({
       scopeGlobalSub: "所有项目（含本机 GitHub 连接）",
       scopeProject: "项目设置",
       scopeProjectSub: "仅当前项目",
-      globalNote: "全局设置作用于所有项目：worktrees 根目录、GitHub OAuth App 的 Client ID、GitHub OAuth App 连接与 gh CLI 状态、全局并发上限、引擎暂停。改动只影响之后新建的 worktree 与调度；已有项目与运行中的卡不变。",
+      globalNote: "全局设置作用于所有项目：worktrees 根目录、GitHub OAuth App 的 Client ID、GitHub OAuth App 连接与 gh CLI 状态、全局 GitHub Token、全局并发上限、引擎暂停。改动只影响之后新建的 worktree 与调度；已有项目与运行中的卡不变。",
       engineGate: "暂停整个引擎",
       engineGateHint: "全局暂停挡住所有项目的自动派发；已在运行的会话不受影响。页头的引擎开关与此同步。",
       viewDesc: "每张卡表示一项任务，按阶段分列；到批准关口才需要你操作。",
@@ -286,7 +286,7 @@ window.__ModuleLoader__.load({
       permCheckIssues: "Issue 读取",
       permCheckPulls: "PR 读取",
       ghConnect: "连接 GitHub",
-      ghAddAccount: "填写 GitHub Token",
+      ghAddAccount: "填写本仓库 GitHub Token",
       ghGuideNone: "此仓库尚无可用身份。用 GitHub OAuth App 连接（所有项目共用），或用 gh CLI 登录，或填写 GitHub Token。",
       ghGuideNoAccess: "当前 GitHub 身份无权限访问此仓库。换用有权限的身份，或为此仓库单独填写 GitHub Token。",
       ghKeepOpen: "GitHub OAuth App 连接完成前请勿关闭此页面",
@@ -294,16 +294,11 @@ window.__ModuleLoader__.load({
       ghStepCode: "② 在 GitHub 登录后输入设备码",
       ghStepConnecting: "③ 正在完成 GitHub OAuth App 连接…",
       ghStepDone: "连接成功，所有项目共用此 GitHub 身份",
-      ghScopeTitle: "这个 GitHub Token 给谁用？",
-      ghScopeAll: "所有项目共用",
-      ghScopeRepo: "仅此仓库",
-      ghScopeHint: "选「所有项目共用」，之后新建的项目也会使用这个 GitHub Token；选「仅此仓库」，只作用于当前仓库。",
       ghAppIdLabel: "GitHub OAuth App · Client ID",
-      ghAppIdHint: "在你的 GitHub 账号下创建 GitHub OAuth App，把它的 Client ID 填到这里；配置一次，所有项目共用。Client ID 不是密钥。",
-      ghChangeSharedConfirm: "这会替换所有项目当前共用的 GitHub 身份，确定继续？",
+      ghAppIdHint: "创建 GitHub OAuth App 时勾选 Device flow（设备流程）。创建页面会要求填 Homepage URL 和 Authorization callback URL，这是 GitHub 的必填项，但设备流程不用回调地址，随便填个网址即可——插件只需要 Client ID。Client ID 不是密钥，配置一次所有项目共用。",
       ghSaveAppId: "保存 Client ID",
       ghAccountLabel: "GitHub Token",
-      ghAccountHint: "粘贴你自己的 GitHub Token。它只保存在你的账号下，保存后不再显示。",
+      ghAccountHint: "这里只配置当前项目的 GitHub Token：只对当前仓库生效，其他项目不会使用，也不会改动全局配置。要配置所有项目共用的 Token，请到「全局设置 · GitHub 连接」。保存后不再显示完整值。",
       ghSaveAccount: "保存 GitHub Token",
       ghSaved: "已保存",
       // P4-github increment · global account management (Design §7.7)
@@ -322,6 +317,39 @@ window.__ModuleLoader__.load({
       ghComputerLoggedOut: "未登录",
       ghComputerLoginGuide: "gh CLI 尚未登录。在本机完成 gh CLI 登录后回来刷新此页。",
       ghPermNotChecked: "权限未检查",
+      ghPermOkVia: "检查通过 · 当前生效层：{layer}",
+      ghLayerTitle: "身份层级（按优先级从高到低）",
+      ghLayerGlobal: "全局",
+      ghLayerRepo: "仅此仓库",
+      ghLayerActive: "active · 当前生效",
+      ghLayerLast: "最后兜底",
+      ghPriorityShort: "排在前面的可用身份先生效；都不可用时才轮到下面的层。",
+      ghPriorityNote: "GitHub 身份按优先级依次尝试：① GitHub OAuth App（全局）→ ② gh CLI 登录（全局，本机）→ ③ GitHub Token（全局，所有项目共用）→ ④ GitHub Token（仅此仓库，最后兜底）。排在前面的可用身份先生效。第 ③ 层：如果你另存了自己的 GitHub Token，就优先用它；没另存时，才用环境变量里的 Token（GH_TOKEN / GITHUB_TOKEN）作为这一层的默认值。环境变量本身不会被修改，也不在这个页面配置。",
+      ghEnvActive: "当前生效的是环境变量里的全局 GitHub Token（GH_TOKEN / GITHUB_TOKEN）；它保持原样，另存自己的全局 Token 可优先使用。",
+      ghFixTitle: "检查未通过：可以调整这两处配置",
+      ghFixGlobal: "① 全局 GitHub 配置",
+      ghFixGlobalHint: "GitHub OAuth App 连接、gh CLI 登录状态、全局 GitHub Token 都在全局设置里。",
+      ghFixGlobalBtn: "打开全局设置",
+      ghFixRepo: "② 本仓库 GitHub Token（最后兜底）",
+      ghFixRepoHint: "这个 Token 只适用于当前仓库，不会给其他项目使用；只有上面的全局配置都不可用时才会生效。",
+      ghFixRepoBtn: "为本仓库填写 Token",
+      ghTokenGlobalTitle: "③ GitHub Token（全局，所有项目共用）",
+      ghTokenState: "全局 GitHub Token 状态：{state}",
+      ghTokenStateOn: "已配置且可登录",
+      ghTokenStateConfigured: "已配置（未做登录检查）",
+      ghTokenStateOff: "未配置",
+      ghTokenStateInvalid: "已失效，请重新填写",
+      ghTokenGlobalHint: "这里另存一个自己的全局 GitHub Token，使用时优先于环境变量；环境变量本身不会被修改，仍作为默认值。另存的 Token 排在 GitHub OAuth App 与 gh CLI 之后，只有上面两层不可用时才生效，保存后不再显示完整值。",
+      ghEnvTokenTitle: "gh token 环境变量（默认值，未被修改）",
+      ghEnvTokenOn: "已配置 gh token 环境变量 · {masked}",
+      ghEnvTokenBad: "已配置 gh token 环境变量，但已失效 · {masked}",
+      ghTokenFromEnv: "来自环境变量（默认值）",
+      ghTokenOverrideOn: "另存的全局 Token 优先于环境变量使用 · {masked}",
+      ghTokenCheckState: "检查状态",
+      ghTokenDelete: "清除全局 Token",
+      ghTokenDeleteConfirm: "清除后所有项目都会失去这层身份，确定清除？",
+      ghTokenDeleteConfirmEnv: "清除的只是另存的全局 Token，环境变量本身不变；之后优先使用环境变量。确定清除？",
+      ghTokenDeleteCancel: "取消清除",
       pauseProject: "暂停本项目",
       resumeProject: "恢复本项目",
       mobileProjectConfig: "项目配置",
@@ -496,7 +524,7 @@ window.__ModuleLoader__.load({
       scopeGlobalSub: "All projects (incl. machine-level GitHub connection)",
       scopeProject: "Project settings",
       scopeProjectSub: "This project only",
-      globalNote: "Global settings apply to all projects: worktrees root, GitHub OAuth App Client ID, GitHub OAuth App connection and gh CLI status, global concurrency cap, engine pause. Changes only affect worktrees and scheduling created from now on; existing projects and in-flight cards are untouched.",
+      globalNote: "Global settings apply to all projects: worktrees root, GitHub OAuth App Client ID, GitHub OAuth App connection, gh CLI status and the global GitHub Token, global concurrency cap, engine pause. Changes only affect worktrees and scheduling created from now on; existing projects and in-flight cards are untouched.",
       engineGate: "Pause entire engine",
       engineGateHint: "A global pause blocks auto dispatch for all projects; running sessions are untouched. The header engine switch stays in sync.",
       viewDesc: "Each card is a task, grouped by stage; you're only asked to act at approval gates.",
@@ -534,7 +562,7 @@ window.__ModuleLoader__.load({
       permCheckIssues: "Issue access",
       permCheckPulls: "Pull request access",
       ghConnect: "Connect GitHub",
-      ghAddAccount: "Add a GitHub Token",
+      ghAddAccount: "Add this repo's GitHub Token",
       ghGuideNone: "No identity is available for this repo. Connect with GitHub OAuth App (shared by all projects), sign in with gh CLI, or add a GitHub Token.",
       ghGuideNoAccess: "The current GitHub identity has no access to this repo. Use an identity with access, or add a GitHub Token for this repo only.",
       ghKeepOpen: "Keep this page open until the GitHub OAuth App connection finishes",
@@ -542,16 +570,11 @@ window.__ModuleLoader__.load({
       ghStepCode: "② Sign in to GitHub, then enter the device code",
       ghStepConnecting: "③ Finishing GitHub OAuth App connection…",
       ghStepDone: "Connected — shared by all projects",
-      ghScopeTitle: "Who should use this GitHub Token?",
-      ghScopeAll: "All projects (shared)",
-      ghScopeRepo: "This repo only",
-      ghScopeHint: "All projects (shared) also applies to projects created later; This repo only applies to the current repo.",
       ghAppIdLabel: "GitHub OAuth App · Client ID",
-      ghAppIdHint: "Create a GitHub OAuth App in your GitHub account and paste its Client ID here. Set up once; all projects share it. The Client ID is not a secret.",
-      ghChangeSharedConfirm: "This replaces the GitHub identity shared by all projects. Continue?",
+      ghAppIdHint: "When creating the GitHub OAuth App, enable Device flow. GitHub's creation form requires a Homepage URL and an Authorization callback URL — the device flow doesn't use a callback, so fill in any URL. The plugin only needs the Client ID. The Client ID is not a secret; set it once for all projects.",
       ghSaveAppId: "Save Client ID",
       ghAccountLabel: "GitHub Token",
-      ghAccountHint: "Paste your own GitHub Token. It is stored under your account only and is never shown again.",
+      ghAccountHint: "This configures a GitHub Token for this project only: it applies to the current repo, is never used by other projects, and does not change the global configuration. To set a shared token for all projects, use Global settings · GitHub connection. The full value is never shown again.",
       ghSaveAccount: "Save GitHub Token",
       ghSaved: "Saved",
       // P4-github increment · global account management (Design §7.7)
@@ -570,6 +593,39 @@ window.__ModuleLoader__.load({
       ghComputerLoggedOut: "Not signed in",
       ghComputerLoginGuide: "gh CLI isn't signed in. Sign in with gh CLI on this machine, then refresh this page.",
       ghPermNotChecked: "Access not checked yet",
+      ghPermOkVia: "Access OK · active layer: {layer}",
+      ghLayerTitle: "Identity layers (highest priority first)",
+      ghLayerGlobal: "global",
+      ghLayerRepo: "this repo only",
+      ghLayerActive: "active · in use",
+      ghLayerLast: "last fallback",
+      ghPriorityShort: "The first available layer wins; lower layers are used only when the ones above cannot serve this repo.",
+      ghPriorityNote: "GitHub identities are tried in this order: ① GitHub OAuth App (global) → ② gh CLI sign-in (global, this machine) → ③ GitHub Token (global, shared by all projects) → ④ GitHub Token (this repo only, last fallback). The first available layer wins. For layer ③, if you've saved your own GitHub Token, that one is preferred; otherwise the token from the environment (GH_TOKEN / GITHUB_TOKEN) is used as this layer's default. The environment variable itself is never changed and can't be configured here.",
+      ghEnvActive: "The active identity is the global GitHub Token from the environment (GH_TOKEN / GITHUB_TOKEN). It stays untouched; a separately saved token below is preferred when present.",
+      ghFixTitle: "Access check failed — two places to fix",
+      ghFixGlobal: "① Global GitHub settings",
+      ghFixGlobalHint: "GitHub OAuth App connection, gh CLI sign-in status and the global GitHub Token are all in Global settings.",
+      ghFixGlobalBtn: "Open Global settings",
+      ghFixRepo: "② GitHub Token for this repo (last fallback)",
+      ghFixRepoHint: "This Token applies only to the current repo and is never used by other projects; it takes effect only when the global layers above cannot serve this repo.",
+      ghFixRepoBtn: "Add a Token for this repo",
+      ghTokenGlobalTitle: "③ GitHub Token (global, all projects)",
+      ghTokenState: "Global GitHub Token state: {state}",
+      ghTokenStateOn: "configured and signed in",
+      ghTokenStateConfigured: "configured (sign-in not checked)",
+      ghTokenStateOff: "not configured",
+      ghTokenStateInvalid: "invalid — please replace it",
+      ghTokenGlobalHint: "Save your own global GitHub Token here; it is preferred over the environment token without changing the environment variable, which stays as the default. The saved token ranks below the GitHub OAuth App and gh CLI and is never shown in full after saving.",
+      ghEnvTokenTitle: "gh token environment variable (default, untouched)",
+      ghEnvTokenOn: "gh token environment variable configured · {masked}",
+      ghEnvTokenBad: "gh token environment variable configured but invalid · {masked}",
+      ghTokenFromEnv: "from environment variable (default)",
+      ghTokenOverrideOn: "separately saved token is preferred over the environment token · {masked}",
+      ghTokenCheckState: "Check status",
+      ghTokenDelete: "Clear the global Token",
+      ghTokenDeleteConfirm: "Clearing it removes this identity for all projects. Clear it?",
+      ghTokenDeleteConfirmEnv: "This clears only the separately saved token; the environment variable stays untouched and becomes preferred again. Clear it?",
+      ghTokenDeleteCancel: "Keep it",
       pauseProject: "Pause this project",
       resumeProject: "Resume this project",
       mobileProjectConfig: "Project config",
@@ -1131,9 +1187,19 @@ window.__ModuleLoader__.load({
       // Rendered inside the 02 autonomy block: no separate top border, so it
       // reads as part of that block rather than a fifth independent section.
       return h('div', { key: 'pause', style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 } }, [
+        h('div', { key: 'title', style: { ...small, color: T.ink, fontWeight: 600 } }, t('pauseTitle')),
         h('div', { key: 'sw', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
-          h('span', { key: 'l', style: { ...small, color: T.ink, fontWeight: 600 } }, t('pauseTitle')),
-          h('span', { key: 'b', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void toggle() }, paused ? t('resumeProject') : t('pauseProject'))),
+          h('button', {
+            type: 'button', role: 'switch', 'aria-checked': paused ? 'true' : 'false',
+            'aria-label': t('pauseProject'), disabled: saving,
+            onClick: () => void toggle(),
+            style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: saving ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
+          }, h('span', {
+            style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: paused ? T.warning : T.line },
+          }, h('span', {
+            style: { position: 'absolute', top: 3, left: paused ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' },
+          }))),
+          h('span', { key: 'label', style: { ...small, color: T.ink, fontWeight: 600 } }, t('pauseProject')),
         ]),
         h('div', { key: 'sem', style: small }, t('pauseSem')),
         h('div', { key: 'scope', style: small }, t('pauseScopeNote')),
@@ -1142,47 +1208,96 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    // P4-github · global "connection app ID" (non-secret client_id). Lives in
-    // settings, not a credential; the UI labels it GitHub OAuth App · Client ID.
-    function AppIdSetting({ t, settings, onSaved }) {
-      const [value, setValue] = useState(settings?.githubClientId ?? '')
+    // Global GitHub Token — the third global identity layer. The env token is
+    // its DEFAULT; saving a token-global record stores a separate token that is
+    // preferred in use, leaving the env variable untouched. The state route
+    // returns only a masked fingerprint (head + tail), never the token value.
+    function GlobalTokenSetting({ t, onChanged, refreshKey = 0 }) {
+      const [state, setState] = useState(null)
+      const [token, setToken] = useState('')
       const [saving, setSaving] = useState(false)
-      const [message, setMessage] = useState('')
       const [error, setError] = useState('')
-      useEffect(() => { setValue(settings?.githubClientId ?? '') }, [settings?.githubClientId])
+      const [message, setMessage] = useState('')
+      const [confirmDelete, setConfirmDelete] = useState(false)
+
+      const load = useCallback(async () => {
+        setError('')
+        try { setState(await callApi('GET', '/auth/token/state')) }
+        catch (err) { setError(err.message) }
+      }, [])
+      useEffect(() => { void load() }, [load, refreshKey])
 
       const save = async () => {
         setSaving(true); setError(''); setMessage('')
         try {
-          const data = await callApi('PATCH', '/settings', { githubClientId: value })
-          setValue(data?.settings?.githubClientId ?? '')
-          setMessage(t('ghSaved'))
-          if (typeof onSaved === 'function') onSaved()
+          await callApi('POST', '/auth/token', { token, scope: 'global' })
+          setToken(''); setMessage(t('ghSaved')); setConfirmDelete(false)
+          await load()
+          if (typeof onChanged === 'function') onChanged()
         } catch (err) { setError(err.message) } finally { setSaving(false) }
       }
+      const clear = async () => {
+        setSaving(true); setError(''); setMessage('')
+        try {
+          await callApi('DELETE', '/auth/token', { scope: 'global' })
+          setConfirmDelete(false); setMessage(t('ghSaved'))
+          await load()
+          if (typeof onChanged === 'function') onChanged()
+        } catch (err) { setError(err.message) } finally { setSaving(false) }
+      }
+
       const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
-      const inputStyle = { padding: '10px 12px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' }
-      return h('div', { key: 'appId', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: 12, marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } }, [
-        h('div', { key: 'label', style: { fontSize: 13, color: T.ink, fontWeight: 600 } }, t('ghAppIdLabel')),
-        h('div', { key: 'hint', style: small }, t('ghAppIdHint')),
+      const stateKey = state === null ? null
+        : (!state.configured ? 'ghTokenStateOff'
+          : state.state === 'ok' ? 'ghTokenStateOn'
+            : state.state === 'invalid' ? 'ghTokenStateInvalid' : 'ghTokenStateConfigured')
+      const env = state?.env ?? { configured: false }
+      const envCopy = env.configured
+        ? (env.state === 'invalid' ? t('ghEnvTokenBad', { masked: env.masked || '…' }) : t('ghEnvTokenOn', { masked: env.masked || '…' }))
+        : null
+      return h('div', { key: 'gtoken', style: { borderTop: `1px solid ${T.line}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 } }, [
+        h('div', { key: 'title', style: { fontSize: 12.5, fontWeight: 600, color: T.ink } }, t('ghTokenGlobalTitle')),
+        h('div', { key: 'st', style: small }, stateKey === null ? t('ghChecking')
+          : `${t('ghTokenState', { state: t(stateKey) })}${state?.source === 'env' ? ` · ${t('ghTokenFromEnv')}` : ''}${state?.login ? ` · ${state.login}` : ''}${state?.masked ? ` · ${state.masked}` : ''}`),
+        envCopy ? h('div', { key: 'env', style: { ...small, background: T.panel, borderRadius: T.radiusSm, padding: '6px 8px' } }, [
+          h('div', { key: 't', style: { color: T.ink, fontWeight: 600 } }, t('ghEnvTokenTitle')),
+          h('div', { key: 'v', style: env.state === 'invalid' ? { color: T.dangerInk } : {} }, `${envCopy}${env.login ? ` · ${env.login}` : ''}`),
+        ]) : null,
+        state?.overridden ? h('div', { key: 'over', style: small }, t('ghTokenOverrideOn', { masked: env.masked || '…' })) : null,
+        state?.reason ? h('div', { key: 'why', style: { ...small, color: T.dangerInk } }, state.reason) : null,
+        h('div', { key: 'hint', style: small }, t('ghTokenGlobalHint')),
         h('input', {
-          key: 'input', value, spellCheck: false, onChange: (event) => setValue(event.target.value),
-          placeholder: t('ghAppIdLabel'), style: inputStyle,
+          key: 'input', type: 'password', value: token, spellCheck: false,
+          onChange: (e) => setToken(e.target.value), placeholder: t('ghAccountLabel'),
+          style: { padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' },
         }),
-        h('div', { key: 'row', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
-          h(Button, { key: 'save', disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('ghSaveAppId')),
+        h('div', { key: 'ops', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } }, [
+          h('span', { key: 'save', className: 'df-tap' }, h(Button, { disabled: saving || token.trim() === '', onClick: () => void save() }, saving ? t('setupSaving') : t('ghSaveAccount'))),
+          h('span', { key: 'check', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void load() }, t('ghTokenCheckState'))),
+          state?.source === 'stored' ? h('span', { key: 'del', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => setConfirmDelete(true) }, t('ghTokenDelete'))) : null,
           message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
-          error ? h('span', { key: 'err', style: { ...small, color: T.dangerInk } }, `${t('errorPrefix')}${error}`) : null,
-        ].filter(Boolean)),
+        ]),
+        confirmDelete ? h('div', { key: 'cfm', style: { ...small, color: T.dangerInk, background: T.dangerWash, borderRadius: T.radiusSm, padding: '7px 9px' } }, [
+          h('div', { key: 'q' }, t(env.configured ? 'ghTokenDeleteConfirmEnv' : 'ghTokenDeleteConfirm')),
+          h('div', { key: 'ops', style: { display: 'flex', gap: 8, marginTop: 5 } }, [
+            h('span', { key: 'no', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => setConfirmDelete(false) }, t('ghTokenDeleteCancel'))),
+            h('span', { key: 'yes', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void clear(), style: { borderColor: T.danger, color: T.dangerInk } }, t('ghTokenDelete'))),
+          ]),
+        ]) : null,
+        error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`) : null,
       ])
     }
 
     // P4-github increment · GLOBAL account management (Design §7). OAuth
-    // connect/reconnect/disconnect + gh CLI status. All machine-level, NOT tied
-    // to a project — the per-repo identity card stays project-scoped (PGH-20/21).
-    function AccountManager({ t, onChanged, refreshKey = 0 }) {
+    // connect/reconnect/disconnect + gh CLI status + global GitHub Token, in
+    // priority order. All machine-level, NOT tied to a project (PGH-20/21).
+    function AccountManager({ t, settings, onAppIdSaved, onChanged, refreshKey = 0 }) {
       const [oauth, setOauth] = useState(null) // { connected, inFlight, hasAppId }
       const [ghcli, setGhcli] = useState(null) // { loggedIn, login }
+      // The Client ID is a non-secret setting, edited inside the OAuth block.
+      const [appId, setAppId] = useState(settings?.githubClientId ?? '')
+      const [appIdSaving, setAppIdSaving] = useState(false)
+      const [appIdMessage, setAppIdMessage] = useState('')
       const [error, setError] = useState('')
       const [revokeUrl, setRevokeUrl] = useState('')
       const [disconnected, setDisconnected] = useState(false)
@@ -1203,6 +1318,19 @@ window.__ModuleLoader__.load({
         } catch (err) { setError(err.message) }
       }, [])
       useEffect(() => { void load() }, [load, refreshKey])
+      useEffect(() => { setAppId(settings?.githubClientId ?? '') }, [settings?.githubClientId])
+
+      const saveAppId = async () => {
+        setAppIdSaving(true); setError(''); setAppIdMessage('')
+        try {
+          const data = await callApi('PATCH', '/settings', { githubClientId: appId })
+          setAppId(data?.settings?.githubClientId ?? '')
+          setAppIdMessage(t('ghSaved'))
+          // Refresh OAuth state so Connect enables immediately, same as the
+          // old standalone setting card did.
+          if (typeof onAppIdSaved === 'function') onAppIdSaved()
+        } catch (err) { setError(err.message) } finally { setAppIdSaving(false) }
+      }
 
       // Poll an in-flight connect session (same bridge the identity card uses).
       useEffect(() => {
@@ -1273,7 +1401,22 @@ window.__ModuleLoader__.load({
       return h('div', { key: 'acctMgr', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: 12, marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 } }, [
         // OAuth connection block
         h('div', { key: 'oauth', style: { display: 'flex', flexDirection: 'column', gap: 7 } }, [
-          h('div', { key: 'st', style: { fontSize: 13, fontWeight: 600, color: T.ink } }, t('ghConnectState', { state: stateText })),
+          h('div', { key: 'st', style: { fontSize: 13, fontWeight: 600, color: T.ink } }, `① ${t('ghConnectState', { state: stateText })}`),
+          // Client ID lives here, above the connect buttons: one guide, one
+          // card less, and saving immediately refreshes OAuth state.
+          h('div', { key: 'appid', style: { display: 'flex', flexDirection: 'column', gap: 5 } }, [
+            h('div', { key: 'label', style: { fontSize: 12, color: T.ink, fontWeight: 600 } }, t('ghAppIdLabel')),
+            h('div', { key: 'hint', style: small }, t('ghAppIdHint')),
+            h('input', {
+              key: 'input', value: appId, spellCheck: false,
+              onChange: (event) => setAppId(event.target.value), placeholder: t('ghAppIdLabel'),
+              style: { padding: '9px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box' },
+            }),
+            h('div', { key: 'row', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+              h('span', { key: 'save', className: 'df-tap' }, h(Button, { disabled: appIdSaving, onClick: () => void saveAppId() }, appIdSaving ? t('setupSaving') : t('ghSaveAppId'))),
+              appIdMessage ? h('span', { key: 'ok', style: { ...small, color: T.success } }, appIdMessage) : null,
+            ].filter(Boolean)),
+          ]),
           h('div', { key: 'ops', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
             !connected && !inFlight ? h('span', { key: 'c', className: 'df-tap' }, h(Button, {
               disabled: busy || !oauth?.hasAppId,
@@ -1282,7 +1425,6 @@ window.__ModuleLoader__.load({
             connected && !inFlight ? h('span', { key: 'r', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void reconnect() }, t('ghReconnect'))) : null,
             connected && !inFlight ? h('span', { key: 'd', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void disconnect() }, t('ghDisconnect'))) : null,
           ]),
-          !oauth?.hasAppId ? h('div', { key: 'noapp', style: small }, t('ghAppIdHint')) : null,
           // Honest disconnect result + website revoke guidance (PGH-19)
           disconnected ? h('div', { key: 'disc', style: { ...small, color: T.success, background: T.accentWash, borderRadius: T.radiusSm, padding: '7px 9px' } }, [
             h('div', { key: 'd1' }, t('ghDisconnectDone')),
@@ -1309,7 +1451,7 @@ window.__ModuleLoader__.load({
         ]),
         // gh CLI status — shown whether logged in or not (PGH-21), read-only
         h('div', { key: 'ghcli', style: { borderTop: `1px solid ${T.line}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 5 } }, [
-          h('div', { key: 'title', style: { fontSize: 12.5, fontWeight: 600, color: T.ink } }, t('ghComputerLoginTitle')),
+          h('div', { key: 'title', style: { fontSize: 12.5, fontWeight: 600, color: T.ink } }, `② ${t('ghComputerLoginTitle')}`),
           h('div', { key: 'st', style: small }, ghcli === null
             ? t('ghChecking')
             : (ghcli.loggedIn
@@ -1317,6 +1459,8 @@ window.__ModuleLoader__.load({
               : t('ghComputerLoggedOut'))),
           ghcli !== null && !ghcli.loggedIn ? h('div', { key: 'guide', style: { ...small, color: T.warningInk } }, t('ghComputerLoginGuide')) : null,
         ]),
+        // ③ last global layer — lowest priority of the global three.
+        h(GlobalTokenSetting, { key: 'gtoken', t, onChanged, refreshKey }),
       ])
     }
 
@@ -1482,6 +1626,45 @@ window.__ModuleLoader__.load({
       'ambiguous-origin': 'bindAmbiguous',
       'invalid-origin-url': 'bindInvalidUrl',
     }
+    // User-visible identity ladder, highest priority first. The deployment
+    // environment token is a machine-level ambient tier (between gh CLI and
+    // the global Token); it is not configurable here, so it is called out as a
+    // separate notice when it is the one actually in use.
+    const LAYER_CHAIN = [
+      { id: 'oauth-global', labelKey: 'srcConnected', scopeKey: 'ghLayerGlobal' },
+      { id: 'gh-cli', labelKey: 'srcComputer', scopeKey: 'ghLayerGlobal' },
+      { id: 'token-global', labelKey: 'srcAddedShared', scopeKey: 'ghLayerGlobal' },
+      { id: 'repo-key', labelKey: 'srcThisRepo', scopeKey: 'ghLayerRepo' },
+    ]
+    const layerLabel = (t, source) => {
+      if (source === 'env-token') return `${t('srcAddedShared')} · ${t('ghTokenFromEnv')}`
+      const layer = LAYER_CHAIN.find((entry) => entry.id === source)
+      return layer ? t(layer.labelKey) : t('srcNone')
+    }
+    function IdentityChain({ source, t }) {
+      const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
+      return h('div', { key: 'chain', style: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 9 } }, [
+        source === 'env-token' ? h('div', { key: 'env', style: { ...small, color: T.warningInk } }, t('ghEnvActive')) : null,
+        h('div', { key: 'ct', style: { ...small, color: T.ink, fontWeight: 600 } }, t('ghLayerTitle')),
+        h('div', { key: 'cn', style: small }, t('ghPriorityShort')),
+        ...LAYER_CHAIN.map((layer, index) => {
+          // The env token is the DEFAULT of the global-token tier, so it lights
+          // up the same row as a manually saved global token.
+          const active = source === layer.id || (layer.id === 'token-global' && source === 'env-token')
+          return h('div', {
+            key: layer.id,
+            style: { display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5,
+              color: active ? T.accentInk : T.mutedInk, background: active ? T.accentWash : T.panel,
+              border: `1px solid ${active ? T.accent : T.line}`, borderRadius: T.radiusSm, padding: '4px 8px' },
+          }, [
+            h('span', { key: 'rank', style: { fontFamily: 'ui-monospace, monospace' } }, `${index + 1}.`),
+            h('span', { key: 'label', style: { flex: '1 1 auto' } }, t(layer.labelKey)),
+            h('span', { key: 'scope', style: { fontSize: 10.5 } }, index === LAYER_CHAIN.length - 1 ? `${t('ghLayerRepo')} · ${t('ghLayerLast')}` : (layer.id === 'token-global' && source === 'env-token' ? `${t('ghLayerGlobal')} · ${t('ghTokenFromEnv')}` : t(layer.scopeKey))),
+            active ? h('span', { key: 'active', style: { fontWeight: 700 } }, t('ghLayerActive')) : null,
+          ])
+        }),
+      ])
+    }
 
     // P4-github · project GitHub identity card (Design §1–§5). Answers four
     // questions: where this repo is linked, who it currently uses, whether that
@@ -1503,11 +1686,9 @@ window.__ModuleLoader__.load({
       const [bindingError, setBindingError] = useState('')
       const [bindingMessage, setBindingMessage] = useState('')
 
-      // Add-account dialog state. The scope switch exists ONLY in this dialog and
-      // ONLY for a user-supplied credential — never for connected/CLI tiers (PGH-18).
+      // Add-account dialog state. This entry writes a token for THIS REPO only;
+      // the global Token is configured solely in Global settings.
       const [credential, setCredential] = useState('')
-      const [scope, setScope] = useState('') // '' until the user explicitly picks; no silent default
-      const [confirmShared, setConfirmShared] = useState(false)
 
       const base = `/identity/${encodeURIComponent(project.id)}`
       const load = useCallback(async () => {
@@ -1547,13 +1728,16 @@ window.__ModuleLoader__.load({
         }
       }, [card?.binding?.bound, card?.binding?.issueRepo, card?.identity?.connected, card?.permission?.repo, card?.permission?.status])
 
-      const openAdd = () => { setCredential(''); setScope(''); setConfirmShared(false); setError(''); setDialog('add') }
+      // Every entry point lives in this project's card, so the dialog is
+      // always project-scoped: it cannot write a global token.
+      const openAdd = () => { setCredential(''); setError(''); setDialog('add') }
 
       const submitAdd = async () => {
-        if (scope === '') { setError(t('ghScopeTitle')); return }
         setBusy(true); setError('')
         try {
-          await callApi('POST', '/auth/token', { token: credential, scope })
+          // A repo-scoped token needs the project id or the Host cannot derive
+          // the per-repo credential segment.
+          await callApi('POST', '/auth/token', { token: credential, scope: 'project', projectId: project.id })
           setCredential(''); setDialog(''); await load(); if (typeof onChanged === 'function') onChanged()
         } catch (err) { setError(err.message) } finally { setBusy(false) }
       }
@@ -1640,41 +1824,60 @@ window.__ModuleLoader__.load({
                   // Neutral text when connected-but-not-yet-checked: "来源：xxx"
                   // already renders in its own line above — don't repeat it here.
                   checking ? t('ghChecking')
-                    : (perm === 'ok' ? t('ghPermOk')
+                    : (perm === 'ok' ? t('ghPermOkVia', { layer: layerLabel(t, id.source) })
                       : (perm === 'insufficient' ? t('ghPermBad')
                         : (id.connected ? t('ghPermNotChecked') : t('ghGuideNone')))),
                 ),
                 id.connected && binding.bound && !checking ? h('span', { key: 'chk', className: 'df-tap' }, h(Button, { onClick: () => void checkPermission(), disabled: busy, style: { padding: '3px 9px', fontSize: 11 } }, t('ghRecheckPerm'))) : null,
               ]),
+              // No entry row when unbound (bind the repo first) or when the
+              // check passed (nothing to repair). On failure the repair block
+              // below owns the single set of entries; bound-but-unchecked and
+              // in-flight checks keep this row.
+              binding.bound && perm !== 'ok' && perm !== 'insufficient'
+                ? h('div', { key: 'acts', style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, paddingBottom: 8, borderBottom: `1px solid ${T.line}` } }, [
+                    h('span', { key: 'c', className: 'df-tap' }, h(Button, {
+                      // Connection is global; jump to the global GitHub block.
+                      onClick: () => { if (typeof onOpenGlobalGithub === 'function') onOpenGlobalGithub() },
+                    }, `${t('scopeGlobal')} · ${t('groupGithub')}`)),
+                    h('span', { key: 'a', className: 'df-tap' }, h(Button, { onClick: () => openAdd(), disabled: busy }, t('ghAddAccount'))),
+                  ])
+                : null,
               permChecks.length > 0 ? h('div', { key: 'cl', style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 5 } }, permChecks.map((c) => h('span', {
                 key: c.key,
                 style: { fontSize: 10.5, color: c.ok ? T.greenInk : T.dangerInk, background: c.ok ? T.greenWash : T.dangerWash, borderRadius: 999, padding: '2px 7px' },
                 title: c.reason || '',
               }, `${c.ok ? '✓' : '✕'} ${t(PERM_CHECK_KEY[c.key] || c.key)}`))) : null,
               perm === 'insufficient' && permReason ? h('div', { key: 'pr', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line', background: T.dangerWash, borderRadius: T.radiusSm, padding: '6px 8px' } }, permReason) : null,
-              perm === 'insufficient' ? h('div', { key: 'gd', style: { ...small, marginTop: 2 } }, t('ghGuideNoAccess')) : null,
+              // Layer chain stays visible in both states: a green check says
+              // which layer passed, a red one shows which layer was tried.
+              h(IdentityChain, { key: 'chain', source: id.source, t }),
+              // Fix entries appear ONLY after a failed check (PGH request):
+              // the global GitHub settings and this repo's own Token.
+              perm === 'insufficient' ? h('div', { key: 'fix', style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 3, background: T.panel, border: `1px solid ${T.line}`, borderRadius: T.radiusSm, padding: '9px 10px' } }, [
+                h('div', { key: 'ft', style: { ...small, color: T.ink, fontWeight: 600 } }, t('ghFixTitle')),
+                h('div', { key: 'fg', style: { display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' } }, [
+                  h('div', { key: 'n', style: { ...small, color: T.ink, fontWeight: 600 } }, t('ghFixGlobal')),
+                  h('div', { key: 'h', style: small }, t('ghFixGlobalHint')),
+                  h('span', { key: 'b', className: 'df-tap' }, h(Button, { onClick: () => { if (typeof onOpenGlobalGithub === 'function') onOpenGlobalGithub() } }, t('ghFixGlobalBtn'))),
+                ]),
+                h('div', { key: 'fr', style: { display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', borderTop: `1px solid ${T.line}`, paddingTop: 8 } }, [
+                  h('div', { key: 'n', style: { ...small, color: T.ink, fontWeight: 600 } }, t('ghFixRepo')),
+                  h('div', { key: 'h', style: small }, t('ghFixRepoHint')),
+                  h('span', { key: 'b', className: 'df-tap' }, h(Button, { onClick: () => openAdd() }, t('ghFixRepoBtn'))),
+                ]),
+              ]) : null,
             ]),
-            // ③ actions + ④ not-connected guidance
-            h('div', { key: 'acts', style: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 10, borderTop: `1px solid ${T.line}` } }, [
-              h('span', { key: 'c', className: 'df-tap' }, h(Button, {
-                // Connection is global; jump to the global GitHub block instead of
-                // starting an unreachable device flow from this project card.
-                onClick: () => { if (typeof onOpenGlobalGithub === 'function') onOpenGlobalGithub() },
-              }, `${t('scopeGlobal')} · ${t('groupGithub')}`)),
-              h('span', { key: 'a', className: 'df-tap' }, h(Button, { onClick: openAdd, disabled: busy }, t('ghAddAccount'))),
-            ]),
+            // ③ not-connected guidance (actions live next to the check result)
             !id.connected ? h('div', { key: 'guide', style: { ...small, marginTop: 8, background: T.panel, borderRadius: T.radiusSm, padding: '7px 9px' } }, t('ghGuideNone')) : null,
           ]),
           error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line', marginTop: 6 } }, `${t('errorPrefix')}${error}`) : null,
         ]),
 
-        // Add-account modal. Scope switch lives HERE and nowhere else (PGH-18).
+        // Add-account modal — project-level token only, no source switch.
         dialog === 'add' ? h(Modal, {
           key: 'addm', title: t('ghAddAccount'), confirmLabel: t('ghSaveAccount'), busy, t,
-          onCancel: () => setDialog(''), onConfirm: () => {
-            if (scope === 'global') { setConfirmShared(true); return }
-            void submitAdd()
-          },
+          onCancel: () => setDialog(''), onConfirm: () => void submitAdd(),
         }, [
           h('div', { key: 'hint', style: small }, t('ghAccountHint')),
           h('input', {
@@ -1683,20 +1886,7 @@ window.__ModuleLoader__.load({
             placeholder: t('ghAccountLabel'),
             style: { padding: '7px 9px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, width: '100%', boxSizing: 'border-box', marginTop: 8 },
           }),
-          h('div', { key: 'scope', style: { marginTop: 14 } }, [
-            h('div', { key: 'st', style: { fontSize: 12, fontWeight: 600, color: T.ink, marginBottom: 4 } }, t('ghScopeTitle')),
-            h('div', { key: 'seg', style: { display: 'flex', gap: 6 } }, [
-              h(Button, { key: 'all', onClick: () => setScope('global'), style: scope === 'global' ? { background: T.accentWash, borderColor: T.accent, color: T.accentInk, fontWeight: 600 } : {} }, t('ghScopeAll')),
-              h(Button, { key: 'repo', onClick: () => setScope('project'), style: scope === 'project' ? { background: T.accentWash, borderColor: T.accent, color: T.accentInk, fontWeight: 600 } : {} }, t('ghScopeRepo')),
-            ]),
-            h('div', { key: 'sh', style: { ...small, marginTop: 7 } }, t('ghScopeHint')),
-            scope === '' ? h('div', { key: 'need', style: { ...small, color: T.warningInk, marginTop: 5 } }, t('ghScopeTitle')) : null,
-          ]),
           error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line', marginTop: 8 } }, `${t('errorPrefix')}${error}`) : null,
-          confirmShared ? h(Modal, {
-            key: 'cfm', title: t('ghChangeSharedConfirm'), tone: 'danger', confirmLabel: t('ghSaveAccount'), confirmTone: 'danger', busy, t,
-            onCancel: () => setConfirmShared(false), onConfirm: () => { setConfirmShared(false); void submitAdd() },
-          }, h('p', { style: { margin: 0 } }, t('ghScopeHint'))) : null,
         ]) : null,
 
       ])
@@ -2176,10 +2366,14 @@ window.__ModuleLoader__.load({
                   h('div', { key: 'note', style: { fontSize: 12, color: T.mutedInk, background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '10px 12px', marginBottom: 12, lineHeight: 1.6 } }, t('globalNote')),
                   // Design §3.5: three lightweight groups, no new fold state.
                   h('div', { key: 'gt1', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '12px 0 8px' } }, t('groupGithub')),
-                  h(AppIdSetting, { key: 'appid', t, settings, onSaved: () => { setGithubRefreshKey((k) => k + 1); void load(); showToast(t('saved'), 'ok') } }),
-                  // Global account management — OAuth connect/reconnect/disconnect
-                  // + gh CLI status, all machine-level (Design §7, PGH-19~21).
-                  h(AccountManager, { key: 'acctmgr', t, refreshKey: githubRefreshKey, onChanged: () => void load() }),
+                  h('div', { key: 'gpri', style: { fontSize: 12, color: T.mutedInk, background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '10px 12px', marginBottom: 12, lineHeight: 1.6 } }, t('ghPriorityNote')),
+                  // Global account management — ① OAuth App (Client ID + connect),
+                  // ② gh CLI status, ③ global Token; all machine-level (PGH-19~21).
+                  h(AccountManager, {
+                    key: 'acctmgr', t, settings, refreshKey: githubRefreshKey,
+                    onAppIdSaved: () => { setGithubRefreshKey((k) => k + 1); void load(); showToast(t('saved'), 'ok') },
+                    onChanged: () => void load(),
+                  }),
                   h('div', { key: 'gt2', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '16px 0 8px' } }, t('groupPaths')),
                   h(WorktreesRootSetting, { key: 'wr', t }),
                   h('div', { key: 'gc', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: 12, marginTop: 12 } },

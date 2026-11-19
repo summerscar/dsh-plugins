@@ -31,7 +31,7 @@ import { decideIdentity, identityView, OAUTH_KEY_ID, credentialKeyOf } from './i
 import { registerGithubOAuthFlow, verifyLogin } from './github-oauth.js'
 import {
   identityCardFor, probePermission, createAuthorizationBridge, writeGithubToken, removeGithubToken,
-  disconnectOAuth, oauthState, ghCliState,
+  disconnectOAuth, oauthState, ghCliState, sharedTokenState,
 } from './github-api.js'
 
 export { FactoryStore } from './store.js'
@@ -49,11 +49,11 @@ export {
 } from './github-oauth.js'
 export {
   identityCardFor, probePermission, createAuthorizationBridge, writeGithubToken, removeGithubToken,
-  disconnectOAuth, oauthState, ghCliState,
+  disconnectOAuth, oauthState, ghCliState, sharedTokenState,
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-18.7'
+export const BUILD = 'factory-2026-11-18.9'
 
 export const name = 'dsh-factory'
 
@@ -456,6 +456,17 @@ export function apply(ctx, config = {}) {
           credentials: credentialsService,
           clientId: store.getGithubClientIdSetting(),
         }))
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // Global GitHub Token state (global, read-only). Describes the shared token
+    // record + liveness; never echoes the token itself.
+    if (method === 'GET' && /^\/auth\/token\/state(?:\?.*)?$/.test(route)) {
+      try {
+        sendJson(res, 200, await sharedTokenState({ credentials: credentialsService, verifyToken, env: process.env }))
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       }

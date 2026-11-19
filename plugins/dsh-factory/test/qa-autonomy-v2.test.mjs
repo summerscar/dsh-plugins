@@ -226,10 +226,21 @@ test('B5 pause/takeover copy is clean; backend pause/takeover/release unchanged'
   assert.doesNotMatch(clientSrc, /takeHint/, 'fake take entry removed from PauseSection')
   assert.match(clientSrc, /t\('pauseScopeNote'\)/, 'scope note rendered')
   assert.match(clientSrc, /t\('pauseTitle'\)/, 'pauseTitle label rendered')
-  // Only ONE pause toggle button: paused ? resumeProject : pauseProject in a single Button.
-  assert.match(clientSrc, /h\(Button, \{ disabled: saving, onClick: \(\) => void toggle\(\) \}, paused \? t\('resumeProject'\) : t\('pauseProject'\)\)/,
-    'single pause/resume toggle button')
-  assert.equal((clientSrc.match(/t\('pauseProject'\)/g) ?? []).length, 1, 'pauseProject text appears once')
+  // Pause is now a STATE SWITCH, not a paused/resume action button: one
+  // role=switch control with a fixed pauseProject label beside it.
+  const pauseSection = clientSrc.slice(clientSrc.indexOf('function PauseSection'), clientSrc.indexOf('function GlobalTokenSetting'))
+  assert.ok(pauseSection.length > 0, 'PauseSection boundaries found')
+  assert.equal((pauseSection.match(/role: 'switch'/g) ?? []).length, 1, 'exactly one switch in PauseSection')
+  assert.doesNotMatch(pauseSection, /h\(Button|resumeProject/, 'no pause/resume action button left')
+  assert.match(pauseSection, /'aria-checked': paused \? 'true' : 'false'/, 'switch reflects the paused state')
+  assert.match(pauseSection, /'aria-label': t\('pauseProject'\)/, 'switch has an accessible name')
+  assert.match(pauseSection, /disabled: saving/, 'switch is disabled while saving')
+  assert.match(pauseSection, /onClick: \(\) => void toggle\(\)/, 'switch still drives the same toggle')
+  assert.match(pauseSection, /background: paused \? T\.warning : T\.line/, 'on = warning orange, off = neutral grey')
+  assert.match(pauseSection, /left: paused \? 19 : 3/, 'knob moves right when paused')
+  assert.match(pauseSection, /h\('span', \{ key: 'label'[^\n]*t\('pauseProject'\)/, 'fixed pauseProject label next to the switch')
+  // The key is used twice on purpose: switch aria-label + fixed visible label.
+  assert.equal((clientSrc.match(/t\('pauseProject'\)/g) ?? []).length, 2, 'pauseProject appears as aria-label and label')
   assert.doesNotMatch(zh.pauseSem ?? '', /闸门/, 'no 闸门 jargon in pauseSem')
   assert.doesNotMatch(zh.pauseSub ?? '', /闸门/, 'pauseSub key deleted')
   // CardActions takeover/release still present (takeover only on the card).

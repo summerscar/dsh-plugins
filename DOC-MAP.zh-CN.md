@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；后续改动走正常更新流程。能力与限制见它自己的 README。 |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；同样的更新流程。账号处理、可选模型供应商与额度面板见其 README。 |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2 自治引擎、P3 机器代批计划、P4 自治档界面、P5/P6 整页改版与界面迭代（含 GitHub 项目级身份配置）、P7（卡片正文注入与单卡交还）均已实现；自治现为语义三档（manual / you-approve / machine-approve）加唯一 autoDispatch 开关，取代旧 L0/L1/L2 与两个开关（旧存档加载时一次性迁移）；另有「取消卡片」软删（转 `canceled` 终态、保留卡与 source 防复活、后端零改动），页尾可用折叠条展开只读查看已取消卡，任务卡统计排除 canceled、保留 done。状态持久化在 SQLite。 |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2 自治引擎、P3 机器代批计划、P4 自治档界面、P5/P6 整页改版与界面迭代（含 GitHub 项目级身份配置）、P7（卡片正文注入与单卡交还）均已实现；自治现为语义三档（manual / you-approve / machine-approve）加唯一 autoDispatch 开关，取代旧 L0/L1/L2 与两个开关（旧存档加载时一次性迁移）；另有「取消卡片」软删（转 `canceled` 终态、保留卡与 source 防复活、后端零改动），页尾可用折叠条展开只读查看已取消卡，任务卡统计排除 canceled、保留 done。状态持久化在 SQLite。GitHub 身份设置增量补上四层身份（OAuth App → gh CLI → 全局 Token → 仅此仓库 Token）、把 Client ID 并入 ① OAuth App 块，并让全局 Token 状态以只读接口返回掩码指纹。 |
 
 工厂是目前唯一在开发的插件。它现在能做什么、还有什么没解决，都要读它的路线图：[§2](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 写当前行为，[§5](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 列已知缺口。缺口清单不等于「已验证行为」的完整清单，判断以源码和真机为准。派发会话的权限边界与写入/回执窗口（工厂侧）都已修并验通。卡正文按「数据非指令」在技能指令前注入；单卡接管现在有对称的、幂等的交还路由；非终态卡可一键取消（软删），没有按卡硬删；已取消卡可在页尾折叠条只读查看，任务卡统计不含已取消卡、仍计已完成卡。
 
@@ -25,10 +25,10 @@
 | P3 | machine-approve：机器代批计划（按项目显式选档） | 已实现并真机验通——机器只走 `plan-review -> build`、不读任何开关，交付授权仍留人 | 路线图 §4 P3 |
 | P4 | 自治档位、状态、暂停／接管与并发设置的界面 | 已实现并验收；界面已在真机复测、P4-7a/7b 全局上限证明已用后端并发夹具验过 | 路线图 §4 P4 与 §5 |
 | P5 | UI/UX、文案与一项目一板 | 已实现；QA 报告全量通过 | 路线图 §4 P5 |
-| P6 | 整页视图、建项目一次性绑定与身份显示 | 已实现；QA 报告全量通过 | 路线图 §4 P6 |
+| P6 | 整页视图、建项目一次性绑定与身份显示 | 已实现；QA 报告全量通过；后续增量补上四层身份、Client ID 位置与只读 Token 状态 | 路线图 §4 P6 |
 | P7 | 卡片正文注入（任务描述）与单卡交还 | 已实现；Review 无阻断、Design UI 审稿通过、QA 报告全绿；正文实时回源的真机端到端明确未闭环，列为残留风险 | 路线图 §4 P7 与 §5 |
 
-**下一步**：单卡接管／交还与卡片正文注入已交付。接下来：[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，仍需明确决定才启动；正文实时性的真机端到端（改远端 issue → 再派发 → 报告体现新内容）未跑，需要用户授权绑定仓库并改远端 issue；其余已知缺口见路线图 §5。
+**下一步**：单卡接管／交还与卡片正文注入已交付。接下来：[RESEARCH.zh-CN.md](plugins/dsh-factory/docs/RESEARCH.zh-CN.md) 里记录的 Work/Review 拆双卡是结构性后续，仍需明确决定才启动；正文实时性的真机端到端（改远端 issue → 再派发 → 报告体现新内容）未跑，需要用户授权绑定仓库并改远端 issue；其余已知缺口见路线图 §5。GitHub 身份设置增量里，失败态修复块、真机保存 Client ID、Token 保存/清除写操作与英文界面仍待真机复核。
 
 ## 想了解某件事，读哪份
 
@@ -46,6 +46,7 @@
 | 怎么发 npm、推进生命周期 | [`.agents/skills/npm-plugin-release/SKILL.md`](.agents/skills/npm-plugin-release/SKILL.md) | 发布工作流、OIDC、提交推送前的同步。 |
 | 怎么在真机上验证插件 | [`.agents/skills/dsh-plugin-live-verification/SKILL.md`](.agents/skills/dsh-plugin-live-verification/SKILL.md) | 宿主契约、静默降级、环境变量路径、取证纪律。 |
 | 怎么构建自动派发的 agent 会话：上下文注入、沙箱钉档、写前预检、自治边 | [`.agents/skills/dsh-dispatch-session-mechanics/SKILL.md`](.agents/skills/dsh-dispatch-session-mechanics/SKILL.md) | 派发会话的宿主侧机制：每类坑什么时候出现、怎么判断。 |
+| 怎么同时支持多种凭据来源，并展示优先级、当前生效层与只读 Token 状态 | [`.agents/skills/dsh-credential-identity-ladder/SKILL.md`](.agents/skills/dsh-credential-identity-ladder/SKILL.md) | 多来源凭据的裁决顺序、环境变量作为默认值、掩码只读状态、失败后才出现的修复入口。 |
 
 ## 维护
 

@@ -21,13 +21,15 @@
  * Five tiers, high → low (order locked):
  *   1. global OAuth        (oauth-global record)           → credentialToken
  *   2. gh CLI login        (probeGhLogin)                  → ghLoggedIn=true
- *   3. deployment env token(GH_TOKEN / GITHUB_TOKEN)        → no args (inherit)
- *   4. shared token        (token-global record)           → credentialToken
+ *   3. explicit shared token (token-global record)         → credentialToken
+ *   4. deployment env token (GH_TOKEN / GITHUB_TOKEN)       → no args (inherit)
  *   5. per-repo key        (<project segment> record)      → credentialToken
  *   —  none                → no args, "not connected"
  *
- * Only the token tiers (1/4/5) read records; tiers 2/3 are ambient. Tiers 1/4/5
- * are the three "stored record" sources; 2/3 are read straight from the machine.
+ * Tier 3 is the manually configured global Token; it deliberately outranks
+ * tier 4 so a saved token OVERRIDES the env-token default. Tier 4 is the same
+ * global-token tier's default value when no manual token is live. Only the
+ * record tiers (1/3/5) read records; tiers 2/4 are read from the machine.
  */
 import { probeGhLogin as realProbeGhLogin } from './git-exec.js'
 
@@ -247,28 +249,10 @@ export async function decideIdentity({
     return d
   }
 
-  // Tier 3 — deployment env token. Present = winner; buildGitEnv keeps the
-  // inherited token as-is, so no explicit argument is mapped. This is also a
-  // token-backed identity: when liveness probing is enabled, a dead env token
-  // must not show a false green either (PGH-22) — fall through if it fails.
-  const envToken = nonEmpty(processEnv.GH_TOKEN) ?? nonEmpty(processEnv.GITHUB_TOKEN)
-  if (envToken !== null) {
-    const envLive = typeof verifyToken === 'function' ? await verifyTokenTier({ token: envToken, login: null }, verifyToken) : { login: null, token: envToken }
-    if (envLive) {
-      const d = baseDecision({
-        source: IDENTITY_SOURCE.ENV_TOKEN,
-        sourceType: SOURCE_TYPE.GH_TOKEN,
-        globalShared: true,
-        login: envLive.login,
-        loginFrom: envLive.login === null ? null : 'probe',
-      })
-      d.git = mapDecisionToGitEnv(d)
-      return d
-    }
-  }
-
-  // Tier 4 — explicit shared token (token-global). Only reached when the global
-  // ambient tiers above cannot serve this repo (pitfall ⑤ ordering).
+  // Tier 3 — explicit shared token (token-global). This is the MANUAL global
+  // Token and outranks the env default: saving one stores a SEPARATE token
+  // that is preferred in use, without touching GH_TOKEN / GITHUB_TOKEN
+  // themselves (pitfall ⑤ — judge before the ambient token is inherited).
   const shared = grantToken(await safeRead(read, credentialKeyOf(SHARED_KEY_ID)))
   const sharedLive = shared ? await verifyTokenTier(shared, verifyToken) : null
   if (sharedLive) {
@@ -283,6 +267,26 @@ export async function decideIdentity({
     })
     d.git = mapDecisionToGitEnv(d)
     return d
+  }
+
+  // Tier 4 — deployment env token, i.e. the DEFAULT value of the global Token
+  // tier. buildGitEnv keeps the inherited token as-is, so no explicit argument
+  // is mapped. A dead default must not show a false green (PGH-22) — fall
+  // through to the repo fallback if liveness probing fails.
+  const envToken = nonEmpty(processEnv.GH_TOKEN) ?? nonEmpty(processEnv.GITHUB_TOKEN)
+  if (envToken !== null) {
+    const envLive = typeof verifyToken === 'function' ? await verifyTokenTier({ token: envToken, login: null }, verifyToken) : { login: null, token: envToken }
+    if (envLive) {
+      const d = baseDecision({
+        source: IDENTITY_SOURCE.ENV_TOKEN,
+        sourceType: SOURCE_TYPE.GH_TOKEN,
+        globalShared: true,
+        login: envLive.login,
+        loginFrom: envLive.login === null ? null : 'probe',
+      })
+      d.git = mapDecisionToGitEnv(d)
+      return d
+    }
   }
 
   // Tier 5 — per-repo key. Segment from githubCredentialId or project id.

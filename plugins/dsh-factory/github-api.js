@@ -356,6 +356,89 @@ export async function oauthState({ credentials, authorization, clientId } = {}) 
 }
 
 /**
+ * A short, non-reversible-looking fingerprint for the settings UI: first and
+ * last four characters only, so the user can tell WHICH token is configured
+ * without the full secret ever leaving the Host. Very short values are masked
+ * completely rather than echoed.
+ */
+export function maskToken(value) {
+  const token = typeof value === 'string' ? value.trim() : ''
+  if (token.length === 0) return null
+  if (token.length <= 8) return '…'
+  return `${token.slice(0, 4)}…${token.slice(-4)}`
+}
+
+function envTokenOf(env) {
+  const source = env ?? process.env
+  const gh = typeof source?.GH_TOKEN === 'string' ? source.GH_TOKEN.trim() : ''
+  if (gh !== '') return gh
+  const github = typeof source?.GITHUB_TOKEN === 'string' ? source.GITHUB_TOKEN.trim() : ''
+  return github === '' ? null : github
+}
+
+async function describeToken(token, verifyToken) {
+  const info = { configured: true, masked: maskToken(token), state: 'configured', login: null }
+  if (typeof verifyToken !== 'function') return info
+  try {
+    const live = await verifyToken(token)
+    if (typeof live?.login === 'string' && live.login !== '') info.login = live.login
+    info.state = 'ok'
+  } catch {
+    // A dead token must never show a false green; no upstream message is
+    // copied back because it may contain the token.
+    info.state = 'invalid'
+  }
+  return info
+}
+
+/**
+ * Global GitHub Token state for the global settings status list. The env token
+ * (GH_TOKEN / GITHUB_TOKEN) is the DEFAULT of this tier; a manually saved
+ * `token-global` record is a SEPARATE token that the identity ladder prefers
+ * in use; the environment variable itself is never changed. Read-only: never
+ * returns a token value, only a masked fingerprint, valid state and login.
+ */
+export async function sharedTokenState({ credentials, verifyToken, env = process.env } = {}) {
+  const envToken = envTokenOf(env)
+  const envInfo = envToken === null
+    ? { configured: false, masked: null, state: 'none', login: null }
+    : await describeToken(envToken, verifyToken)
+
+  let storedConfigured = false
+  if (credentials !== undefined && credentials !== null && typeof credentials.describeRecord === 'function') {
+    try { storedConfigured = (await credentials.describeRecord(credentialKeyOf(SHARED_KEY_ID)))?.configured === true } catch { storedConfigured = false }
+  }
+  // No separately saved token: the env default IS the effective global token.
+  if (!storedConfigured) {
+    if (!envInfo.configured) return { configured: false, source: 'none', state: 'none', login: null, reason: null, masked: null, env: envInfo, overridden: false }
+    return {
+      configured: true, source: 'env', state: envInfo.state, login: envInfo.login,
+      reason: envInfo.state === 'invalid' ? '环境变量里的全局 GitHub Token 当前无法验证（可能已失效），请检查后重新配置' : null,
+      masked: envInfo.masked, env: envInfo, overridden: false,
+    }
+  }
+
+  // Separately saved token present — describe that record, and still report
+  // the untouched env default so the UI can show both fingerprints.
+  const fallback = { configured: true, source: 'stored', state: 'configured', login: null, reason: null, masked: null, env: envInfo, overridden: envInfo.configured }
+  if (typeof credentials.readRecord !== 'function') return fallback
+  try {
+    const record = await credentials.readRecord(credentialKeyOf(SHARED_KEY_ID))
+    const payload = record?.kind === 'grant' && record.payload !== null && typeof record.payload === 'object' ? record.payload : null
+    const token = typeof payload?.token === 'string' ? payload.token.trim() : ''
+    const storedInfo = await describeToken(token, verifyToken)
+    if (typeof payload?.login === 'string' && payload.login !== '' && storedInfo.login === null) storedInfo.login = payload.login
+    return {
+      configured: true, source: 'stored', state: storedInfo.state, login: storedInfo.login,
+      reason: storedInfo.state === 'invalid' ? '手动配置的全局 GitHub Token 当前无法验证（可能已失效），请重新配置' : null,
+      masked: storedInfo.masked, env: envInfo, overridden: envInfo.configured,
+    }
+  } catch {
+    return { ...fallback, state: 'invalid', reason: '手动配置的全局 GitHub Token 当前无法验证（可能已失效），请重新配置' }
+  }
+}
+
+/**
  * gh CLI login state for the global block (PGH-21). This is a MACHINE-level fact
  * ("is this computer signed in?"), distinct from the per-repo identity card's
  * "电脑上已登录" source. Read-only: never creates/deletes a record or runs login.

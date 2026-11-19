@@ -57,19 +57,21 @@ dsh plugin --profile web add @summerscar/dsh-factory
 
 ## GitHub 接入
 
-每个项目自己判断用哪个 GitHub 身份，项目里的**身份卡**用大白话把结果摆出来：当前用的是哪个账号（需要时从本机 `gh` 登录只读解析）、来源是哪一档、本地目录是否绑到了正确的远端仓库、以及一项可以随点随查的权限检查。若来源已连接但读不到账号名，卡片显示来源，而不是「无法识别账号」一类占位说法。连一次，到处都能用。
+每个项目自己判断用哪个 GitHub 身份，项目里的**身份卡**用大白话把结果摆出来：当前用的是哪个账号（需要时从本机 `gh` 登录只读解析）、来源是哪一档、本地目录是否绑到了正确的远端仓库、以及一项可以随点随查的权限检查。卡片按优先级列出四层身份并高亮当前生效层；检查通过时会写明是哪一层通过的。若来源已连接但读不到账号名，卡片显示来源，而不是「无法识别账号」一类占位说法。全局来源连一次，所有项目都能用。
 
 仓库绑定（`owner/repo`）与身份是两回事：建项目时从 github.com `origin` 识别一次，可在项目设置里手动改绑或清空（留空即解绑）。连接与 OAuth 只在全局设置里；项目卡上的 GitHub 按钮只带你去那里。
 
-来源分三种，作用域由种类定死：
+来源分三种，作用域由种类定死（个人访问令牌按作用域分成全局与仅此仓库两层，所以身份卡显示四层）：
 
-- **一个 GitHub OAuth App**——通过设备码流程连一次，连接对所有项目共用（这一档没有按项目开的开关）。用它要自己[创建 OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)并勾选设备码流程，把它的 Client ID（不是密钥）填进插件，再到 [github.com/login/device](https://github.com/login/device) 输入 GitHub 给的八位码。
+- **一个 GitHub OAuth App**——通过设备码流程连一次，连接对所有项目共用（这一档没有按项目开的开关）。用它要自己[创建 OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)并勾选设备码流程，把它的 Client ID（不是密钥，一个值所有项目共用）填进插件，再到 [github.com/login/device](https://github.com/login/device) 输入 GitHub 给的八位码。创建页面还会要求填 Homepage URL 和 Authorization callback URL；设备码流程不用回调地址，随便填个网址即可。
 - **你机器上的 `gh` 登录**——已经跑过 `gh auth login` 就直接用，不额外存任何东西。账号管理区会显示 `gh` 是否已登录成某个账号，没登录时告诉你怎么登。
 - **一个个人访问令牌**——只有这一档由你选作用域：**所有项目共用**，或**只给一个仓库**。
 
-插件按「谁能真正够到这个仓库」取第一档命中：先是共享连接，再是 `gh` 登录，再是部署环境里的令牌，最后是你存的令牌（共用的，或只给这个仓库的）。都没有时，身份卡显示「未连接」并告诉你下一步怎么办。
+插件按「谁能真正够到这个仓库」取第一档命中：先是共享的 OAuth App，再是 `gh` 登录，再是全局 GitHub Token，最后是**只给这个仓库**的 Token（兜底层）。`GH_TOKEN` / `GITHUB_TOKEN` 环境变量是全局 Token 这一层的**默认值**；可以在页面里另存一个自己的全局 Token，使用时优先于环境变量，环境变量本身不会被改动。已连接某个身份、但权限检查不通过时，卡片下面才给出两处可改的配置：全局 GitHub 设置，以及**仅适用于当前仓库**的 Token。卡片底部常驻的入口行（全局设置；为本仓库填写 Token）只在仓库已绑定且尚未出检查结果（未检查、或检查中）时显示；检查通过、未绑定仓库时都不显示，检查失败时页面上只剩修复块这一套入口，不再重复。
 
-令牌一律存进 DSH 凭据，不写进配置、日志或状态文件，也绝不回显。插件不内置任何 OAuth 凭据。在全局设置区，你可以对共享的 OAuth 连接**连接**、**重设**（用新连接替换旧的）或**断开**，`gh` 登录状态也在那里能看。
+手动保存的令牌存进 DSH 凭据，不写进配置、日志或状态文件。插件不内置任何 OAuth 凭据。全局设置按优先级列出三层：① 共享 OAuth App——**连接**、**重设**（用新连接替换旧的）或**断开**；② `gh` CLI 登录状态；③ **全局 GitHub Token**——保存、清除或重新检查。Client ID 输入框在 ① 块内，位于状态行下、连接按钮上，一个值所有项目共用。配置了环境变量时，设置页会显示「已配置 gh token 环境变量」以及掩码（只露头尾各四位；八位及以下的值整体遮成「…」），方便辨认是哪个 Token；另存的全局 Token 会明确标为优先使用者。完整值绝不回显。
+
+另有一个只读接口 `GET /api/dsh-factory/auth/token/state` 支撑这块状态显示：它报告全局 Token 是否已配置、来源是环境变量还是另存的 Token、是否有效、对应的登录名，以及一个掩码指纹；任何情况下都不返回完整 Token。
 
 参考：[授权流程](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) · [创建入口](https://github.com/settings/applications/new) · [设备码输入](https://github.com/login/device)
 
