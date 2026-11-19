@@ -120,7 +120,7 @@ test('C2 canceled auto card keeps its source; a fresh intake does NOT recreate i
 // C3 — canceled not dispatched next tick; terminal cards have no cancel button
 // ==============================================================================
 test('C3 canceled card is not dispatched on the next engine tick', async () => withStore(async (f) => {
-  f.store.updateAutonomy(f.project.id, { autonomy: 'L1', autoStart: true })
+  f.store.updateAutonomy(f.project.id, { autonomy: 'you-approve', autoDispatch: true })
   f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: f.board.id })
   const live = f.store.createCard({ boardId: f.board.id, title: 'live' })
   const canceled = f.store.createCard({ boardId: f.board.id, title: 'cancel' })

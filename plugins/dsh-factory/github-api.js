@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process'
 
 import { IDENTITY_SOURCE, identityView, repoCredentialSegment, SHARED_KEY_ID, OAUTH_KEY_ID, credentialKeyOf } from './identity.js'
 import { storeUserToken, deleteUserToken } from './github-oauth.js'
-import { probeEnv, probeGhLogin as realProbeGhLogin } from './git-exec.js'
+import { buildGitEnv, probeEnv, probeGhLogin as realProbeGhLogin } from './git-exec.js'
 
 /**
  * The identity card's read-only data: binding relationship + resolved identity.
@@ -30,68 +30,124 @@ export function identityCardFor({ project, decision } = {}) {
       // Detection notice from project creation; null once manually edited/cleared.
       reason: typeof project?.bindingReason === 'string' ? project.bindingReason : null,
     },
+    // Semantic autonomy projection for read-back; old level ids are never
+    // exposed and the switch is only meaningful at you-approve.
+    autonomy: {
+      level: ['manual', 'you-approve', 'machine-approve'].includes(project?.autonomy) ? project.autonomy : 'manual',
+      autoDispatch: project?.autonomy === 'you-approve' && project?.autoDispatch === true,
+    },
+    // Last full permission suite result. `ok` is only trustworthy when the
+    // checked repo still equals the current binding (store clears on edit).
+    permission: {
+      status: ['ok', 'insufficient', 'not-connected'].includes(project?.permissionStatus) ? project.permissionStatus : null,
+      checkedAt: typeof project?.permissionCheckedAt === 'string' ? project.permissionCheckedAt : null,
+      reason: typeof project?.permissionReason === 'string' ? project.permissionReason : null,
+      repo: typeof project?.permissionRepo === 'string' ? project.permissionRepo : null,
+      checks: Array.isArray(project?.permissionChecks)
+        ? project.permissionChecks.map((c) => ({
+            key: typeof c?.key === 'string' ? c.key : 'unknown',
+            ok: c?.ok === true,
+            reason: typeof c?.reason === 'string' ? c.reason : null,
+          }))
+        : [],
+    },
     identity: identityView(decision),
   }
 }
 
 /**
- * Permission check — a user-triggered, READ-ONLY probe of "can this identity
- * reach this repository". Never runs automatically per tick (no auto tier switch).
- * `probeImpl` is injected so it is offline-testable; the default runs in Host.
- * Returns { status: 'ok'|'insufficient'|'not-connected', reason }. No token leaks.
+ * Permission check — a user-triggered, READ-ONLY full capability probe of the
+ * winning identity against this repository. Never runs automatically per tick
+ * (no autonomy tier switch) and never mutates GitHub. It checks the four
+ * capabilities the factory actually needs: repository metadata read, issue
+ * read, pull-request read, and code-write (push / PR) inferred from the repo
+ * permission payload. A fine-grained token that hides write permission is a
+ * FAIL, never a green guess. `probeImpl` stays injectable for offline tests.
+ * Returns { status, reason, checks:[{key,ok,reason}] }; no token is ever echoed.
  */
 export async function probePermission({
   decision, repo, env = process.env, fetchImpl = globalThis.fetch, ghExec = spawnSync, probeImpl,
 } = {}) {
   if (!decision || decision.source === IDENTITY_SOURCE.NONE) {
-    return { status: 'not-connected', reason: '还没有可用于这个仓库的 GitHub 账号' }
+    return { status: 'not-connected', reason: '还没有可用于这个仓库的 GitHub 账号', checks: [] }
   }
   if (typeof repo !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(repo.trim())) {
-    return { status: 'insufficient', reason: '仓库标识格式不对，应形如 owner/name' }
+    return { status: 'insufficient', reason: '仓库标识格式不对，应形如 owner/name', checks: [] }
   }
+  const cleanRepo = repo.trim()
   const run = typeof probeImpl === 'function'
     ? probeImpl
-    : defaultPermissionProbe({ fetchImpl, ghExec })
+    : fullPermissionProbe({ fetchImpl, ghExec })
   try {
-    const result = await run({ decision, repo: repo.trim(), env })
-    return result?.ok === true
-      ? { status: 'ok', reason: null }
-      : { status: 'insufficient', reason: result?.reason || '这个账号没有访问该仓库的权限' }
+    const result = await run({ decision, repo: cleanRepo, env })
+    const checks = Array.isArray(result?.checks)
+      ? result.checks.map((c) => ({
+          key: typeof c?.key === 'string' ? c.key : 'unknown',
+          ok: c?.ok === true,
+          reason: typeof c?.reason === 'string' ? c.reason : null,
+        }))
+      : []
+    const ok = result?.ok === true && (checks.length === 0 || checks.every((c) => c.ok))
+    const firstFailure = checks.find((c) => !c.ok)
+    return ok
+      ? { status: 'ok', reason: null, checks }
+      : { status: 'insufficient', reason: result?.reason || firstFailure?.reason || '这个账号没有访问该仓库的完整权限', checks }
   } catch (error) {
-    return { status: 'insufficient', reason: error instanceof Error ? error.message : String(error) }
+    return { status: 'insufficient', reason: error instanceof Error ? error.message : String(error), checks: [] }
   }
 }
 
-function defaultPermissionProbe({ fetchImpl, ghExec }) {
+function fullPermissionProbe({ fetchImpl, ghExec }) {
   return async ({ decision, repo, env }) => {
-    // Token-backed tiers call the REST API with the winner's token. The token
-    // stays inside this Host-side closure — only ok/reason escapes.
-    if (typeof decision.token === 'string' && decision.token !== '') {
-      const response = await fetchImpl(`https://api.github.com/repos/${repo}`, {
-        method: 'GET',
-        headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${decision.token}`, 'user-agent': 'dsh-factory' },
-      })
-      if (response.status === 200) return { ok: true }
-      let reason = `没有访问该仓库的权限（HTTP ${response.status}）`
-      try {
-        const body = await response.json()
-        if (typeof body?.message === 'string' && body.message !== '') reason = body.message
-      } catch { /* keep the status-based reason */ }
-      return { ok: false, reason }
+    const token = typeof decision.token === 'string' && decision.token !== '' ? decision.token : null
+    const ghEnv = token
+      ? buildGitEnv(env, { credentialToken: token })
+      : (decision.source === IDENTITY_SOURCE.GH_CLI ? probeEnv(env) : { ...env })
+    const redact = (text) => {
+      const raw = typeof text === 'string' ? text : ''
+      return token === null ? raw : raw.split(token).join('[redacted]')
     }
-    // gh CLI tier: use the real login (env tokens stripped so a low-scope PAT
-    // cannot shadow it), identical to the probe used during decision.
-    if (decision.source === IDENTITY_SOURCE.GH_CLI) {
-      const result = ghExec('gh', ['api', `repos/${repo}`, '--silent'], { encoding: 'utf8', env: probeEnv(env) })
+    const check = (key, ok, reason) => ({ key, ok, reason: ok ? null : redact(reason || '权限不足') })
+    const jsonOf = async (response) => {
+      const text = typeof response?.text === 'function' ? await response.text() : ''
+      try { return text === '' ? null : JSON.parse(text) } catch { return null }
+    }
+    const request = async (path) => {
+      if (token !== null) {
+        const response = await fetchImpl(`https://api.github.com${path}`, {
+          method: 'GET',
+          headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'user-agent': 'dsh-factory' },
+        })
+        const body = await jsonOf(response)
+        const message = typeof body?.message === 'string' && body.message !== '' ? redact(body.message) : ''
+        return { ok: response.status === 200, body, reason: message || `GitHub API 返回 HTTP ${response.status}` }
+      }
+      const result = ghExec('gh', ['api', path.replace(/^\//, ''), '--silent'], { encoding: 'utf8', env: ghEnv })
       if (result?.error) throw result.error
-      if (result?.status === 0) return { ok: true }
-      return { ok: false, reason: (result?.stderr || '').trim() || '没有访问该仓库的权限' }
+      let body = null
+      try { body = result.status === 0 && result.stdout ? JSON.parse(result.stdout) : null } catch { body = null }
+      return {
+        ok: result?.status === 0,
+        body,
+        reason: (result?.stderr || '').trim() || '没有访问该仓库的权限',
+      }
     }
-    // env-token tier: the inherited token is already in env; let gh use it.
-    const envResult = ghExec('gh', ['api', `repos/${repo}`, '--silent'], { encoding: 'utf8', env: { ...env } })
-    if (envResult?.error) throw envResult.error
-    if (envResult?.status === 0) return { ok: true }
-    return { ok: false, reason: (envResult?.stderr || '').trim() || '没有访问该仓库的权限' }
+
+    const meta = await request(`/repos/${repo}`)
+    const checks = [check('repo', meta.ok, meta.reason)]
+    if (meta.ok) {
+      const p = meta.body?.permissions ?? {}
+      const write = p.push === true || p.admin === true || p.maintain === true
+      checks.push(check('write', write, 'GitHub 未返回可确认的代码推送/PR 写入权限；请把该身份的仓库权限设为可写后重新检查'))
+    } else {
+      checks.push(check('write', false, meta.reason))
+    }
+    const issues = await request(`/repos/${repo}/issues?state=all&per_page=1`)
+    checks.push(check('issues', issues.ok, issues.reason))
+    const pulls = await request(`/repos/${repo}/pulls?state=all&per_page=1`)
+    checks.push(check('pulls', pulls.ok, pulls.reason))
+    const failed = checks.find((c) => !c.ok)
+    return { ok: failed === undefined, checks, reason: failed?.reason || null }
   }
 }
 

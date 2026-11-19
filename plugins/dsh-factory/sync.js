@@ -3,16 +3,17 @@
  *
  * The remote forge is the source of truth for facts (a PR merged is a fact), so
  * sync derives the *suggested* card column from the remote PR state rather than
- * trusting local state. But a fact is NOT an approval: under L1 every suggestion
- * is recorded for a human and NONE is auto-applied.
+ * trusting local state. But a fact is NOT an approval: under you-approve every
+ * suggestion is recorded for a human and NONE is auto-applied.
  *
  * This used to decide auto-apply by `canTransition(..., 'autoRule')`. That was a
  * real privilege hole: `autoRule` is legal on `plan-review->build` (reserved for
- * the L2 engine), and a "PR closed without merge" suggestion targets `build`, so
- * a single remote sync could push a card waiting for plan approval into build —
- * bypassing the gate, the engine and `assertDispatchable`. Sync now consults its
- * own narrow `SYNC_AUTO_EDGES` set and applies with the `syncRule` actor, never
- * `autoRule`. At L1 that set is empty, so every suggestion needs a human.
+ * the machine-approve engine), and a "PR closed without merge" suggestion targets
+ * `build`, so a single remote sync could push a card waiting for plan approval
+ * into build — bypassing the gate, the engine and `assertDispatchable`. Sync now
+ * consults its own narrow `SYNC_AUTO_EDGES` set and applies with the `syncRule`
+ * actor, never `autoRule`. At you-approve that set is empty, so every suggestion
+ * needs a human.
  *
  *   PR MERGED          → suggest Done          (human confirms; Done is human-only)
  *   PR CLOSED unmerged → suggest Build (退回)   (Review→Build is human-only)
@@ -40,7 +41,7 @@ export function resolveSync(card, remote) {
 
 /**
  * Apply remote reconciliation to one card. Auto-applies only edges sync's own
- * narrow rule permits (none at L1); otherwise it records a suggestion and reports
+ * narrow rule permits (none at you-approve); otherwise it records a suggestion and reports
  * `needsHuman`. `assertTransition` re-checks the same set as a second gate, so a
  * future widening of the engine's `autoRule` can never reopen this path by itself.
  */

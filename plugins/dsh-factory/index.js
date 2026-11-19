@@ -1,5 +1,5 @@
 /**
- * dsh-factory — Host half (L0 core).
+ * dsh-factory — Host half (core).
  *
  * Boots a JSON-backed three-layer store (Project → Board → Card) and mounts the
  * transport-agnostic API at `/api/dsh-factory/*`. The store enforces the §8 state
@@ -164,7 +164,7 @@ export function apply(ctx, config = {}) {
     }
   })
 
-  // L1 autonomy engine: ONE plugin-level timer, owned by a ctx.effect. A missing
+  // Autonomy engine: ONE plugin-level timer, owned by a ctx.effect. A missing
   // host timer service leaves `runtime.engine.timerReason` readable instead of
   // silently not running (P1 lesson / PRD §3, Chief hard constraint #2).
   // Engine intake resolves the identity PER PROJECT (no single global ghPort any
@@ -421,7 +421,8 @@ export function apply(ctx, config = {}) {
         const decision = await resolveIdentity(project)
         const repo = typeof body.repo === 'string' && body.repo.trim() !== '' ? body.repo : project.issueRepo
         const result = await probePermission({ decision, repo, env: process.env })
-        sendJson(res, 200, result)
+        const saved = store.recordPermissionCheck(id, result, repo)
+        sendJson(res, 200, { ...result, checkedAt: saved.permissionCheckedAt })
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       }

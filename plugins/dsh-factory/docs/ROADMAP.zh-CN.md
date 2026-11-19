@@ -57,14 +57,14 @@
 ### 2.5 授权闸门
 
 - 「确认提交」与「推送分支并创建 PR」是两个独立的人工动作，没有批准就没有任何 git 写。
-- 开 PR **一律是 draft**（所有自治档位，含手动 `L0`）；自动模式下可以自动走到 draft PR，但**不自动合并**、不自动标记完成、不自动提权。
+- 开 PR **一律是 draft**（所有自治档位，含「手动」档）；自动模式下可以自动走到 draft PR，但**不自动合并**、不自动标记完成、不自动提权。
 - 拒绝向受保护分支推送、拒绝空 diff、不 force push。
 
 ### 2.6 项目创建助手
 
 - 一个只读分析工具：读取目标仓库的客观事实（根目录文件、目录、忽略规则、清单文件、声明的包管理器），**不返回任何「该跑什么命令」的结论**。
 - 一个创建工具：直接登记项目。创建是本地可逆的配置登记，不碰任何 git 写。它**按 git index 剔除已被跟踪的 `copyFiles` 项**——已跟踪文件新 worktree 本来就带，复制纯属冗余；这一步是确定性护栏，不依赖模型判断。
-- **建项目时一次性识别 GitHub 绑定。** `createProject` 用只读命令读一次本地 git `origin`，仅当它是 github.com 的 HTTPS 或 SSH 地址时把 `owner/repo` 解析进 `issueRepo`，并在写默认看板、把 `intakeBoardId` 指向它的同一事务里写入。显式传入的 `issueRepo` 优先、直接跳过识别。没有 remote、非 GitHub 地址、非 git 根目录、或多个 origin 地址都不阻断建项目，各自记一个 `bindingReason` 原因码，由身份卡用白话解释。**识别由用户建项目触发、只发生这一次；引擎运行时不猜仓库、不读 remote（见 P2 的 L0 说明），也不回填历史项目。** 项目设置里可手动改绑或清空：值必须是 `owner/repo`，留空即解绑。
+- **建项目时一次性识别 GitHub 绑定。** `createProject` 用只读命令读一次本地 git `origin`，仅当它是 github.com 的 HTTPS 或 SSH 地址时把 `owner/repo` 解析进 `issueRepo`，并在写默认看板、把 `intakeBoardId` 指向它的同一事务里写入。显式传入的 `issueRepo` 优先、直接跳过识别。没有 remote、非 GitHub 地址、非 git 根目录、或多个 origin 地址都不阻断建项目，各自记一个 `bindingReason` 原因码，由身份卡用白话解释。**识别由用户建项目触发、只发生这一次；引擎运行时不猜仓库、不读 remote（见 P2 的「手动」说明），也不回填历史项目。** 项目设置里可手动改绑或清空：值必须是 `owner/repo`，留空即解绑。
 - `/factory add [path]` 命令只是**触发器**：它把意图交给 agent，由 `factory-add-project` 技能引导 agent 分析仓库、生成配置提议、再创建项目。不带路径时使用当前会话的工作目录。
 - 项目根**可以**落在数据根内（用户有些仓库就在那里）：允许登记、带一条 warning，但**不许当会话 cwd**，worktree 强制外置。这条在真机验过（V2b）。
 - `GET /api/dsh-factory/status` 暴露 `toolsRegistered`：工具注册失败曾长期静默降级（命令和接口照常成功、agent 却没工具可调），现在有可被客观读到的信号。
@@ -75,9 +75,15 @@
 
 ### 2.8 自治档位
 
-共三档。`L0` 严格零动作。`L1` 是默认：引擎只走 `inbox -> triage` 一条边，卡片停在 `plan-review` 等人。`L2` **默认关闭、必须按项目显式开启**，不设仓库或卡片白名单。
+语义三档，存储与界面都写作 `manual` / `you-approve` / `machine-approve`；新项目默认 `manual`。旧的 `L0` / `L1` / `L2` 与 `autoStart` / `autoApprove` 两开关已不在界面、存储、引擎与测试里出现；唯一的开关是 `autoDispatch`，只属于「你批准」档。不设仓库或卡片白名单。
 
-在 `L2` 下机器多走一条自动边 `plan-review -> build`，代卡片批准计划，并接着该卡的会话让 `build` 真跑起来——只批准不续会话会把卡晾在 `build`、没有 agent。它与其他转移一样走同一个 `autoRule` actor、过同一道 `assertTransition` 状态闸，所以到不了闸门不允许的状态。边界是有意收窄的：机器**只批准计划并续原会话**；武装交付授权（commit、push、开 PR）仍留给人，机器绝不碰 git、不创建 PR。这比「全自动到 draft PR」更窄——机器不武装、不交付。
+- `manual`（手动）：严格零动作——不发现、不派发、不批准。
+- `you-approve`（你批准）：发现 issue，其唯一开关 `autoDispatch` 决定其余。开：引擎走 `inbox -> triage` 一条边，卡片停在 `plan-review` 等人；关：引擎只建 inbox 卡。
+- `machine-approve`（机器批准）：多走一条自动边 `plan-review -> build`，且**不读任何开关**——档位即唯一真相源。机器代卡片批准计划，并接着该卡的会话让 `build` 真跑起来——只批准不续会话会把卡晾在 `build`、没有 agent。它与其他转移一样走同一个 `autoRule` actor、过同一道 `assertTransition` 状态闸，所以到不了闸门不允许的状态。边界是有意收窄的：机器**只批准计划并续原会话**；武装交付授权（commit、push、开 PR）仍留给人，机器绝不碰 git、不创建 PR。这比「全自动到 draft PR」更窄——机器不武装、不交付。
+
+**旧存档迁移。** 存储 schemaVersion 由 1 升到 2，旧档在 store 加载时一次性改写（加载永不拒绝旧档或脏档）：`L0` → `manual`；`L1` 开/关 `autoStart` → `you-approve` 对应开/关 `autoDispatch`；`L2` 两开关都开 → `machine-approve`；`L2` 开 `autoStart` 关 `autoApprove` → `you-approve` + 开；`L2` 关 `autoStart` → `you-approve` + 关；缺失或非法 → `manual`。旧字段名从落盘状态删除。
+
+**审计 tier 按档位取。** 建卡、派发、批准的每条记录都带项目档位作 tier——`machine-approve` 档事件 `tier=machine-approve`、`you-approve` 档事件 `tier=you-approve`——同一档的记录永远滤在同一 tier 下。
 
 审批与派发共用同一份并发预算：项目级与全局上限约束活跃会话数，只有有名额时才批准计划。复用仍活着会话的接续（followup）不开新会话、不占名额；只有 `resume`/新建这种真会起会话的降级才扣预算。没有名额时**连审批一起扣住**，不只是扣接续：卡片留在 `plan-review`（记为因容量暂缓），由后续 tick 重试，绝不会把卡批进一个没有 agent 的 `build`。活跃判定在 tick 起点与决策点各做一次，会话若在 tick 中途死掉，不会趁快照判活绕过名额、多开一个超限会话。
 
@@ -85,8 +91,8 @@
 
 ### 2.9 整页视图、配置抽屉、文案与窄屏看板
 
-- **视图按整页设计。** 插件顶部是一条页内吸顶头栏（高 56px）；项目侧栏与顶栏标签是同一份项目选择的两种呈现，由「视图」控件（侧栏 / 标签）切换。默认侧栏，选择存本地、刷新后保持——没有后端字段、不改 schema。两种导航都显示每个项目的 `L0`/`L1`/`L2` 档位徽标、卡片数与暂停标记，数据都来自看板已加载的内容。宽屏时侧栏固定在看板旁；窄屏时侧栏变为带遮罩的抽屉，标签仍是横向条。看板本身保留真实高度（min-height 440px），全局页把 GitHub 连接组置顶。
-- **操作给居中、页根的反馈。** 切到 `L2` 先弹二次确认：确认即保存，取消则已存档位与徽标不变；删项目用输入名称的居中确认。为避免 fixed 遮罩被变形的抽屉困住，这些弹窗都挂在页面根节点；保存结果与卡片操作（如接管）用自动消失的 toast，成功与失败可区分。
+- **视图按整页设计。** 插件顶部是一条页内吸顶头栏（高 56px）；项目侧栏与顶栏标签是同一份项目选择的两种呈现，由「视图」控件（侧栏 / 标签）切换。默认侧栏，选择存本地、刷新后保持——没有后端字段、不改 schema。两种导航都显示每个项目的档位徽标（`manual` / `you-approve` / `machine-approve`）、卡片数与暂停标记，数据都来自看板已加载的内容。宽屏时侧栏固定在看板旁；窄屏时侧栏变为带遮罩的抽屉，标签仍是横向条。看板本身保留真实高度（min-height 440px），全局页把 GitHub 连接组置顶。
+- **操作给居中、页根的反馈。** 从他档切到 `machine-approve` 先弹二次确认：确认即保存，取消则已存档位与开关不变；切离它不弹。删项目用输入名称的居中确认。为避免 fixed 遮罩被变形的抽屉困住，这些弹窗都挂在页面根节点；保存结果与卡片操作（如接管）用自动消失的 toast，成功与失败可区分。
 - **配置抽屉项目优先。** scope 初值是 `auto`：有项目选中时解析为项目页，否则为全局页；点页签会在本次页面会话内固定作用域，刷新后重新回到 `auto`。项目页有「全局设置 ›」入口，抽屉标题跟随当前页。项目页的暂停/恢复走项目级接口，引擎暂停/恢复只在全局页出现。项目页保留身份卡常驻，把自治与暂停合成一个区块，周围是 worktree 准备、并发上限、危险区；全局页按「GitHub 连接」「路径与并发」「引擎」分组。
 - **运行时文案只有一个来源。** 所有 `t()` 字符串来自向 locale 服务注册的 zh/en 内联字典。包内 locale JSON 保留宿主需要的 `meta` 并镜像同一套 UI key：四处（内联 zh/en 与 locale zh/en）重叠 key 逐字一致、每个 key 的占位符 token 集合相同（8 个 key 带占位符），只有 locale 多一个 `meta`，`meta` 不进 UI 字典。UI key 总数随迭代增长，文档不写死，由自足断言在运行时核对。GitHub Token、gh CLI、GitHub OAuth App、Client ID、worktree、commit、PR 等专有名词两种语言都原样保留。旧的「无法识别账号」通用说法不再用于已连接的身份：账号解析不到时退回来源表述。
 - **窄屏看板。** 在 760px 断点下看板变成横向 scroll-snap 条：列宽为视口的 84%，列头 sticky，看板高度上限 56vh，阶段指示按真实渲染列宽算出「当前列 / 5」。QA 在 390px 真机复测确认每屏一列、吸附正常、页面无横向溢出；列的外宽约 348px，因为列是 `content-box` 且带 padding，这是已记录的非阻塞差异。宽视口（包括主内容列很窄的宿主容器）仍是普通横向滚动，各列可达。
@@ -117,8 +123,8 @@
 | 每阶段新建会话 + 历史摘要，而非同一会话用到底 | 评审阶段必须独立：自己审自己会破坏注入防御与评审纪律 |
 | 用 SQLite 取代单个 JSON 文件 | 整份状态存在单行里，内存模型与所有调用方原样不动，同时得到一个真实数据库文件；重载后数据完整读回 |
 | DSH home 只经宿主包解析 | `@deepseek-ai/dsh-home-paths` 是配置 / `DSH_HOME` / 默认的唯一来源——手写 fallback 会与宿主布局漂移 |
-| 默认由人把守计划审批与交付授权 | 默认每一道闸门都留给人；L2 只能通过按项目显式 opt-in 委托**计划审批**这一项，绝不委托交付 |
-| 只有 L2 能自动批计划，且必须显式 opt-in | 默认关、无白名单；机器经 `autoRule` 走 `plan-review -> build`、过同一道状态闸，然后停住。武装交付、git 写与合并永远留人 |
+| 默认由人把守计划审批与交付授权 | 默认每一道闸门都留给人；`machine-approve` 只能通过按项目显式选档委托**计划审批**这一项，绝不委托交付 |
+| 只有 `machine-approve` 能自动批计划，且必须显式选到该档 | 新项目默认 `manual`、无白名单、不读任何开关；机器经 `autoRule` 走 `plan-review -> build`、过同一道状态闸，然后停住。武装交付、git 写与合并永远留人 |
 | 一项目一板，靠归档收敛而不是删除 | 看板是项目的 intake 面，不是用户自行管理的分组；归档让历史卡片与 intake 目标仍可解析，同时接口每个项目只暴露一块活跃板，还免去 schema 升版 |
 | 配置抽屉默认落在当前项目 | 从项目打开设置的人几乎总是要该项目设置；全局仍可通过页签与项目页入口到达 |
 | 内联字典是运行时文案源，locale JSON 镜像它 | 改一句话只有一个地方，key 集合校验让两份副本不会悄悄漂移 |
@@ -150,46 +156,46 @@
 
 前四条（peer / 序列化 / render / 技能 source）都是「插件在真机上根本不可用」级别，已全部修掉。第 4 条不再依赖 agent 自觉，`factory_create_project` 会按 git index 剔除已跟踪项并丢弃，第五轮实测护栏确实触发（agent 传了 4 个已跟踪文件，全部丢弃，入库 `copyFiles` 为空）。
 
-### P2 — 自治引擎（L1 **已实现、已提交，并在真机端到端验通**）
+### P2 — 自治引擎（**三档已实现、已提交，并在真机端到端验通**）
 
-`autonomy` / `autoStart` / `autoApprove` 三个字段原本只有存储与写入校验、没有任何代码读取它们做决策。**L1 引擎已落地**（`autonomy.js`）：
+`autonomy` / `autoStart` / `autoApprove` 三个字段原本只有存储与写入校验、没有任何代码读取它们做决策。**引擎已落地**（`autonomy.js`）；语义三档与唯一开关取代了旧档位 id 与两个开关，旧存档加载时一次性迁移（§2.8）：
 
 - **一个插件级定时器**，挂在宿主 timer 服务上，卸载随插件清理；服务缺失不静默降级，原因在 `status.engine.timerReason` 可读。多项目只是每轮枚举，不是多个定时器；tick 单飞不叠加。
-- **L1 只走一条自动边**：`inbox -> triage`，经 `dispatchCard` 完成，actor 记 `autoRule` 并带 `tier`/`rule`/`channel`。阶段推进仍由会话内技能以 `agent` 身份完成，**引擎不自己挪卡**；到 `plan-review` 停住等批。**agent preset 必须显式挂载**：派发会话以前从没挂 preset，所以没有 `tool-bash`、只能去抓宿主全局的 SSH 工具，沙箱也管不着它；现在在 `setup` 里调用 `agentPresets.mount(agentCtx)`（**不传 id，跟随用户当前选择的预设**），拿不到该服务就拒绝派发——这条是真 bug，已修。技能指引与技能正文的注入也已落地。
-- **`autoApprove` 在 L1 一次不读**：即使 `L1 + autoApprove=true` 也停在 `plan-review`，防「字段开着、代码顺手就用了」的越权。
+- **`you-approve` 只走一条自动边**（其 `autoDispatch` 开关开时）：`inbox -> triage`，经 `dispatchCard` 完成，actor 记 `autoRule` 并带 `tier`/`rule`/`channel`。阶段推进仍由会话内技能以 `agent` 身份完成，**引擎不自己挪卡**；到 `plan-review` 停住等批。**agent preset 必须显式挂载**：派发会话以前从没挂 preset，所以没有 `tool-bash`、只能去抓宿主全局的 SSH 工具，沙箱也管不着它；现在在 `setup` 里调用 `agentPresets.mount(agentCtx)`（**不传 id，跟随用户当前选择的预设**），拿不到该服务就拒绝派发——这条是真 bug，已修。技能指引与技能正文的注入也已落地。
+- **开关不泄漏能力**：唯一的开关是 `autoDispatch`，只在 `you-approve` 档被读；`machine-approve` 一次不读开关（档位即真相源），`manual` 严格零动作——「开关开着、代码顺手就用了」没有路径。
 - **并发两级上限**（项目级 + 全局兜底），按运行时活跃会话计，不按 `sessionId` 字段计；满额排队不丢卡、不标 stalled，有空位后由后续 tick 取走。
 - **暂停 / 恢复 / 单卡接管**是三个独立动作、各自持久化并留治理记录。暂停与接管都**不打断**已在运行的会话，只影响后续 tick 的自动派发——硬杀会话会留下 worktree 和半截改动。
-- **默认零副作用**：`L0` 严格零动作；缺 issue 源或目标看板的项目被跳过，原因在 `status` 可见，**运行时不猜、不从 git remote 反推、不自动建板**。仓库识别是另一个独立的只读步骤，只在用户建项目时发生（§2.6），不是引擎行为。
-- **同步不代批**：`sync.js` 改用独立 `syncRule` actor + 空白名单 `SYNC_AUTO_EDGES`，远端「PR 关闭」建议只记待人处理、不会把等批的卡推进 `build`；L2 下的计划审批改用 `autoRule` actor，与同步严格分开。
+- **默认零副作用**：`manual` 严格零动作；缺 issue 源或目标看板的项目被跳过，原因在 `status` 可见，**运行时不猜、不从 git remote 反推、不自动建板**。仓库识别是另一个独立的只读步骤，只在用户建项目时发生（§2.6），不是引擎行为。
+- **同步不代批**：`sync.js` 改用独立 `syncRule` actor + 空白名单 `SYNC_AUTO_EDGES`，远端「PR 关闭」建议只记待人处理、不会把等批的卡推进 `build`；`machine-approve` 档下的计划审批改用 `autoRule` actor，与同步严格分开。
 - **权限档不虚报**：`permissionEnforced` 恒为 `false`，界面与状态不得宣称写入限制已生效。
 - **沙箱三道硬保证**（派发与续派的三级链每一级都过同一套闸）：① 在 `createSession` 的 `seed` 里写 `sandbox/mode: workspace-write` 固定模式（无时序竞态）；② 建完回读 `sandboxMode` 投影校验，不符就 dispose 并拒绝；③ 权限上限为 `workspace-write`，项目配更高档也不放行。修复前的历史会话在接续时被拒绝并降级重建，旧的全权会话不复用。
 
 **验收状态**：离线用例与真机四项（`status.engine` 字段、暂停/恢复、接管路由、审计路由）已验。**真实自动派发（AE-2）现已在真机端到端验通**：一条真实 GitHub issue 被发现并建成卡片，引擎只走唯一一条自动边 `inbox -> triage`（记为 `autoRule`），派发的 agent 把卡片推进过 `triage`、`plan`，停在 `plan-review`——全程无人工点击。此前几轮失败是验证夹具与任务内容不匹配（空壳仓没有与任务对应的源码），不是产品缺陷；这一轮用的是内容与任务相符的仓库，且清理前等 `turn/end` 落定，见 §5 与 §7。
 
-### P3 — L2，机器代批计划（**已实现并在真机验通**）
+### P3 — `machine-approve`，机器代批计划（**已实现并在真机验通**）
 
-**按项目显式 opt-in**（默认关、无白名单）：机器可以批准计划，多走一条自动边 `plan-review -> build`，以 `autoRule` 走其他转移共用的同一道 `assertTransition` 状态闸，随后续原会话让 `build` 真跑。边界有意收窄——机器**只批准计划并续会话**：
+**按项目显式选档**（从不默认、无白名单、不读任何开关）：机器可以批准计划，多走一条自动边 `plan-review -> build`，以 `autoRule` 走其他转移共用的同一道 `assertTransition` 状态闸，随后续原会话让 `build` 真跑。边界有意收窄——机器**只批准计划并续会话**：
 
 - 批准后接着该卡的会话让 `build` 真跑起来；**武装交付授权仍留给人**，机器绝不碰 git、不开 PR、不合并、不标记完成。这比「机器也武装交付」的最初设想更窄——那部分有意不做，是选定的边界、不是缺口。
 - 审批与派发取自同一份并发预算（项目级上限 + 全局兜底，都按活跃会话计）。把卡批进没有 agent 的 `build` 毫无意义，所以没有名额时**连审批和卡一起扣住**：卡留在 `plan-review`、记为因容量暂缓，后续 tick 重试。只有真会开新会话的接续才扣名额；接续到仍活着会话的 followup 复用已计数的会话、不占名额。会话若在 tick 起点的活跃扫描与审批决策之间死掉，决策点会再查一次，不会因此绕过上限。
 - `pause`（项目或全局）与单卡 `takeover` 立即挡住批准，不补跑暂停期跳过的卡；重复 tick 幂等；这条自动边无旁路到 `done`。
-- `L0` 与 `L1` 不变：即使设了 `autoApprove`，也只有 L2 项目会响应它。
+- `manual` 与 `you-approve` 从不批计划：批准是 `machine-approve` 档独有的能力，且它不读任何开关。
 
-已在真机验证：`L2 + autoApprove` 下一张等批的 `plan-review` 卡被批进 `build`、审计字段齐全；`L1`/`L0` 保持惰性；暂停、接管、幂等都成立；无旁路到 `done`；AE-2b 同步路径未回退。这是**自治钥匙的另一半**——计划审批交给机器，交付授权仍握在人手里。
+已在真机验证：`machine-approve` 下一张等批的 `plan-review` 卡被批进 `build`、审计字段齐全（批准、派发、建卡事件都带档位 tier）；`you-approve`/`manual` 保持惰性；暂停、接管、幂等都成立；无旁路到 `done`；AE-2b 同步路径未回退。这是**自治钥匙的另一半**——计划审批交给机器，交付授权仍握在人手里。
 
 ### P4 — 自治档界面（**已实现并验收；界面已在真机复测，P4-7a/7b 全局上限证明已用后端并发夹具验过——P4 全部完成**）
 
 零构建、纯 JS 的设置界面（沿用现有 `client.js` 模式——不引入构建步骤、不引入 TS 规则引擎）。项目自己的管理看板是一等公民：页面顶部全宽高，带标题、三个关键统计（卡片数 / 活跃会话 / 有效名额）与引擎闸门；所有配置收进右侧抽屉、不占主视图高度。
 
 **落地了什么：**
-- **档位三选一。** 单个分段控件切 L0 / L1 / L2（互斥），命名**手动 / 你批准 / 机器批准**（Manual / You approve / Machine approves）。判据是「谁批准计划」——不用「半自动 / Assisted」这类抽象词。每档下方随选择切换一张两行说明卡（「机器会做 / 你要做」），完全不懂的人也能分清三档；切 L2 先弹保守边界说明（不碰 git、不建 PR、不标完成）再确认。**状态徽标只读 `autonomy` 字段**、从不按两个开关判断，所以「档位已回手动、开关还开着」仍显示「手动」。
-- **暂停 / 接管，三处入口。** 项目级暂停/恢复、全局引擎暂停/恢复（与顶栏开关保持同步）、卡片级接管。文案白话：暂停只挡之后的 tick、不补跑跳过的卡、不动运行中会话。「需要你处理 / Needs attention」条是 `status.engine` 的只读聚合。
+- **档位三选一。** 单个分段控件切 `manual` / `you-approve` / `machine-approve`（互斥），命名**手动 / 你批准 / 机器批准**（Manual / You approve / Machine approves）。判据是「谁批准计划」——不用「半自动 / Assisted」这类抽象词。每档下方随选择切换一张两行说明卡（「机器会做 / 你要做」），完全不懂的人也能分清三档；从他档切到 `machine-approve` 先弹保守边界说明（不碰 git、不建 PR、不标完成）再确认，切离它不弹。**状态徽标只读 `autonomy` 档位**，所以「档位已回手动、开关还开着」仍显示「手动」。`autoDispatch` 开关只在「你批准」档显示——另外两档隐藏、不是置灰。
+- **暂停 / 接管，两个作用域。** 项目级暂停/恢复与全局引擎暂停/恢复（与顶栏开关保持同步）；卡片级接管只在卡片操作区。暂停文案白话说明作用域：只挡之后的 tick、不补跑跳过的卡、不动运行中会话，另有一条纯说明指出接管是单卡动作。「需要你处理 / Needs attention」条是 `status.engine` 的只读聚合。
 - **并发上限。** 项目级 `maxActiveSessions`（可编辑，留空=用默认）与全局级 `globalMaxActive`（可编辑——写入口见 §5）。有效名额取两者较小，数值与来源都从后端读回渲染、绝不写死。
 - **删项目连带清 worktree。** 删项目真会先清掉该项目的所有 worktree（dirty 检查保留未提交改动）再删登记。
 - **配置按作用域分离。** 全局与项目设置分两个抽屉 pane、互不串写；每块各自保存，失败把后端原文原样透出。
 - **移动端。** 主操作钉底部操作条、触摸目标 ≥44px、危险区二次确认用底部弹出而非居中弹窗。窄屏宿主下视图还在自身有界容器内滚动、绕开宿主 app-shell 锁死纵向滚动的问题（绕开法与宿主侧说明见 §5）。
 
-四条硬要求全部满足：界面按档位字段而非两个开关判断；保存失败显示原文；被静默归一的档位回显归一后的实际值；三个区块（准备 / 自治 / intake）各自保存。
+四条硬要求全部满足：界面按语义档位字段判断、唯一开关只属于「你批准」档；保存失败显示原文；被静默归一的档位回显归一后的实际值；三个区块（准备 / 自治 / intake）各自保存。
 
 **「P4 不加功能」的两个明确例外**（均由用户拍板）：(1) 删项目连带清 worktree；(2) 全局上限改为可 HTTP 写入、不再是纯启动配置。写入口已就位；写后卡住下一个 tick、且跨重载不丢的夹具级证明（P4-7a/7b）已用后端并发夹具验过。
 
@@ -206,7 +212,7 @@
 
 本轮仍在单文件 `client.js` 视图里做，不引入组件库、不加构建步骤；结论从代码重新核出。
 
-- **整页外壳与两种导航。** 56px 页内吸顶头栏；项目侧栏与顶栏标签是同一份项目选择的两种呈现，由「视图」控件切换，默认侧栏、选择存本地、刷新后保持。两种导航都显示档位徽标、卡片数与暂停标记。看板宽屏 min-height 440px、窄屏 84vw 单列 snap。`L2` 二次确认、删项目确认与其它弹窗都挂页面根节点（宽屏居中、窄屏底部抽屉）；保存与卡片操作（如接管）用自动消失的 toast，全局页把 GitHub 连接组置顶。
+- **整页外壳与两种导航。** 56px 页内吸顶头栏；项目侧栏与顶栏标签是同一份项目选择的两种呈现，由「视图」控件切换，默认侧栏、选择存本地、刷新后保持。两种导航都显示档位徽标、卡片数与暂停标记。看板宽屏 min-height 440px、窄屏 84vw 单列 snap。`machine-approve` 二次确认、删项目确认与其它弹窗都挂页面根节点（宽屏居中、窄屏底部抽屉）；保存与卡片操作（如接管）用自动消失的 toast，全局页把 GitHub 连接组置顶。
 - **建项目时绑定。** `createProject` 只在建项目时从 github.com 的 git `origin`（HTTPS 或 SSH）识别一次 `owner/repo`，与默认看板的 `intakeBoardId` 同事务写入。失败是非阻断的原因码；不回填、不在运行时识别。项目设置可手动改绑或清空，校验 `owner/repo`、留空即解绑。
 - **身份与绑定显示。** 当前账号由 `gh` CLI 只读解析（`gh api user --jq .login`，去掉 `--silent`）；已连接但拿不到登录名时退回来源表述。项目卡上的 GitHub 按钮只跳全局连接设置——不在项目里发起 OAuth。页头有仓库绑定状态徽标，点它打开该项目的绑定输入框。
 - **文案一致性。** 四个字典新增一批 key（`pauseProject`、`resumeProject` 等），重叠值逐字一致、占位符集合固定、四个产品专名原样保留；数量以实际运行为准，这里不记写死的总数。
@@ -227,9 +233,9 @@
 | 缺口 | 影响 | 备注 |
 |---|---|---|
 | **【安全 · 已修】派发会话曾默认拿到 `danger-full-access`，绕过 worktree 沙箱（真机暴露）** | 真机验证中，用户观察到派发的 agent「找不到 worktree」并浏览了**宿主可见的文件系统**。机制（Dev 读源码闭环）：`meta.cwd` 经 `sessions.prepare` 写进 `header.cwd`，而它**正是 `workspace-write` 沙箱的 `workspaceRoot`**（`dsh-sandbox-policy` 的 `sessionWorkspaceRoot()`），bash 执行时按调用 session 解析该策略并 `confine()`——**所以 cwd 恰恰是边界，不是「只决定起始目录」**；bash 是 harness 进程的子进程、在**容器内**执行（bubblewrap 文件隔离），不是跨到宿主另一侧。唯一让边界失效的开关是 mode：`danger-full-access` 下 `dsh-bash-sandbox` 直接 `super.execute()`、**不套沙箱**。而本 profile 的 `permission-presets.defaultPreset` 正是 `danger-full-access`（`approval: never`），且 `dsh-permission-presets` 在 `agent/created` 事件里用 `pinInitialPermission` **把该档钉到每个新会话**——这才是 mode 的来源，比 base patch 的 `defaultMode: workspace-write` 优先级更高。工厂的 `project.defaultPermission` 默认 `workspace-write`（`store.js`），**却和 `model` 一样在 `createSession` 层被丢弃、从未传给 `agents.create`**，于是派发会话被钉成 profile 默认档、裸奔 | **没有实际越界写入**：Chief 核查宿主，workspace 卷 `git status` 干净、HEAD 未变、只动过 `.git/COMMIT_EDITMSG` 与 `.git/index`（我们自己提交），无外推；**只证明看过路径，不能证明写入**。**已修并在真机验证**：自动派发现已在下述闸门下运行，AE-2 端到端链路在这些闸门生效的情况下通过。修法（Chief 定，Dev 已查清时序；现已落地并验证）：① **`createSession` 的 `seed` 里带一条 `sandbox/mode: workspace-write`**——`agents.create` 的执行顺序是「先写 seed → 再 setup → 最后 announce（即 `pinInitialPermission`）」，seed 写入后 `pinInitialPermission` 看到 `sandbox !== null` 就跳过 `setSandboxMode`，**无时序竞态**。**为何选 seed 而非在 setup 里抢先**：seed 是构造参数、语义就是初始事件，不依赖「赶在某个回调之前」的时序，宿主调整顺序也不会失效（时序依赖是脆的）。② **无论哪条路，建完都必须回读 `sandboxMode` session 投影校验**（`dsh-sandbox-policy` 注册 key `sandboxMode`）——不是 `workspace-write` 就 dispose 会话并抛错、走 `dispatchCard` 失败回滚；这是硬保证，防「写了事件就假设生效」，也防宿主版本/配置差异让折叠逻辑不同。③ **自动派发会话的权限上限是 `workspace-write`，即使项目配了 `danger-full-access` 也不放行**（自动派发不该有全权，`project.defaultPermission` 接上但以此上限封顶）；④ worktree 根现在默认用按 HOME 解析的 `~/dsh-factory-worktrees`，走 §2.2 所述的方案 B 窄例外（通常位于数据根外；根内只容忍 `<home>/dsh-factory-worktrees` 这一条精确子树）。⑤ **修复前的历史会话**（无 `sandbox/mode` 事件、可能落在 profile 的默认全权档）在接续时被**拒绝并降级重建**，已落地、不是待办：level 1 的 `followupSession` 与 level 2 的 `resumeSession` 都过 `assertSandboxMode` 闸——level 1 被拒不再让卡卡死，直接降级；level 2 被拒则 `dispose` 该会话再抛错，让 `continueCard` 落到 level 3，用 `createSession` 的 seed 闸重建一个带 `workspace-write` 的新会话，并在卡上记一条降级记录。这样旧的全权会话不会被继续复用，也不必手动清理。另建议用户把 profile 的 `defaultPreset` 改为 `workspace-write`——**这影响其界面上所有普通会话的沙箱保护**，需用户点头单独确认，不与工厂修复捆绑，本鱼不擅自改 |
-| **写入与回执之间没有事务边界（工厂侧窗口已焊死，宿主侧窗口仍在）** | 工具过去先 `execute`（写入已落库）再 snapshot/lossless 校验/render；任一步失败就变成「写入已发生但报错」，回执丢失。真机上表现为重名项目堆积 | **由用户拍板选方案 A、已在工厂侧修好**：三个写工具（transition / report / createProject）在落盘前先做回执自检——lossless → schema → render → render lossless 全过才写库。schema 校验生产注入宿主的公开校验器；lossless 用本仓的最小实现、置于可注入端口之后。失败抛原始错误、日志可观测；已端到端验证并做变异验证（摘掉预检则用例变红）与全量回归。**L1 四项措施保留**（幂等、单飞、孤儿对账只报不清理、`dispatchCard` 回滚）：与本修复正交、是防御纵深，不是被替代。**如实记录已知缺口**：① 宿主对任意工具的 write/receipt 窗口仍在，方案 A 只堵工厂自身这条链路；② 本仓 lossless 最小实现与宿主快照函数是两份同语义实现，宿主规则若变动会漂移（schema 那半边已注入宿主真函数消除）；③ 宿主真成功回执流水线本仓不可 import（peer-only），那一环在此测不到。宿主侧 B/C 方案未立项——记为已知缺口，不单独立项 |
-| **`card.repo` 与 `card.repoPath` 已拆分** | `intake.js` 把远端 GitHub 标识写入 `repo`、本地根路径写入 `repoPath`；`session-context.js` 的 `repoOf` 优先用 `repoPath`，`repo` 只作展示标识渲染 | **已解决**：两种语义不再共用一个字段，agent 不会再拿到「当路径用的远端标识」。（原为 L2 前置，见 PRD §10） |
-| **L1 真实自动派发（AE-2）已端到端验通** | 「真实 GitHub issue 源 → 建卡 → 自动派发 → 停 plan-review」这条链现已在真机跑通，全程无人工点击 | **已验通**：引擎只走 `inbox -> triage` 这一条自动边（记为 `autoRule`），派发的 agent 把卡片推进过 `triage`、`plan`，停在 `plan-review`。链路细节见 §4 P2。（此前因缺真实 issue 源与匹配夹具而未验） |
+| **写入与回执之间没有事务边界（工厂侧窗口已焊死，宿主侧窗口仍在）** | 工具过去先 `execute`（写入已落库）再 snapshot/lossless 校验/render；任一步失败就变成「写入已发生但报错」，回执丢失。真机上表现为重名项目堆积 | **由用户拍板选方案 A、已在工厂侧修好**：三个写工具（transition / report / createProject）在落盘前先做回执自检——lossless → schema → render → render lossless 全过才写库。schema 校验生产注入宿主的公开校验器；lossless 用本仓的最小实现、置于可注入端口之后。失败抛原始错误、日志可观测；已端到端验证并做变异验证（摘掉预检则用例变红）与全量回归。**引擎四项措施保留**（幂等、单飞、孤儿对账只报不清理、`dispatchCard` 回滚）：与本修复正交、是防御纵深，不是被替代。**如实记录已知缺口**：① 宿主对任意工具的 write/receipt 窗口仍在，方案 A 只堵工厂自身这条链路；② 本仓 lossless 最小实现与宿主快照函数是两份同语义实现，宿主规则若变动会漂移（schema 那半边已注入宿主真函数消除）；③ 宿主真成功回执流水线本仓不可 import（peer-only），那一环在此测不到。宿主侧 B/C 方案未立项——记为已知缺口，不单独立项 |
+| **`card.repo` 与 `card.repoPath` 已拆分** | `intake.js` 把远端 GitHub 标识写入 `repo`、本地根路径写入 `repoPath`；`session-context.js` 的 `repoOf` 优先用 `repoPath`，`repo` 只作展示标识渲染 | **已解决**：两种语义不再共用一个字段，agent 不会再拿到「当路径用的远端标识」。（原为 `machine-approve` 档前置，见 PRD §10） |
+| **真实自动派发（AE-2）已端到端验通** | 「真实 GitHub issue 源 → 建卡 → 自动派发 → 停 plan-review」这条链现已在真机跑通，全程无人工点击 | **已验通**：引擎只走 `inbox -> triage` 这一条自动边（记为 `autoRule`），派发的 agent 把卡片推进过 `triage`、`plan`，停在 `plan-review`。链路细节见 §4 P2。（此前因缺真实 issue 源与匹配夹具而未验） |
 | ~~接管无 UI 入口~~ | 接管现在有真实 UI 入口：卡片操作区的「接管」按钮 + 设置抽屉里项目级的「暂停与接管」块，都调同一条 `POST /cards/:id/takeover`（另有项目/全局暂停开关） | **P4 已解决**（界面上线） |
 | **路由命名易混** | 实际路径是 `/cards/:id/takeover`，不是 `/take-over`；照着猜会 404（QA 真机已踩） | 已请 Docs 在 README 接口说明写清实际路径 |
 | **agent 行为漂移（观察中）** | 第 5、6 轮 agent 改用提问卡等确认再建项目，前 3 轮是直接建。判据未要求「不许问」，项目也确实建成 | 倾向判定为技能生效后的正常表现（技能正文写了「先把配置给用户看」），非缺陷。记在此观察，别等到 P2 才发现 agent 到处问 |
@@ -238,14 +244,14 @@
 | 单机、无多副本协调 | 并发锁只在单进程内有效 | 不是当前场景的问题 |
 | 权限字段是可配置值，不是强制边界 | `defaultPermission` 可配，但派发会话的沙箱模式已被上面三道保证真正钉在 `workspace-write`；`permissionEnforced` **刻意恒为 `false`** | 不虚报：界面与状态都不宣称写入限制已生效。沙箱边界本身是真实且已验的；`permissionEnforced` 保持 `false` 正是这份诚实信号，不是未修的缺陷 |
 | 分支名是纯标识符 | 人工 review 时可读性差 | 纯改进，非阻塞 |
-| 收件箱发现由引擎定时触发 | L1 定时器每轮 tick 都跑 intake（origin 记 `autoRule`，并遵守 `intakeLimit`）；手动 intake 仍可走 HTTP | 随 L1 引擎一并实现——发现 issue 不再需要手动触发 |
+| 收件箱发现由引擎定时触发 | 引擎定时器每轮 tick 都跑 intake（origin 记 `autoRule`，并遵守 `intakeLimit`）；手动 intake 仍可走 HTTP | 随自治引擎一并实现——发现 issue 不再需要手动触发 |
 | ~~删除项目无界面入口~~ | 删项目现在在设置抽屉「危险区」：二次确认（项目名 + 影响），真调 `DELETE /projects/:id` 并连带清 worktree | **P4 已解决**（界面上线） |
 | ~~删项目不清 worktree~~ | `DELETE /projects/:id` 现在先清该项目所有 worktree（dirty 检查拒绝脏树并原样返回改动列表；落在项目根外的路径直接拒删），再删登记、记审计事件 | **P4 已解决**（worktree 清理落地） |
 | **全局上限已可 HTTP 写入（P4 新增事实）** | `globalMaxActive` 过去只是启动配置值（引擎启动时读、被闭包捕获；改了要重启）。现在可 HTTP 写：`PATCH /settings` 有独立的 `globalMaxActive` 写入口、绝不覆盖 `worktreeRoot`，值落进 `store.settings`，引擎每 tick 实时读、写后下一个 tick 即生效、不需重启，`status.engine` 读回当前有效值及其来源（设置 / 启动配置 / 默认） | **记为新增能力。** 已用后端并发夹具验过：写后卡住下一个 tick、且新 store 读回值不变（P4-7a/7b）。 |
 | **宿主 app-shell 在窄屏锁死纵向滚动** | 窄屏宿主（P4 视图把 ≤760px 当作窄屏断点）下，DSH app-shell 的主内容列按 `overflow:hidden` 渲染，纵向滚动被锁死：视图内容超过宿主给的高度时，超出部分既看不见也滚不到。这是宿主行为，插件够不到宿主那层 | **P4 已缓解、真机验过。** P4 视图把样式表限定在自身根属性 `[data-dsh-factory-p4]` 作用域内；窄屏 media query 里给视图根一个「高度受限、内部自滚」的容器（`height:100%; min-height:0; overflow-y:auto`），让溢出在我们自己的容器里滚、而不是被宿主裁剪列卡死；看板区再给 `max-height`，保持有界的横向滚动区、不把整页撑高。真机结果：第一屏可见看板、纵向能滚到各列、横滚与钉底操作条都正常。此后把这条自滚动从窄屏 media query 提到基础规则、覆盖所有宽度（宿主在各宽度都把视图挂在固定高度槽里；展开「已取消」折叠条会在看板下新增内容，宽屏若没有自己的滚动容器就会落进宿主裁剪区、滚不到）；窄屏仍以 `padding:8px` 覆盖、行为不变。宿主那层的锁本身仍在（改宿主不在范围） |
 
 | ~~intake 拉取数量曾写死 `--limit 100`~~ | issue 很多的繁忙上游一次 tick 就可能灌满看板，随后每张新卡都被派发成真会话 | **已修并验证**：改为项目级可配的 `intakeLimit`（默认沿用原上限、保持向后兼容），由引擎 tick 传给 `intakeIssues`；设了值就按值限制每次拉取的建卡数 |
-| **批准后接续失败会把卡晾在 `build`** | 批准（`plan-review -> build`，人工按钮或 L2 引擎）之后会紧接着接续同一会话。若这次接续失败（例如 profile 没有 `agents` 服务），卡已经进了 `build`，没有自动重试、也没有续接按钮：只能人工接管或手动 `POST /cards/:id/continue` | 已知边界，未修。L2 引擎会记一条 `auto-approve-continue-failed` 事件并写 `status.lastError`、不回滚批准；L0 按钮路径没有审计事件。后续 tick 不会重试这张卡。另有一种「批准前」的首次接续失败只释放占用、可重试——本行指的是批准之后那一步 |
+| **批准后接续失败会把卡晾在 `build`** | 批准（`plan-review -> build`，人工按钮或 `machine-approve` 引擎）之后会紧接着接续同一会话。若这次接续失败（例如 profile 没有 `agents` 服务），卡已经进了 `build`，没有自动重试、也没有续接按钮：只能人工接管或手动 `POST /cards/:id/continue` | 已知边界，未修。`machine-approve` 引擎会记一条 `auto-approve-continue-failed` 事件并写 `status.lastError`、不回滚批准；人工按钮路径没有审计事件。后续 tick 不会重试这张卡。另有一种「批准前」的首次接续失败只释放占用、可重试——本行指的是批准之后那一步 |
 | **intake 无 label 过滤** | 只能按「全部 open issue」拉，不能只拉指定 label 的 issue；配合不限量的上游仓仍可能拉进大量无关 issue | 保留为缺口，本轮不做（与 `intakeLimit` 是两个功能，别混）。可用 `intakeLimit` 先压量兜底 |
 | **派发消息曾未指定阶段技能（已修）** | `session-context.js` 的 `firstMessage` / `sectionText` 原本 `skill` 一词零命中——只说「用 `factory_transition_work_item` 推进」，没说「按 `factory-triage` 技能办事」。对比 `/factory add` 的 `buildAddIntent` 明确写了技能名 | **已修**：两段文案都点名当前阶段技能（`inbox`/`triage→factory-triage`、`plan→factory-plan`、`build→factory-build`、`review→factory-review`；`plan-review`/`done`/`canceled` 无技能）并写明先加载技能再动手，已提交。**注意：只修这条并没让 AE-2 通过**，还有更下层的模型路由问题（下一行）也要修；两者现已都修好，链路已端到端验通 |
 | **自动派发的会话曾停在 `triage` 不调工厂工具（AE-2 根因——已修并验通）** | 早几轮真机验证中，每轮都确认宿主 `build` 为新代码、前半链（建卡 / 自动派发 / `inbox→triage` / 审计可区分 / 无 push/PR）照常通；但派发会话始终停在 `triage`、`sessionTurn=1`、`report=null`，不调 `factory_transition_work_item`、没到 `plan-review`；引擎 `lastError:null`、无 orphan | **根因（Dev 追到源码行号，Chief 认可）**：`dispatch.js` 的 `createSession` 当时不解构也不使用 `model`（`dispatch.js:334`，注释自认「not yet wired」）→ `agents.create` 不传 `agentOptions`，agent-loop 补成 `{}`（`dsh-agent-loop:1706`）→ `assertAgentOptions({})` 只校验 maxTokens、放行（`1264-1266`），所以会话建得起来、不报错 → `preStep` 里 `model.current()` 返回 undefined 抛错（`684-685`），被 `kick()` 的 `catch(_error){}` **静默吞掉**（`667`）→ 表现就是「turn=1、啥都没干、无 error 上报」。**四轮已排除**：ESM 缓存、技能指引缺失、preset / `skill` 工具、正文内联（`.26` 仍无变化）。**用户定的模型语义**：会话默认跟随 DSH 默认模型，UI 后续可手动选。修法选 **B**（Chief 定）——port 层 `ctx.get('agentDefaultModel')` 读 `currentSelection()`，照 UI 入口用 getter 形式（**每次读取时现取、不缓存**，理由是与宿主 UI 同构；`currentSelection()` 无副作用，配置在多次读取间变化的极端竞态由下一轮自洽，不是设计缺陷）；`project.defaultModel` 有值时覆盖 model 部分、无值跟随宿主；`createSession` 真接上 `model`。**fail-fast 关键判据**：构造 `agentOptions` 前先探一次 `currentSelection()`，若 `provider` 或 `model` 拿不到就**立即抛错**、走 `dispatchCard` 失败回滚并记到卡上——把「静默停在 triage 什么都不说」变成「派发明确失败并说明原因」，因为宿主 `kick()` 的 `catch(_error){}` 会吞掉会话内部错误，不能依赖它。**已按方案 B 修好并在真机端到端验通——见 §4 P2。** |

@@ -50,7 +50,7 @@ function dispatchableFixture() {
   const store = new FactoryStore({ file })
   const project = store.createProject({ name: 'p', rootPath: '/workspace/p' })
   const board = store.createBoard({ projectId: project.id, name: 'main' })
-  store.updateAutonomy(project.id, { autonomy: 'L1', autoStart: true })
+  store.updateAutonomy(project.id, { autonomy: 'you-approve', autoDispatch: true })
   store.updateIntake(project.id, { issueRepo: 'owner/repo', intakeBoardId: board.id })
   const status = createEngineStatus()
   const calls = { dispatch: 0, intake: 0 }
@@ -170,7 +170,7 @@ test('Q2 a released card with a live session/lock/worktree is NOT re-dispatched 
 // ==============================================================================
 // Q3 — no immediate dispatch on release; next tick dispatches under original tier
 // ==============================================================================
-test('Q3 release does not dispatch by itself; next tick dispatches under L1 autoRule', async () => {
+test('Q3 release does not dispatch by itself; next tick dispatches under you-approve autoRule', async () => {
   const f = dispatchableFixture()
   try {
     const card = f.store.createCard({ boardId: f.board.id, title: 'wait-for-next-tick' })
@@ -184,8 +184,8 @@ test('Q3 release does not dispatch by itself; next tick dispatches under L1 auto
     const moved = f.store.getCard(card.id)
     assert.equal(moved.status, 'triage', 'dispatched and advanced Inbox->Triage')
     const autoTransition = moved.history.find((h) => h.type === 'transition' && h.to === 'triage')
-    assert.equal(autoTransition.actor, 'autoRule', 'dispatched by the original L1 tier (autoRule)')
-    assert.equal(autoTransition.tier, 'L1', 'transitionMeta carries the tier')
+    assert.equal(autoTransition.actor, 'autoRule', 'dispatched by the original you-approve tier (autoRule)')
+    assert.equal(autoTransition.tier, 'you-approve', 'transitionMeta carries the semantic tier')
   } finally { f.cleanup() }
 })
 

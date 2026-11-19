@@ -40,10 +40,10 @@ Refresh after installing, open **Settings** (the gear, bottom-left), then choose
 3. Dispatch a card; it runs in its own session and worktree.
 4. At `plan-review`, **Approve plan** is one click: it moves the card to `build` and continues the same session/worktree, so the agent starts implementing right away — no second click needed.
 5. At later stages the card continues: same worktree, same branch, only the session is re-obtained (still live → continue; ended but history on disk → rebuild onto it; no usable history → fresh session with the fallback recorded).
-6. Inspect the change at review, press **Commit**, then **Push branch and create PR** — both are your actions, never the plugin's. Every PR is opened as a **draft** (at all autonomy levels, including manual `L0`); merge stays with a person.
+6. Inspect the change at review, press **Commit**, then **Push branch and create PR** — both are your actions, never the plugin's. Every PR is opened as a **draft** at every autonomy level (`manual` / `you-approve` / `machine-approve`; new projects start at `manual`); merge stays with a person.
 7. The card stays at review once the draft PR is open; you decide whether to mark it done or send it back.
 8. Opening settings from a project lands on that project's settings; the **Global settings** tab (or the "Global settings ›" link on the project pane) holds the worktrees root, GitHub connection, global concurrency and the engine switch. With no project selected, the drawer opens on global settings.
-9. Switch between the sidebar and the top tab strip with the **View** control; the choice survives a reload. The GitHub button on a project card only navigates to the global connection settings — connecting is done there, never from the project. Changing L2 asks for confirmation first, and saves show a short-lived toast.
+9. Switch between the sidebar and the top tab strip with the **View** control; the choice survives a reload. The GitHub button on a project card only navigates to the global connection settings — connecting is done there, never from the project. Changing the autonomy level into `machine-approve` asks for confirmation first; switching away asks nothing — that level reads no switch at all, the level is the single source of truth. Saves show a short-lived toast.
 
 ## Commands
 

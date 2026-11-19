@@ -169,7 +169,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
     store.setWorktree(cardId, { worktreePath, branch, baseBranch, sessionId: created.sessionId })
     store.clearDispatchFailures(cardId)
     const fresh = store.getCard(cardId)
-    // G2: a person pressing "start" dispatches as `human`; the L1 engine passes
+    // G2: a person pressing "start" dispatches as `human`; the engine passes
     // `autoRule` (plus tier/rule/channel) so audits can tell the two apart. The
     // actor is validated by assertTransition against `inbox->triage`.
     if (fresh.status === 'inbox') store.transitionCard(cardId, 'triage', transitionActor, undefined, transitionMeta)

@@ -1,28 +1,23 @@
 /**
- * dsh-factory — L1 autonomy engine (P2).
+ * dsh-factory — autonomy engine (PRD-AUTONOMY-V2).
  *
  * ONE plugin-level timer, not one per project. Each tick enumerates every project
- * and decides, per project, whether to discover issues and/or dispatch Inbox
- * cards. All orchestration is pure over an injected `deps` port, so the whole
- * chain is exercised offline with a fake store and fake host — no real timer, no
- * real `gh`, no real sessions.
+ * and decides, per project, whether to discover issues, dispatch Inbox cards,
+ * and/or approve plans. All orchestration is pure over an injected `deps` port,
+ * so the whole chain is exercised offline with a fake store and fake host — no
+ * real timer, no real `gh`, no real sessions.
  *
- * The engine's boundaries by level (PRD §4):
- *   - L0 (default): strict no-op — no cards, no sessions, no writes.
- *   - L1: discovery + `inbox -> triage` dispatch only, via `dispatchCard`.
- *     It never reads `autoApprove`, so `L1 + autoApprove=true` still stops at
- *     plan-review (AE-1d); it never touches a card outside Inbox.
- *   - L2 (explicit opt-in + autoApprove): adds ONE machine action — approving a
- *     plan (`plan-review -> build`, actor=autoRule) through the same state gate,
- *     then continuing that card's session so build actually runs. Approving
- *     alone strands the card in build with no agent — the same dead-end the
- *     human button fixes. arm-delivery and git stay human-only; pause/takeover
- *     stop approval at once.
+ * Three semantic levels (the only stored values):
+ *   - manual: strict no-op — the machine discovers, dispatches and approves
+ *     nothing.
+ *   - you-approve: discovers issues; autoDispatch decides whether new cards are
+ *     dispatched. Plans always stop for a human.
+ *   - machine-approve: discovers, dispatches and auto-approves plans, stopping
+ *     at Review. It never checks any switch, and never touches git/PR/Done.
  *
- * Default zero side effects (PRD §5): a project at L0, or a paused project, or
- * one without explicit intake config, produces no cards, no sessions, no git
- * writes. Discovery (intake) may still create Inbox cards when `autoStart=false`;
- * dispatch is gated on `autoStart` (AE-1b).
+ * Default zero side effects: a manual project, a paused project, or one without
+ * explicit intake config produces no cards/sessions/git writes. A you-approve
+ * project with autoDispatch off still discovers cards into Inbox.
  *
  * The engine deliberately does NOT reimplement dedupe, dispatch, continuation,
  * rollback, circuit breaking or the state machine — it calls the existing
@@ -42,21 +37,28 @@ export const DEFAULT_GLOBAL_MAX_ACTIVE = 5
 export const DEFAULT_PROJECT_MAX_ACTIVE = 5
 
 /** Stable governance identifiers written into card history / audit events. */
-export const AUTO_TIER = 'L1'
+export const AUTO_TIER = 'you-approve'
 export const AUTO_CHANNEL = 'poll'
 export const RULE_INTAKE = 'auto-issue-discovery'
 export const RULE_DISPATCH = 'auto-dispatch-triage'
-// L2 machine plan-approval (opt-in). arm-delivery stays human — no rule id here.
-export const L2_TIER = 'L2'
+// Machine plan-approval belongs to the machine-approve level. arm-delivery stays
+// human — no rule id here.
+export const MACHINE_APPROVE_TIER = 'machine-approve'
 export const RULE_APPROVE = 'auto-approve-plan'
 
+/** The level → capabilities map. No switch is read for machine-approve. */
+export function behaviorOf(level) {
+  if (level === 'you-approve') return { intake: true, dispatch: true, approve: false }
+  if (level === 'machine-approve') return { intake: true, dispatch: true, approve: true }
+  return { intake: false, dispatch: false, approve: false }
+}
+
 /**
- * The ONE machine approval action in L2: approve the plan of a plan-review card.
- * It reuses the SAME gate a human button uses (store.transitionCard →
+ * The ONE machine approval action at machine-approve: approve a plan-review
+ * card. It reuses the SAME gate a human button uses (store.transitionCard →
  * assertTransition, where autoRule is legal on plan-review->build, state.js:50).
  * It does NOT arm delivery authorization and never touches git — those stay
- * human-only (user's chosen conservative L2 boundary). `autoApprove` is read
- * ONLY by L2; L1/L0 ignore it even when true (AE-1d).
+ * human-only (the conservative machine boundary).
  *
  * Before writing it runs the same write-before-receipt precheck (receipt.js) the
  * tools use, so the approval write cannot leave a half-applied card. Idempotent:
@@ -79,7 +81,7 @@ export function autoApprovePlan({ store, cardId, note, ports = {} } = {}) {
   // Same write/receipt boundary as the model-facing tools: precheck, then write.
   precheckReceipt({ name: 'factory_auto_approve', schema: APPROVE_OUTPUT.schema, render: APPROVE_OUTPUT.render, args: {}, value, ports })
   store.transitionCard(cardId, 'build', 'autoRule', note, {
-    actor: 'autoRule', tier: L2_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
+    actor: 'autoRule', tier: MACHINE_APPROVE_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
   })
   return { approved: true, cardId }
 }
@@ -136,10 +138,12 @@ export function createEngineStatus() {
   }
 }
 
+/** The audit tier is the project's semantic level — one truth source for all events. */
+const tierForLevel = (level) => level === 'machine-approve' ? MACHINE_APPROVE_TIER : AUTO_TIER
 /** Auto-discovery provenance attached to cards the engine creates. */
-const intakeOrigin = () => ({ actor: 'autoRule', tier: AUTO_TIER, rule: RULE_INTAKE, channel: AUTO_CHANNEL })
+const intakeOrigin = (level) => ({ actor: 'autoRule', tier: tierForLevel(level), rule: RULE_INTAKE, channel: AUTO_CHANNEL })
 /** Audit metadata for the single automatic transition (inbox -> triage). */
-const dispatchMeta = () => ({ tier: AUTO_TIER, rule: RULE_DISPATCH, channel: AUTO_CHANNEL })
+const dispatchMeta = (level) => ({ tier: tierForLevel(level), rule: RULE_DISPATCH, channel: AUTO_CHANNEL })
 
 /**
  * Reconcile orphaned cards: ones that carry a worktree/session trace but whose
@@ -217,26 +221,25 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
       }
       projectReports.push(report)
       try {
-        // L0 (and anything else) is a strict no-op: no cards, no sessions, no
-        // git writes (AE-1a). L1 and L2 both run discovery + dispatch; L2 adds
-        // the machine plan-approval stage below (autoApprove opt-in only).
+        // One source of truth: the stored semantic level decides capabilities.
+        // The autoDispatch switch only gates the dispatch capability of
+        // you-approve; machine-approve never reads it.
         const level = project.autonomy
-        if (level !== 'L1' && level !== 'L2') {
-          report.reason = `autonomy=${level} (engine acts only at L1/L2)`
+        const behavior = behaviorOf(level)
+        if (!behavior.intake && !behavior.dispatch && !behavior.approve) {
+          report.reason = `autonomy=${level} (manual: engine does nothing)`
           continue
         }
 
-        // Shared per-project budget: L2 plan-approval continuations and Inbox
-        // dispatch both keep/create active sessions, so they draw from the SAME
-        // cap. Declared once here; each stage re-reads the live counters below.
+        // Shared per-project budget: approval continuations and Inbox dispatch
+        // both keep/create active sessions, so they draw from the SAME cap.
+        // Declared once here; each stage re-reads the live counters below.
         const projectMax = positiveInt(project.maxActiveSessions, projectDefaultMax)
 
-        // L2 machine plan-approval — the ONE extra action L2 takes. Independent
-        // of intake config (issueRepo/board): it judges LOCAL card status only,
-        // never a remote snapshot (AE-2b). pause / takeover apply immediately.
-        // autoApprove is read ONLY here at L2, so L1+autoApprove=true is inert
-        // (AE-1d). A missing deps.approve port (offline L1 fakes) simply skips.
-        if (level === 'L2' && project.autoApprove === true && typeof deps.approve === 'function') {
+        // Machine plan-approval is independent of intake config (issueRepo/board):
+        // it judges LOCAL card status only. pause / takeover apply immediately.
+        // A missing deps.approve port (offline fakes) simply skips.
+        if (behavior.approve && typeof deps.approve === 'function') {
           const approvalPaused = status.paused === true || project.paused === true
           if (approvalPaused) {
             report.approvalReason = 'paused'
@@ -272,7 +275,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
               try {
                 const result = await deps.approve({
                   store, cardId: card.id,
-                  note: 'L2 auto-approve: plan approved by engine (opt-in)',
+                  note: 'machine-approve: plan approved by engine',
                 })
                 if (result?.approved === true) {
                   report.approved += 1
@@ -305,7 +308,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
                         store.recordEvent({
                           type: 'auto-approve-continue-failed', scope: 'card', targetId: card.id,
                           actor: 'autoRule', decision: 'failed', note: message,
-                          tier: L2_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
+                          tier: MACHINE_APPROVE_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
                         })
                       } catch { /* audit write must never abort the tick */ }
                     }
@@ -322,7 +325,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
                   store.recordEvent({
                     type: 'auto-approve-failed', scope: 'card', targetId: card.id,
                     actor: 'autoRule', decision: 'failed', note: message,
-                    tier: L2_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
+                    tier: MACHINE_APPROVE_TIER, rule: RULE_APPROVE, channel: AUTO_CHANNEL,
                   })
                 } catch { /* audit write must never abort the tick */ }
               }
@@ -363,7 +366,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           if (typeof deps.ghPortFor === 'function') ghPort = await deps.ghPortFor(project)
           const result = await deps.intake({
             store, projectId: project.id, boardId, repo,
-            ghPort, origin: intakeOrigin(),
+            ghPort, origin: intakeOrigin(level),
             // Per-project poll cap; null/undefined means "port default (100)".
             // Bounds a single tick against a busy upstream (no card flood).
             limit: Number.isInteger(project.intakeLimit) && project.intakeLimit > 0 ? project.intakeLimit : undefined,
@@ -375,7 +378,8 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         }
 
         const paused = status.paused === true || project.paused === true
-        const autoStart = project.autoStart === true
+        const autoDispatch = behavior.dispatch
+          && (level === 'machine-approve' || project.autoDispatch === true)
         const projectCards = allCards.filter((card) => card.projectId === project.id)
         const inbox = projectCards
           .filter((card) => card.status === 'inbox')
@@ -388,9 +392,9 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           && !(typeof card.worktreePath === 'string' && card.worktreePath !== '')
           && !(typeof card.sessionId === 'string' && card.sessionId !== ''))
 
-        if (paused || !autoStart || dispatchable.length === 0) {
-          report.action = paused || !autoStart ? 'discover-only' : 'idle'
-          report.reason = paused ? 'paused' : (!autoStart ? 'autoStart=false' : 'no eligible Inbox card')
+        if (paused || !autoDispatch || dispatchable.length === 0) {
+          report.action = paused || !autoDispatch ? 'discover-only' : 'idle'
+          report.reason = paused ? 'paused' : (!autoDispatch ? 'autoDispatch=false' : 'no eligible Inbox card')
           report.queued = inbox.length
           continue
         }
@@ -411,7 +415,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
             const result = await deps.dispatch({
               store, cardId: card.id,
               transitionActor: 'autoRule',
-              transitionMeta: dispatchMeta(),
+              transitionMeta: dispatchMeta(level),
             })
             // `already-dispatched` is a successfully handled card, NOT a failure
             // to retry or to shout about (PRD §9.1). Only a real creation wins a
@@ -459,11 +463,11 @@ export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = 
     // via index.js; when absent, runTick falls back to the single `ghPort` above.
     ...(typeof ghPortFor === 'function' ? { ghPortFor } : {}),
     dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx) }),
-    // L2 machine plan-approval: same store gate as a human button, write-before-
+    // Machine plan-approval: same store gate as a human button, write-before-
     // receipt prechecked, actor=autoRule. Ports left default (the approval value
     // schema is this repo's own, not a host tool's output — no host validator needed).
     approve: (args) => autoApprovePlan(args),
-    // L2 approval's second half: continue the same session so build runs. Same
+    // Machine approval's second half: continue the same session so build runs. Same
     // lazy host port as dispatch, so a profile without `agents` fails only this
     // card (caught by runTick), never the whole tick.
     continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx) }),
@@ -547,7 +551,7 @@ export function startEngine({ ctx, store, status, deps, config = {} } = {}) {
         status.timerReason = 'timer disposed (plugin unloaded)'
         if (typeof dispose === 'function') dispose()
       }
-    }, 'dsh-factory: L1 autonomy engine')
+    }, 'dsh-factory: autonomy engine')
   }
 
   // Resolve the timer service WITHOUT probing `ctx.interval`. On a real Cordis

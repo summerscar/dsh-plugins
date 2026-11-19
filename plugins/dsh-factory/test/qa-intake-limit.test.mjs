@@ -175,7 +175,7 @@ test('intakeLimit is an upper bound: fewer upstream issues yield fewer cards', a
         return JSON.stringify(oneIssue.slice(0, cap))
       },
     }
-    const { projectId } = l1Project(store, 2)
+    const { projectId } = intakeProject(store, 2)
     await runTick({
       store, status: createEngineStatus(), config: {},
       deps: { ghPort: port, intake: intakeIssues, dispatch: async () => ({ mode: 'noop' }), isSessionActive: async () => false },
@@ -201,12 +201,12 @@ function engineDeps({ intake }) {
   }
 }
 
-function l1Project(store, intakeLimit) {
+function intakeProject(store, intakeLimit) {
   const project = store.createProject({ name: 'eng', rootPath: '/workspace/any' })
   // The card's projectId is taken from the board it is created on, so the
-  // intake board MUST belong to this project (not the seeded L0 project).
+  // intake board MUST belong to this project (not the seeded manual project).
   const board = store.createBoard({ projectId: project.id, name: 'intake' })
-  store.updateAutonomy(project.id, { autonomy: 'L1', autoStart: false })
+  store.updateAutonomy(project.id, { autonomy: 'you-approve', autoDispatch: false })
   store.updateIntake(project.id, {
     issueRepo: 'owner/repo', intakeBoardId: board.id,
     ...(intakeLimit === undefined ? {} : { intakeLimit }),
@@ -217,12 +217,12 @@ function l1Project(store, intakeLimit) {
 test('runTick threads project.intakeLimit into deps.intake', async () => {
   const { store, project, board, cleanup } = setup()
   try {
-    const { projectId } = l1Project(store, 3)
+    const { projectId } = intakeProject(store, 3)
     const calls = []
     const deps = engineDeps({
       intake: async (args) => { calls.push(args); return { created: [] } },
     })
-    // The seeded project from setup() is L0; only the L1 project we made runs intake.
+    // The seeded project from setup() is manual; only the you-approve project runs intake.
     void project
     await runTick({ store, status: createEngineStatus(), deps, config: {} })
     assert.equal(calls.length, 1)
@@ -230,12 +230,12 @@ test('runTick threads project.intakeLimit into deps.intake', async () => {
     assert.equal(calls[0].projectId, projectId)
 
     // Unset -> the engine passes null/undefined so the port default applies.
-    const { projectId: noLimitId } = l1Project(store, undefined)
+    const { projectId: noLimitId } = intakeProject(store, undefined)
     const calls2 = []
     const deps2 = engineDeps({ intake: async (args) => { calls2.push(args); return { created: [] } } })
     await runTick({ store, status: createEngineStatus(), deps: deps2, config: {} })
     const forNoLimit = calls2.find((c) => c.projectId === noLimitId)
-    assert.ok(forNoLimit, 'intake should run for the second L1 project')
+    assert.ok(forNoLimit, 'intake should run for the second you-approve project')
     assert.ok(forNoLimit.limit === undefined || forNoLimit.limit === null)
   } finally {
     cleanup()
@@ -262,7 +262,7 @@ test('end to end: intakeLimit=3 over a 100-issue upstream creates exactly 3 card
     }
 
     // intakeLimit = 3
-    const { projectId: cappedId } = l1Project(store, 3)
+    const { projectId: cappedId } = intakeProject(store, 3)
     await runTick({
       store, status: createEngineStatus(), config: {},
       deps: { ghPort: honoringPort, intake: intakeIssues, dispatch: async () => ({ mode: 'noop' }), isSessionActive: async () => false },
@@ -272,7 +272,7 @@ test('end to end: intakeLimit=3 over a 100-issue upstream creates exactly 3 card
     assert.equal(cappedCards.length, 3, 'a tick must not create more than intakeLimit cards')
 
     // Unset -> 100 default
-    const { projectId: freeId } = l1Project(store, undefined)
+    const { projectId: freeId } = intakeProject(store, undefined)
     await runTick({
       store, status: createEngineStatus(), config: {},
       deps: { ghPort: honoringPort, intake: intakeIssues, dispatch: async () => ({ mode: 'noop' }), isSessionActive: async () => false },

@@ -2,7 +2,7 @@
  * QA — dispatched sessions must be TOLD which stage skill to load (Chief's root
  * cause for "session stalls at triage", 2026-11-16).
  *
- * The L1 engine auto-dispatches a card and the session is supposed to advance the
+ * The you-approve engine auto-dispatches a card and the session is supposed to advance the
  * stage using an in-session skill (`factory-triage`, `factory-plan`, …). The old
  * session context only said "use factory_transition_work_item" without ever
  * naming the skill, so the agent didn't know a skill existed for the phase and

@@ -180,41 +180,37 @@ window.__ModuleLoader__.load({
       autoPanelTitle: "自治档位",
       autoPanelPurpose: "档位与暂停偏好分开保存，互不影响",
       lvTitle: "自治档位",
-      lvL0: "手动",
-      lvL1: "你批准",
-      lvL2: "机器批准",
-      badgeL0: "手动",
-      badgeL1: "你批准",
-      badgeL2: "机器批准",
+      lvManual: "手动",
+      lvYouApprove: "你批准",
+      lvMachineApprove: "机器批准",
+      badgeManual: "手动",
+      badgeYouApprove: "你批准",
+      badgeMachineApprove: "机器批准",
       badgePaused: "已暂停",
       lvSub: "机器自动做到哪一步",
       leMachine: "机器会做",
       leYou: "你来做",
-      leL0M: "不自动派发、不自动批准、不自动提交；所有动作都等你手动触发。",
-      leL0Y: "手动派发卡片、批准计划、确认 commit 与创建 PR。",
-      leL1M: "自动派发并生成计划，把卡片停在「待批准」，不再往下推进。",
-      leL1Y: "批准计划后，机器才继续实现。",
-      leL2M: "自动批准计划并继续实现，直到进入「待评审」后停下。",
-      leL2Y: "无需操作；机器不触碰 git、不创建 PR、不标记完成。可随时改回手动。",
-      prefHead: "偏好开关（一般不用改）",
-      prefNote: "两个开关只记录你的偏好，不决定档位；切换档位不会清空它们。",
+      leManualM: "不拉取 issue、不建卡、不派发、不批准；机器什么都不自动做。",
+      leManualY: "手动建卡、派发卡片、批准计划、确认提交与创建 PR。",
+      leYouApproveM: "开关开启：拉取 issue 建卡、派发、出计划，停在「待批准」；关闭：只建卡，不派发。",
+      leYouApproveY: "开关关闭时先手动派发；开启时批准计划后机器继续实现。",
+      leMachineApproveM: "自动拉取 issue 建卡、派发、批准计划并继续实现，停在「待评审」；不碰 git、不创建 PR、不标记完成。",
+      leMachineApproveY: "到「待评审」后确认提交、创建 PR 与标记完成；此前无需操作。可随时改回手动。",
       unsaved: "未保存",
-      autoStart: "新卡片自动派发",
-      autoApprove: "计划自动批准",
-      inactiveAtLevel: "当前档位不生效",
+      autoDispatchLabel: "自动派发新卡",
+      autoDispatchHint: "开启：拉取 issue 建卡后自动派发，卡片停在「待批准」等你批准计划。关闭：只拉取 issue 建卡，不派发，等你手动派发。与「手动」档不同：手动档连 issue 都不拉取。",
       saveLevel: "保存档位",
-      l2Title: "改用「机器批准」档位？",
-      l2Body: "启用后，机器自动批准计划并继续实现；它不会执行 git 操作、不会创建 PR、不会标记完成。此档位按项目单独启用，随时可改回手动。",
+      l2Title: "切换到「机器批准」档？",
+      l2Body: "此档会自动拉取 issue 建卡、派发并批准计划，一路做到「待评审」才停。机器不会执行 git 操作、不会创建 PR、不会标记完成；按项目生效，随时可改回手动。",
       enableL2: "确认启用",
       cancel: "取消",
       pauseTitle: "暂停与接管",
-      pauseSub: "立即生效的手动闸门",
-      projPause: "暂停本项目的自动派发",
       enginePause: "暂停引擎",
       engineResume: "恢复引擎",
       engineRunning: "引擎运行中",
       enginePaused: "引擎已暂停",
-      pauseSem: "暂停只阻止新的自动派发；正在运行的会话继续，跳过的卡片不会自动补跑。",
+      pauseSem: "暂停只挡新的自动派发；正在跑的会话继续，恢复后不会补跑跳过的卡。",
+      pauseScopeNote: "暂停作用于整个项目；想只停某张卡，在卡片上点「我来接手」，随时可「交还引擎」。",
       takeover: "我来接手",
       concTitle: "并发上限",
       concSub: "项目上限与全局上限分别保存，实际生效值取两者中较小的。",
@@ -283,7 +279,12 @@ window.__ModuleLoader__.load({
       ghPermOk: "有权限访问此仓库",
       ghPermBad: "无权限访问此仓库",
       ghCheckPerm: "检查 GitHub 权限",
+      ghRecheckPerm: "重新检查权限",
       ghChecking: "正在检查权限…",
+      permCheckRepo: "仓库读取",
+      permCheckWrite: "推送与建 PR",
+      permCheckIssues: "Issue 读取",
+      permCheckPulls: "PR 读取",
       ghConnect: "连接 GitHub",
       ghAddAccount: "填写 GitHub Token",
       ghGuideNone: "此仓库尚无可用身份。用 GitHub OAuth App 连接（所有项目共用），或用 gh CLI 登录，或填写 GitHub Token。",
@@ -427,41 +428,37 @@ window.__ModuleLoader__.load({
       autoPanelTitle: "Autonomy level",
       autoPanelPurpose: "Level and pause preference save separately — never together",
       lvTitle: "Autonomy level",
-      lvL0: "Manual",
-      lvL1: "You approve",
-      lvL2: "Machine approves",
-      badgeL0: "Manual",
-      badgeL1: "You approve",
-      badgeL2: "Machine approves",
+      lvManual: "Manual",
+      lvYouApprove: "You approve",
+      lvMachineApprove: "Machine approves",
+      badgeManual: "Manual",
+      badgeYouApprove: "You approve",
+      badgeMachineApprove: "Machine approves",
       badgePaused: "Paused",
       lvSub: "How far the machine goes automatically",
       leMachine: "Machine does",
       leYou: "You do",
-      leL0M: "No auto dispatch, approval or commit; every action waits for you.",
-      leL0Y: "Dispatch cards, approve plans, confirm commits and create PRs yourself.",
-      leL1M: "Dispatches and drafts a plan, then stops at Awaiting approval.",
-      leL1Y: "Approve the plan; the machine then continues to implementation.",
-      leL2M: "Auto-approves plans and continues to implementation, stopping at Review.",
-      leL2Y: "No action needed; the machine never touches git, opens PRs or marks work done. Switch back to Manual anytime.",
-      prefHead: "Preference switches (usually leave as-is)",
-      prefNote: "The two switches only record your preference; they don't set the level and persist across level changes.",
+      leManualM: "Pulls no issues, creates no cards, dispatches and approves nothing; the machine does nothing automatically.",
+      leManualY: "Create cards, dispatch them, approve plans, confirm commits and create PRs by hand.",
+      leYouApproveM: "On: pull issues into cards, dispatch, plan, then stop at Plan review. Off: only create cards, no dispatch.",
+      leYouApproveY: "With the switch off, dispatch manually; with it on, approve the plan and the machine continues.",
+      leMachineApproveM: "Pulls issues into cards, dispatches, auto-approves plans and continues to implementation, stopping at Review; never touches git, creates PRs or marks work done.",
+      leMachineApproveY: "No action until Review; then confirm the commit, create the PR and mark done. Switch back to Manual anytime.",
       unsaved: "Unsaved",
-      autoStart: "Auto-dispatch new cards",
-      autoApprove: "Auto-approve plans",
-      inactiveAtLevel: "Not applied at this level",
+      autoDispatchLabel: "Auto-dispatch new cards",
+      autoDispatchHint: "On: after pulling issues into cards, dispatch them automatically and stop at Plan review for your approval. Off: only pull issues into cards; dispatch them yourself. Unlike Manual, this level still pulls issues.",
       saveLevel: "Save level",
-      l2Title: "Switch to the \"Machine approves\" level?",
-      l2Body: "Once enabled, the machine auto-approves plans and continues to implementation; it performs no git operations, creates no PRs and marks nothing done. Enabled per project and reversible anytime.",
+      l2Title: "Switch to the Machine approves level?",
+      l2Body: "This level pulls issues into cards, dispatches and auto-approves plans, continuing until Review. The machine never runs git operations, creates PRs or marks work done. It applies to this project only and can be changed back to Manual anytime.",
       enableL2: "Enable",
       cancel: "Cancel",
       pauseTitle: "Pause & takeover",
-      pauseSub: "Manual gates, effective immediately",
-      projPause: "Pause auto dispatch for this project",
       enginePause: "Pause engine",
       engineResume: "Resume engine",
       engineRunning: "Engine running",
       enginePaused: "Engine paused",
-      pauseSem: "Pause only blocks new auto dispatch; running sessions continue and skipped cards aren't retried automatically.",
+      pauseSem: "Pause only blocks new automatic dispatch; running sessions continue, and skipped cards are not caught up after resuming.",
+      pauseScopeNote: "Pause affects the whole project. To stop a single card, use Take over on that card — you can Return to engine anytime.",
       takeover: "Take over",
       concTitle: "Concurrency cap",
       concSub: "Project and global caps are saved separately; the effective value is the smaller of the two.",
@@ -530,7 +527,12 @@ window.__ModuleLoader__.load({
       ghPermOk: "Has access to this repo",
       ghPermBad: "No access to this repo",
       ghCheckPerm: "Check GitHub access",
+      ghRecheckPerm: "Recheck GitHub access",
       ghChecking: "Checking access…",
+      permCheckRepo: "Repository access",
+      permCheckWrite: "Push and pull requests",
+      permCheckIssues: "Issue access",
+      permCheckPulls: "Pull request access",
       ghConnect: "Connect GitHub",
       ghAddAccount: "Add a GitHub Token",
       ghGuideNone: "No identity is available for this repo. Connect with GitHub OAuth App (shared by all projects), sign in with gh CLI, or add a GitHub Token.",
@@ -951,11 +953,14 @@ window.__ModuleLoader__.load({
 
     // ---- P4 · autonomy & runtime -----------------------------------------
     // The FIRST hard line: the status badge is derived ONLY from the `autonomy`
-    // field, never from autoStart/autoApprove. "level back to manual while a
-    // switch is still on" is a legal stored combination; reading switches would
-    // show "running automatically" when the engine is actually idle (P4-2).
-    const LEVELS = ['L0', 'L1', 'L2']
-    const LEVEL_BADGE = { L0: 'badgeL0', L1: 'badgeL1', L2: 'badgeL2' }
+    // field, never from autoDispatch. A switch left on at manual/machine-approve
+    // is never stored; reading it would misreport the engine's real behavior.
+    const LEVELS = ['manual', 'you-approve', 'machine-approve']
+    const LEVEL_META = {
+      manual: { label: 'lvManual', badge: 'badgeManual', m: 'leManualM', y: 'leManualY', wash: T.grayWash, ink: T.gray },
+      'you-approve': { label: 'lvYouApprove', badge: 'badgeYouApprove', m: 'leYouApproveM', y: 'leYouApproveY', wash: T.blueWash, ink: T.blue },
+      'machine-approve': { label: 'lvMachineApprove', badge: 'badgeMachineApprove', m: 'leMachineApproveM', y: 'leMachineApproveY', wash: T.orangeWash, ink: T.orange },
+    }
 
     function Modal({ title, tone, children, onCancel, onConfirm, confirmLabel, confirmTone, busy, confirmDisabled, t }) {
       return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(18,24,32,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 18 } }, [
@@ -983,92 +988,76 @@ window.__ModuleLoader__.load({
     function AutonomySection({ project, t, onSaved, onModal }) {
       // `savedLevel` is what the backend stored; `level` is the pending choice.
       // Clicking a segment changes ONLY the pending value + explainer card; the
-      // badge keeps showing the saved level until Save commits (P4-1b).
-      const savedLevel = project?.autonomy ?? 'L0'
+      // badge keeps showing the saved level until Save commits.
+      const savedLevel = LEVELS.includes(project?.autonomy) ? project.autonomy : 'manual'
+      const savedAutoDispatch = savedLevel === 'you-approve' && project?.autoDispatch === true
       const [level, setLevel] = useState(savedLevel)
-      const [autoStart, setAutoStart] = useState(project?.autoStart === true)
-      const [autoApprove, setAutoApprove] = useState(project?.autoApprove === true)
-      const [prefsOpen, setPrefsOpen] = useState(false)
-      const [l2Confirm, setL2Confirm] = useState(false)
+      const [autoDispatch, setAutoDispatch] = useState(savedAutoDispatch)
+      const [machineConfirm, setMachineConfirm] = useState(false)
       const [saving, setSaving] = useState(false)
       const [message, setMessage] = useState('')
       const [error, setError] = useState('')
 
       // Switching projects remounts this component (key=project.id at the call
-      // site), so these useState initialisers re-run on the newly saved values —
-      // no "sidebar L0, drawer L1" contradiction.
-      const dirty = level !== savedLevel
-      // L0 suppresses both switches; L1 ignores autoApprove (engine reads it only
-      // at L2). Values are retained, just shown as unused at the pending level.
-      const inactiveStart = level === 'L0'
-      const inactiveApprove = level === 'L0' || level === 'L1'
+      // site), so these useState initialisers re-run on the newly saved values.
+      const dirty = level !== savedLevel || (level === 'you-approve' && autoDispatch !== savedAutoDispatch)
 
       const chooseLevel = (next) => {
-        if (next === 'L2' && level !== 'L2') { setL2Confirm(true); return }
+        if (next === 'machine-approve' && level !== 'machine-approve') { setMachineConfirm(true); return }
         setLevel(next)
       }
-      // The L2 gate commits immediately on confirmation: cancelling leaves the
-      // stored level and badge untouched, and the badge follows the read-back.
-      const confirmL2 = () => { setL2Confirm(false); setLevel('L2'); return save('L2') }
+      // The machine-approve confirmation commits immediately; cancelling leaves
+      // the pending level and switch untouched (no hidden mutation).
+      const confirmMachine = () => {
+        setMachineConfirm(false)
+        setLevel('machine-approve')
+        setAutoDispatch(false)
+        return save('machine-approve', false)
+      }
       // Render the confirm dialog at the page root: inside the transformed drawer
       // a fixed overlay would be positioned relative to the drawer, not the page.
       useEffect(() => {
         if (!onModal) return undefined
-        if (!l2Confirm) { onModal(null); return undefined }
+        if (!machineConfirm) { onModal(null); return undefined }
         onModal(h(Modal, {
-          key: 'l2m', title: t('l2Title'), confirmLabel: t('enableL2'), busy: false, t,
-          onCancel: () => setL2Confirm(false), onConfirm: confirmL2,
+          key: 'machineConfirm', title: t('l2Title'), confirmLabel: t('enableL2'), busy: false, t,
+          onCancel: () => setMachineConfirm(false), onConfirm: confirmMachine,
         }, t('l2Body')))
         return () => onModal(null)
-      }, [l2Confirm, level, autoStart, autoApprove, saving, message, error, onModal, t])
+      }, [machineConfirm, level, autoDispatch, saving, message, error, onModal, t])
 
-      const save = async (overrideLevel) => {
+      const save = async (overrideLevel, overrideDispatch) => {
         const nextLevel = overrideLevel || level
+        const nextDispatch = nextLevel === 'you-approve'
+          ? (overrideDispatch === undefined ? autoDispatch : overrideDispatch)
+          : false
         setSaving(true); setError(''); setMessage('')
         try {
           const data = await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, {
-            autonomy: nextLevel, autoStart, autoApprove,
+            autonomy: nextLevel, autoDispatch: nextDispatch,
           })
-          // Silent-normalisation read-back: adopt the ACTUAL stored values from
-          // the backend, never the form's originals (P4-3). After save the badge
-          // and the pending choice converge on the same read-back value.
+          // Adopt the ACTUAL stored values from the backend, never the form's
+          // originals, so badge, pending choice and switch converge.
           const p = data.project
           setLevel(p.autonomy)
-          setAutoStart(p.autoStart === true)
-          setAutoApprove(p.autoApprove === true)
+          setAutoDispatch(p.autonomy === 'you-approve' && p.autoDispatch === true)
           setMessage(t('setupSaved'))
           onSaved()
         } catch (err) { setError(err.message) } finally { setSaving(false) }
       }
 
       const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
-      // Selected segment uses a soft brand wash + coloured label (Design #1):
-      // L0 grey, L1 blue, L2 orange — never a solid blue fill.
-      const segTone = { L0: [T.grayWash, T.gray], L1: [T.blueWash, T.blue], L2: [T.orangeWash, T.orange] }
+      // Selected segment uses a soft brand wash + coloured label: manual grey,
+      // you-approve blue, machine-approve orange — never a solid blue fill.
       const segBtn = (lv) => {
         const on = level === lv
-        const [wash, ink] = segTone[lv]
+        const meta = LEVEL_META[lv]
         return {
-          padding: '7px 12px', borderRadius: T.radiusSm, border: `1px solid ${on ? ink : T.line}`,
-          background: on ? wash : T.card,
-          color: on ? ink : T.ink, fontSize: 12, fontWeight: 600, cursor: 'pointer', minHeight: 44,
+          padding: '7px 12px', borderRadius: T.radiusSm, border: `1px solid ${on ? meta.ink : T.line}`,
+          background: on ? meta.wash : T.card,
+          color: on ? meta.ink : T.ink, fontSize: 12, fontWeight: 600, cursor: 'pointer', minHeight: 44,
         }
       }
-      const switchRow = (checked, onChange, label, inactive) => h('div', { className: 'df-switch-row', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '6px 0' } }, [
-        // 44px transparent hit area around a 38×22 visual track: meets the tap
-        // target rule without inflating the switch graphic.
-        h('button', {
-          type: 'button', role: 'switch', 'aria-checked': checked ? 'true' : 'false',
-          onClick: () => onChange(!checked),
-          style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
-        }, h('span', {
-          style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: checked ? T.info : T.line },
-        }, h('span', {
-          style: { position: 'absolute', top: 3, left: checked ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' },
-        }))),
-        h('span', { style: { ...small, color: inactive ? T.mutedInk : T.ink, fontWeight: 600 } }, t(label)),
-        inactive ? h('span', { style: { fontSize: 10.5, color: T.mutedInk, background: T.panel, borderRadius: 5, padding: '2px 7px' } }, t('inactiveAtLevel')) : null,
-      ])
 
       // Explain card: two fixed lines — "machine does / you do" — that follow the
       // PENDING choice so a first-time reader can tell what each level means.
@@ -1076,23 +1065,21 @@ window.__ModuleLoader__.load({
         key: 'explain',
         style: { background: T.accentWash, border: `1px solid ${T.line}`, borderLeft: `3px solid ${T.accent}`, borderRadius: T.radiusLg, padding: '10px 12px', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 },
       }, [
-        h('div', { key: 'h', style: { fontSize: 13, fontWeight: 700, color: T.accentInk } }, t(`lv${level}`)),
-        h('div', { key: 'm', style: small }, `${t('leMachine')}：${t(`le${level}M`)}`),
-        h('div', { key: 'y', style: small }, `${t('leYou')}：${t(`le${level}Y`)}`),
+        h('div', { key: 'h', style: { fontSize: 13, fontWeight: 700, color: T.accentInk } }, t(LEVEL_META[level].label)),
+        h('div', { key: 'm', style: small }, `${t('leMachine')}：${t(LEVEL_META[level].m)}`),
+        h('div', { key: 'y', style: small }, `${t('leYou')}：${t(LEVEL_META[level].y)}`),
       ])
 
       const children = [
         h('div', { key: 'seg', style: { display: 'inline-flex', gap: 4, flexWrap: 'wrap' } },
-          LEVELS.map((lv) => h('button', { key: lv, type: 'button', style: segBtn(lv), onClick: () => chooseLevel(lv) }, h('span', { className: 'df-tap' }, t(`lv${lv}`))))),
-        // Badge reflects the SAVED level only — never the pending choice, never
-        // the two switches (P4-2 first hard line).
+          LEVELS.map((lv) => h('button', { key: lv, type: 'button', style: segBtn(lv), onClick: () => chooseLevel(lv) }, h('span', { className: 'df-tap' }, t(LEVEL_META[lv].label))))),
+        // Badge reflects the SAVED level only — never the pending choice or switch.
         h('div', { key: 'badgeRow', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
           h('span', {
             key: 'badge',
             style: { display: 'inline-flex', gap: 7, alignItems: 'center', padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 650,
-              background: savedLevel === 'L2' ? T.orangeWash : savedLevel === 'L1' ? T.blueWash : T.grayWash,
-              color: savedLevel === 'L2' ? T.orange : savedLevel === 'L1' ? T.blue : T.gray },
-          }, [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t(LEVEL_BADGE[savedLevel])]),
+              background: LEVEL_META[savedLevel].wash, color: LEVEL_META[savedLevel].ink },
+          }, [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t(LEVEL_META[savedLevel].badge)]),
           project?.paused === true
             ? h('span', { key: 'paused', style: { display: 'inline-flex', gap: 6, alignItems: 'center', padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 650, background: T.panel, color: T.mutedInk } },
               [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t('badgePaused')])
@@ -1102,15 +1089,22 @@ window.__ModuleLoader__.load({
           dirty ? h('span', { key: 'rb', style: { fontSize: 11, color: T.warningInk, fontWeight: 600 } }, t('unsaved')) : null,
         ]),
         explainer,
-        h('button', {
-          key: 'prefToggle', type: 'button',
-          style: { background: 'transparent', border: 'none', color: T.mutedInk, fontSize: 12, cursor: 'pointer', textAlign: 'left', padding: '10px 0 0', minHeight: 44 },
-          onClick: () => setPrefsOpen(!prefsOpen),
-        }, `${prefsOpen ? '▾' : '▸'} ${t('prefHead')}`),
-        prefsOpen ? h('div', { key: 'prefs', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
-          switchRow(autoStart, setAutoStart, 'autoStart', inactiveStart),
-          switchRow(autoApprove, setAutoApprove, 'autoApprove', inactiveApprove),
-          h('div', { key: 'note', style: small }, t('prefNote')),
+        // The single switch exists ONLY at you-approve; other levels hide the
+        // whole block instead of greying it out.
+        level === 'you-approve' ? h('div', { key: 'dispatchSwitch', style: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 12 } }, [
+          h('div', { key: 'row', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
+            h('button', {
+              type: 'button', role: 'switch', 'aria-checked': autoDispatch ? 'true' : 'false',
+              onClick: () => setAutoDispatch(!autoDispatch),
+              style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
+            }, h('span', {
+              style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: autoDispatch ? T.info : T.line },
+            }, h('span', {
+              style: { position: 'absolute', top: 3, left: autoDispatch ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' },
+            }))),
+            h('span', { style: { ...small, color: T.ink, fontWeight: 600 } }, t('autoDispatchLabel')),
+          ]),
+          h('div', { key: 'hint', style: small }, t('autoDispatchHint')),
         ]) : null,
         h('div', { key: 'save', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
           h('span', { key: 'btn', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('saveLevel'))),
@@ -1121,7 +1115,7 @@ window.__ModuleLoader__.load({
       return h('div', { key: 'autonomy', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 2 } }, children)
     }
 
-    function PauseSection({ project, t, onSaved, onTakeoverCard }) {
+    function PauseSection({ project, t, onSaved }) {
       const [saving, setSaving] = useState(false)
       const [error, setError] = useState('')
       const [message, setMessage] = useState('')
@@ -1138,18 +1132,11 @@ window.__ModuleLoader__.load({
       // reads as part of that block rather than a fifth independent section.
       return h('div', { key: 'pause', style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 } }, [
         h('div', { key: 'sw', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
-          h('button', {
-            key: 't', type: 'button', role: 'switch', 'aria-checked': paused ? 'true' : 'false',
-            disabled: saving, onClick: () => void toggle(),
-            style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
-          }, h('span', {
-            style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: paused ? T.warning : T.line },
-          }, h('span', { style: { position: 'absolute', top: 3, left: paused ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' } }))),
-          h('span', { key: 'l', style: { ...small, color: T.ink, fontWeight: 600 } }, t('projPause')),
+          h('span', { key: 'l', style: { ...small, color: T.ink, fontWeight: 600 } }, t('pauseTitle')),
           h('span', { key: 'b', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void toggle() }, paused ? t('resumeProject') : t('pauseProject'))),
         ]),
         h('div', { key: 'sem', style: small }, t('pauseSem')),
-        h('div', { key: 'takeHint', style: small }, t('takeover') + ' · ' + t('pauseSub')),
+        h('div', { key: 'scope', style: small }, t('pauseScopeNote')),
         message ? h('div', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
         error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk } }, `${t('errorPrefix')}${error}`) : null,
       ])
@@ -1193,7 +1180,7 @@ window.__ModuleLoader__.load({
     // P4-github increment · GLOBAL account management (Design §7). OAuth
     // connect/reconnect/disconnect + gh CLI status. All machine-level, NOT tied
     // to a project — the per-repo identity card stays project-scoped (PGH-20/21).
-    function AccountManager({ t, onChanged }) {
+    function AccountManager({ t, onChanged, refreshKey = 0 }) {
       const [oauth, setOauth] = useState(null) // { connected, inFlight, hasAppId }
       const [ghcli, setGhcli] = useState(null) // { loggedIn, login }
       const [error, setError] = useState('')
@@ -1204,8 +1191,6 @@ window.__ModuleLoader__.load({
       const [sessionId, setSessionId] = useState('')
       const [connecting, setConnecting] = useState(false)
       const [notice, setNotice] = useState(null)
-      const [pendingPrompt, setPendingPrompt] = useState(false)
-      const [step, setStep] = useState('')
 
       const load = useCallback(async () => {
         setError('')
@@ -1217,7 +1202,7 @@ window.__ModuleLoader__.load({
           setOauth(o); setGhcli(g)
         } catch (err) { setError(err.message) }
       }, [])
-      useEffect(() => { void load() }, [load])
+      useEffect(() => { void load() }, [load, refreshKey])
 
       // Poll an in-flight connect session (same bridge the identity card uses).
       useEffect(() => {
@@ -1231,9 +1216,7 @@ window.__ModuleLoader__.load({
             if (view.notices && view.notices.length) {
               const last = view.notices[view.notices.length - 1]
               setNotice(last)
-              if (last.code) setStep('code'); else if (last.url) setStep('open')
             }
-            setPendingPrompt(view.status === 'running' && !!view.prompt)
             if (view.status === 'authorized') {
               setConnecting(false); setSessionId(''); setDisconnected(false); setRevokeUrl('')
               await load(); if (typeof onChanged === 'function') onChanged()
@@ -1252,8 +1235,8 @@ window.__ModuleLoader__.load({
         setError(''); setBusy(true)
         try {
           const result = await callApi('POST', '/auth/connect/begin', {})
-          setDisconnected(false); setRevokeUrl(''); setNotice(null); setPendingPrompt(false)
-          setConnecting(true); setSessionId(result.sessionId); setStep('open')
+          setDisconnected(false); setRevokeUrl(''); setNotice(null)
+          setConnecting(true); setSessionId(result.sessionId)
         } catch (err) { setError(err.message) } finally { setBusy(false) }
       }
 
@@ -1277,14 +1260,9 @@ window.__ModuleLoader__.load({
         } catch (err) { setError(err.message) } finally { setBusy(false) }
       }
 
-      const answer = async (value) => {
-        setError(''); setBusy(true)
-        try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/answer`, { value }); setPendingPrompt(false); setStep('connecting') }
-        catch (err) { setError(err.message) } finally { setBusy(false) }
-      }
       const cancel = async () => {
         try { await callApi('POST', `/auth/connect/${encodeURIComponent(sessionId)}/cancel`, {}) } catch { /* best effort */ }
-        setConnecting(false); setSessionId(''); setPendingPrompt(false)
+        setConnecting(false); setSessionId('')
       }
 
       const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
@@ -1315,12 +1293,16 @@ window.__ModuleLoader__.load({
           connecting ? h('div', { key: 'conn', style: { ...small, background: T.panel, borderRadius: T.radiusSm, padding: '7px 9px' } }, [
             h('div', { key: 'keep', style: { color: T.warningInk } }, t('ghKeepOpen')),
             h('div', { key: 'one', style: { marginTop: 3 } }, t('ghOneAtATime')),
-            h('div', { key: 's', style: { marginTop: 3, color: T.ink } },
-              step === 'code' || step === 'connecting' ? t('ghStepCode') : t('ghStepOpen')),
-            notice?.url ? h('a', { key: 'url', href: notice.url, target: '_blank', rel: 'noreferrer', style: { display: 'inline-block', marginTop: 4, color: T.accent } }, t('ghStepOpen')) : null,
+            // Step order must read ① → ② → pending: the URL was rendered
+            // after the code text, which made the visible order ② then ①.
+            notice?.url
+              ? h('a', { key: 'url', href: notice.url, target: '_blank', rel: 'noreferrer', style: { display: 'inline-block', marginTop: 4, color: T.accent } }, t('ghStepOpen'))
+              : h('div', { key: 's1', style: { marginTop: 3, color: T.ink } }, t('ghStepOpen')),
+            notice?.code ? h('div', { key: 's2', style: { marginTop: 3, color: T.ink } }, t('ghStepCode')) : null,
             notice?.code ? h('div', { key: 'code', style: { marginTop: 5, fontSize: 19, fontWeight: 700, letterSpacing: 2, fontFamily: 'ui-monospace, monospace', color: T.ink } }, notice.code) : null,
-            pendingPrompt ? h('span', { key: 'go', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void answer('done') }, t('ghStepDone'))) : null,
-            step === 'connecting' ? h('div', { key: 'wait', style: { marginTop: 4 } }, t('ghStepConnecting')) : null,
+            connecting && notice?.code ? h('div', { key: 'wait', style: { marginTop: 5, display: 'flex', alignItems: 'center', gap: 6, color: T.mutedInk } }, [
+              h('span', { key: 'sp', className: 'df-spinner' }), t('ghStepConnecting'),
+            ]) : null,
             h('span', { key: 'cx', className: 'df-tap' }, h(Button, { disabled: busy, onClick: () => void cancel(), style: { marginTop: 6, padding: '4px 9px' } }, t('cancel'))),
           ]) : null,
           error ? h('div', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`) : null,
@@ -1490,6 +1472,9 @@ window.__ModuleLoader__.load({
     }
     // Creation-time detection notices, stored as codes (never free text) so
     // both dictionaries can localise them.
+    const PERM_CHECK_KEY = {
+      repo: 'permCheckRepo', write: 'permCheckWrite', issues: 'permCheckIssues', pulls: 'permCheckPulls',
+    }
     const BIND_REASON_KEY = {
       'no-origin': 'bindNoOrigin',
       'not-github': 'bindNotGithub',
@@ -1508,6 +1493,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const [perm, setPerm] = useState(null) // 'ok' | 'insufficient' | 'not-connected'
       const [permReason, setPermReason] = useState('')
+      const [permChecks, setPermChecks] = useState([])
       const [checking, setChecking] = useState(false)
       const [expanded, setExpanded] = useState(false)
       const [dialog, setDialog] = useState('') // '' | 'add'
@@ -1529,8 +1515,11 @@ window.__ModuleLoader__.load({
         try {
           const data = await callApi('GET', base)
           setCard(data)
-          setPerm(data?.identity?.connected ? null : 'not-connected')
-          setPermReason('')
+          const p = data?.permission || {}
+          const fresh = p.repo === data?.binding?.issueRepo && !!data?.binding?.issueRepo
+          setPerm(fresh && p.status ? p.status : (data?.identity?.connected ? null : 'not-connected'))
+          setPermReason(fresh ? (p.reason || '') : '')
+          setPermChecks(fresh && Array.isArray(p.checks) ? p.checks : [])
         } catch (err) { setError(err.message) } finally { setLoading(false) }
       }, [base])
       useEffect(() => { void load() }, [load])
@@ -1541,9 +1530,22 @@ window.__ModuleLoader__.load({
           const result = await callApi('POST', `${base}/check`, {})
           setPerm(result.status)
           setPermReason(result.reason || '')
-        } catch (err) { setError(err.message); setPerm('insufficient'); setPermReason(err.message) }
+          setPermChecks(Array.isArray(result.checks) ? result.checks : [])
+          await load()
+          if (typeof onChanged === 'function') onChanged()
+        } catch (err) { setError(err.message); setPerm('insufficient'); setPermReason(err.message); setPermChecks([]) }
         finally { setChecking(false) }
       }
+
+      // A configured bound repo must never sit at "未检查": run the full suite
+      // once when the card opens, unless a fresh result for this exact repo is
+      // already stored. Rechecking stays an explicit button.
+      useEffect(() => {
+        if (card?.binding?.bound && card?.identity?.connected && !checking) {
+          const p = card?.permission || {}
+          if (p.repo !== card.binding.issueRepo || !p.status) void checkPermission()
+        }
+      }, [card?.binding?.bound, card?.binding?.issueRepo, card?.identity?.connected, card?.permission?.repo, card?.permission?.status])
 
       const openAdd = () => { setCredential(''); setScope(''); setConfirmShared(false); setError(''); setDialog('add') }
 
@@ -1575,7 +1577,8 @@ window.__ModuleLoader__.load({
           await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, { issueRepo: value === '' ? null : value })
           setBindingMessage(t('saved'))
           await load()
-          if (typeof onChanged === 'function') onChanged()
+          if (value !== '') await checkPermission()
+          else if (typeof onChanged === 'function') onChanged()
         } catch (err) { setBindingError(err.message) } finally { setBindingBusy(false) }
       }
       const sourceLabel = id.source && SRC_LABEL[id.source] ? t(SRC_LABEL[id.source]) : t('srcNone')
@@ -1641,8 +1644,13 @@ window.__ModuleLoader__.load({
                       : (perm === 'insufficient' ? t('ghPermBad')
                         : (id.connected ? t('ghPermNotChecked') : t('ghGuideNone')))),
                 ),
-                id.connected && !checking ? h('span', { key: 'chk', className: 'df-tap' }, h(Button, { onClick: () => void checkPermission(), disabled: busy, style: { padding: '3px 9px', fontSize: 11 } }, t('ghCheckPerm'))) : null,
+                id.connected && binding.bound && !checking ? h('span', { key: 'chk', className: 'df-tap' }, h(Button, { onClick: () => void checkPermission(), disabled: busy, style: { padding: '3px 9px', fontSize: 11 } }, t('ghRecheckPerm'))) : null,
               ]),
+              permChecks.length > 0 ? h('div', { key: 'cl', style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 5 } }, permChecks.map((c) => h('span', {
+                key: c.key,
+                style: { fontSize: 10.5, color: c.ok ? T.greenInk : T.dangerInk, background: c.ok ? T.greenWash : T.dangerWash, borderRadius: 999, padding: '2px 7px' },
+                title: c.reason || '',
+              }, `${c.ok ? '✓' : '✕'} ${t(PERM_CHECK_KEY[c.key] || c.key)}`))) : null,
               perm === 'insufficient' && permReason ? h('div', { key: 'pr', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line', background: T.dangerWash, borderRadius: T.radiusSm, padding: '6px 8px' } }, permReason) : null,
               perm === 'insufficient' ? h('div', { key: 'gd', style: { ...small, marginTop: 2 } }, t('ghGuideNoAccess')) : null,
             ]),
@@ -1938,6 +1946,9 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [toast])
       const showToast = useCallback((msg, kind = 'ok') => setToast({ msg, kind, id: Date.now() }), [])
+      // Bumped when the global GitHub Client ID is saved, so the sibling
+      // AccountManager re-reads /auth/oauth/state and enables Connect at once.
+      const [githubRefreshKey, setGithubRefreshKey] = useState(0)
 
       const load = useCallback(async () => {
         setBusy(true)
@@ -2002,7 +2013,12 @@ window.__ModuleLoader__.load({
       // New projects are created from a modal launched by the left rail; the
       // form lives in the page-root overlay, never in the board column.
       const createProject = () => void run(async () => {
-        await callApi('POST', '/projects', { name: newProject.name, rootPath: newProject.rootPath })
+        const created = await callApi('POST', '/projects', { name: newProject.name, rootPath: newProject.rootPath })
+        // A detected binding is not "已绑定" until the full suite passes.
+        // Run it now so the badge and identity card agree on creation.
+        if (created?.project?.issueRepo) {
+          await callApi('POST', `/identity/${encodeURIComponent(created.project.id)}/check`, {})
+        }
         setNewProject({ name: '', rootPath: '' })
         setShowNewProject(false)
       })
@@ -2036,8 +2052,8 @@ window.__ModuleLoader__.load({
       // Project navigation: A sidebar / B top tabs, one shared projectId.
       // Card counts are derived from the already-loaded boards+cards; no API change.
       const initials = (name) => String(name || '').split('/').pop().slice(0, 2).toUpperCase()
-      const levelOf = (p) => LEVELS.includes(p?.autonomy) ? p.autonomy : 'L0'
-      const levelTone = (lv) => lv === 'L2' ? [T.orangeWash, T.orange] : lv === 'L1' ? [T.blueWash, T.blue] : [T.grayWash, T.gray]
+      const levelOf = (p) => LEVELS.includes(p?.autonomy) ? p.autonomy : 'manual'
+      const levelTone = (lv) => [LEVEL_META[lv].wash, LEVEL_META[lv].ink]
       const pickProject = (p) => { setProjectId(p.id); setRailOpen(false); showToast(t('toastSwitched', { name: p.name }), 'ok') }
       const railContent = h('div', { key: 'railInner', style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
         h('div', { key: 'railHead', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px 10px' } }, [
@@ -2059,7 +2075,7 @@ window.__ModuleLoader__.load({
                 h('span', { key: 'meta', style: { minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 } }, [
                   h('span', { key: 'name', style: { fontSize: 12, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, p.name),
                   h('span', { key: 'sub', style: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' } }, [
-                    h('span', { key: 'lv', style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: wash, color: ink } }, lv),
+                    h('span', { key: 'lv', style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: wash, color: ink } }, t(LEVEL_META[lv].badge)),
                     h('span', { key: 'cnt', style: { fontSize: 10.5, color: T.mutedInk } }, `${cardCounts[p.id] || 0} ${t('statCards')}`),
                     p.paused === true ? h('span', { key: 'pz', style: { fontSize: 10, fontWeight: 700, color: T.orangeInk } }, t('badgePaused')) : null,
                   ].filter(Boolean)),
@@ -2076,7 +2092,7 @@ window.__ModuleLoader__.load({
             onClick: () => pickProject(p),
             style: { display: 'inline-flex', gap: 8, alignItems: 'center', flex: '0 0 auto', padding: '8px 12px', border: `1px solid ${p.id === projectId ? T.accent : T.line}`, borderRadius: T.radiusSm, background: p.id === projectId ? T.accentWash : T.card, color: p.id === projectId ? T.accentInk : T.ink, fontSize: 12, fontWeight: 600, cursor: 'pointer' },
           }, [
-            h('span', { key: 'lv', style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: wash, color: ink } }, lv),
+            h('span', { key: 'lv', style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: wash, color: ink } }, t(LEVEL_META[lv].badge)),
             h('span', { key: 'n', style: { whiteSpace: 'nowrap' } }, p.name),
             h('span', { key: 'c', style: { fontSize: 10.5, color: T.mutedInk } }, `${cardCounts[p.id] || 0} ${t('statCards')}`),
             p.paused === true ? h('span', { key: 'pz', style: { fontSize: 10, color: T.orangeInk } }, t('badgePaused')) : null,
@@ -2160,10 +2176,10 @@ window.__ModuleLoader__.load({
                   h('div', { key: 'note', style: { fontSize: 12, color: T.mutedInk, background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '10px 12px', marginBottom: 12, lineHeight: 1.6 } }, t('globalNote')),
                   // Design §3.5: three lightweight groups, no new fold state.
                   h('div', { key: 'gt1', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '12px 0 8px' } }, t('groupGithub')),
-                  h(AppIdSetting, { key: 'appid', t, settings, onSaved: () => { void load(); showToast(t('saved'), 'ok') } }),
+                  h(AppIdSetting, { key: 'appid', t, settings, onSaved: () => { setGithubRefreshKey((k) => k + 1); void load(); showToast(t('saved'), 'ok') } }),
                   // Global account management — OAuth connect/reconnect/disconnect
                   // + gh CLI status, all machine-level (Design §7, PGH-19~21).
-                  h(AccountManager, { key: 'acctmgr', t, onChanged: () => void load() }),
+                  h(AccountManager, { key: 'acctmgr', t, refreshKey: githubRefreshKey, onChanged: () => void load() }),
                   h('div', { key: 'gt2', style: { fontSize: 12, fontWeight: 650, color: T.mutedInk, margin: '16px 0 8px' } }, t('groupPaths')),
                   h(WorktreesRootSetting, { key: 'wr', t }),
                   h('div', { key: 'gc', style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: 12, marginTop: 12 } },
@@ -2258,7 +2274,8 @@ window.__ModuleLoader__.load({
       const projDefault = settings?.projectDefaultMaxActive
       const projEff = project?.maxActiveSessions > 0 ? project.maxActiveSessions : (projDefault ?? null)
       const slots = projEff !== null && globalEff?.value != null ? Math.min(projEff, globalEff.value) : (projEff ?? globalEff?.value ?? '—')
-      const repoBound = Boolean(project && project.rootPath && project.issueRepo)
+      const repoBound = Boolean(project && project.rootPath && project.issueRepo
+        && project.permissionStatus === 'ok' && project.permissionRepo === project.issueRepo)
       const stat = (key, n, label) => h('div', { key, style: { background: T.card, border: `1px solid ${T.line}`, borderRadius: 9, padding: '8px 12px', minWidth: 88 } }, [
         h('div', { key: 'n', style: { fontSize: 18, fontWeight: 700, color: T.ink, lineHeight: 1.2 } }, String(n)),
         h('div', { key: 'l', style: { fontSize: 10.5, color: T.mutedInk } }, label),
@@ -2271,7 +2288,7 @@ window.__ModuleLoader__.load({
             // Binding state sits inline right after the project name (2nd line).
             project ? h('button', {
               key: 'bind', type: 'button', className: 'df-bind-badge', onClick: openProjectBinding,
-              title: repoBound ? String(project.issueRepo) : t('repoNotBound'),
+              title: repoBound ? String(project.issueRepo) : (project?.permissionReason || t('repoNotBound')),
               style: {
                 maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 border: `1px solid ${repoBound ? T.success : T.warning}`,

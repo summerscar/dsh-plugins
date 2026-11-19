@@ -65,7 +65,7 @@ function texts(node, out = []) {
 }
 
 const oneProject = {
-  projects: [{ id: 'p1', name: 'owner/demo', rootPath: '/workspace/demo', autonomy: 'L0', autoStart: true, autoApprove: true, paused: false }],
+  projects: [{ id: 'p1', name: 'owner/demo', rootPath: '/workspace/demo', autonomy: 'manual', autoDispatch: true, paused: false }],
   boards: [{ id: 'b1', projectId: 'p1', name: 'main' }],
   cards: [],
   settings: { effectiveGlobalMaxActive: { value: 4, source: 'settings' }, projectDefaultMaxActive: 5, globalMaxActive: 4 },
@@ -83,39 +83,35 @@ function apiFetch(payload) {
 }
 
 // ---------------------------------------------------------------------------
-// P4-2 — the FIRST hard line: the badge reads only the SAVED autonomy value,
-// never autoStart/autoApprove even when those switches are on.
+// P4-2 — the badge reads ONLY the saved semantic level, never the switch.
 // ---------------------------------------------------------------------------
 
-test('P4-2 source guard: badge is derived from savedLevel, not from the two switches', () => {
-  assert.match(clientSrc, /const savedLevel = project\?\.autonomy \?\? 'L0'/,
-    'saved level must come from the stored autonomy field')
-  assert.match(clientSrc, /LEVEL_BADGE\[savedLevel\]/,
+test('P4-2 source guard: badge is derived from savedLevel, not from the switch', () => {
+  assert.match(clientSrc, /const savedLevel = LEVELS\.includes\(project\?\.autonomy\) \? project\.autonomy : 'manual'/,
+    'saved level must come from the stored semantic autonomy field, default manual')
+  assert.match(clientSrc, /LEVEL_META\[savedLevel\]\.badge/,
     'badge text must be selected by the saved level alone')
-  // The badge span colours itself off savedLevel and never mentions the switches.
+  // The badge span colours itself off savedLevel and never reads the switch.
   const badgeStart = clientSrc.indexOf("key: 'badge'")
-  const badgeEnd = clientSrc.indexOf("key: 'rb'", badgeStart)
-  assert.ok(badgeStart > 0 && badgeEnd > badgeStart, 'badge render block found')
-  const badgeBlock = clientSrc.slice(badgeStart, badgeEnd)
-  assert.match(badgeBlock, /savedLevel ===/)
-  assert.doesNotMatch(badgeBlock, /autoStart|autoApprove/,
-    'badge block must not read the preference switches (P4-2 first hard line)')
+  const badgeBlock = clientSrc.slice(badgeStart, badgeStart + 400)
+  assert.ok(badgeStart > 0, 'badge render block found')
+  assert.match(badgeBlock, /LEVEL_META\[savedLevel\]/)
+  assert.doesNotMatch(badgeBlock, /autoDispatch|autoApprove|autoStart/,
+    'badge block must not read any switch')
 })
 
-test('P4-2 render: L0 + both switches on still shows the manual badge, not auto-running', () => {
+test('P4-2 render: manual with stale switch still shows the manual badge, not auto-running', () => {
   const slots = loadClientModule({ fetchImpl: apiFetch(oneProject) })
   const main = slots.find((s) => s.o.name === 'main')
   assert.ok(main, 'main page registered')
-  // The component reads data via effects; with a no-op effect shim it renders the
-  // empty-data branch, so the decisive check is the source guard above plus the
-  // dictionary contract below. Here we assert the page renders without throwing
-  // and the inline zh dictionary carries the manual badge text.
   const tree = main.C({ t: (k) => k })
   assert.ok(tree && typeof tree === 'object', 'page renders')
   const inlineZh = captureZh()
-  assert.equal(inlineZh.badgeL0, '手动')
-  assert.equal(inlineZh.badgeL1, '你批准')
-  assert.equal(inlineZh.badgeL2, '机器批准')
+  assert.equal(inlineZh.badgeManual, '手动')
+  assert.equal(inlineZh.badgeYouApprove, '你批准')
+  assert.equal(inlineZh.badgeMachineApprove, '机器批准')
+  // No legacy badge keys survive.
+  for (const k of ['badgeL0', 'badgeL1', 'badgeL2']) assert.equal(k in inlineZh, false, `${k} deleted`)
 })
 
 // ---------------------------------------------------------------------------
@@ -156,22 +152,23 @@ test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE name
     mod.apply({ effect: (f) => { f(); return () => {} }, locale: { register: (_n, d) => { dicts = d; return () => {} }, bind: () => (k) => k }, slots: { inject: (_o, cb) => cb(), register: () => () => {} } })
     return JSON.parse(JSON.stringify(dicts.en))
   })()
-  // Only the level + badge keys must lose the confusing legacy names.
-  const levelAndBadge = ['lvL0', 'lvL1', 'lvL2', 'badgeL0', 'badgeL1', 'badgeL2']
+  // Three semantic levels with plain-language names; switch has its own label.
+  const levelAndBadge = ['lvManual', 'lvYouApprove', 'lvMachineApprove', 'badgeManual', 'badgeYouApprove', 'badgeMachineApprove']
   for (const key of levelAndBadge) {
-    assert.doesNotMatch(String(zh[key]), /半自动/, `${key} zh must not say 半自动`)
-    assert.doesNotMatch(String(en[key]), /Assisted|Auto-approve/i, `${key} en must not say Assisted/Auto-approve`)
+    assert.doesNotMatch(String(zh[key]), /半自动|L[012]/, `${key} zh must not say 半自动 or L0/L1/L2`)
+    assert.doesNotMatch(String(en[key]), /Assisted|Auto-approve|L[012]/i, `${key} en must not say Assisted/Auto-approve/L0-L2`)
   }
-  assert.equal(zh.lvL0, '手动')
-  assert.equal(zh.lvL1, '你批准')
-  assert.equal(zh.lvL2, '机器批准')
-  assert.equal(en.lvL1, 'You approve')
-  assert.equal(en.lvL2, 'Machine approves')
-  // The "one name, three uses" split: the preference switch keeps its OWN name,
-  // distinct from the L2 level/badge name — that separation is the point.
-  assert.equal(en.autoApprove, 'Auto-approve plans')
-  assert.notEqual(en.lvL2, en.autoApprove, 'L2 level name and the autoApprove switch name must differ')
-  assert.notEqual(zh.lvL2, zh.autoApprove, '机器批准 (level) and 计划自动批准 (switch) must differ')
+  assert.equal(zh.lvManual, '手动')
+  assert.equal(zh.lvYouApprove, '你批准')
+  assert.equal(zh.lvMachineApprove, '机器批准')
+  assert.equal(en.lvYouApprove, 'You approve')
+  assert.equal(en.lvMachineApprove, 'Machine approves')
+  assert.equal(en.autoDispatchLabel, 'Auto-dispatch new cards')
+  assert.notEqual(en.lvMachineApprove, en.autoDispatchLabel, 'level name and switch label differ')
+  // No legacy keys or switch names survive.
+  for (const k of ['lvL0', 'lvL1', 'lvL2', 'badgeL0', 'badgeL1', 'badgeL2', 'autoStart', 'autoApprove']) {
+    assert.equal(k in zh, false, `${k} deleted`)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -179,11 +176,13 @@ test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE name
 // form originals. Guard the exact save() call shape.
 // ---------------------------------------------------------------------------
 
-test('P4-3 source guard: save() re-reads autonomy/autoStart/autoApprove from the PATCH response', () => {
+test('P4-3 source guard: save() PATCHes autonomy+autoDispatch and re-reads both from the response', () => {
+  assert.match(clientSrc, /autonomy: nextLevel, autoDispatch: nextDispatch/, 'save sends semantic level + single switch only')
   assert.match(clientSrc, /const p = data\.project/, 'save() reads back the server project')
   assert.match(clientSrc, /setLevel\(p\.autonomy\)/, 'pending level adopts the read-back value')
-  assert.match(clientSrc, /setAutoStart\(p\.autoStart === true\)/)
-  assert.match(clientSrc, /setAutoApprove\(p\.autoApprove === true\)/)
+  assert.match(clientSrc, /setAutoDispatch\(p\.autonomy === 'you-approve' && p\.autoDispatch === true\)/,
+    'switch adopts read-back only for you-approve')
+  assert.doesNotMatch(clientSrc, /autoStart|autoApprove/, 'no legacy switch in client live code')
 })
 
 // ---------------------------------------------------------------------------

@@ -117,16 +117,23 @@ test('PATCH /projects/:id writes autonomy separately from preparation', () => {
   try {
     const created = api({ method: 'POST', route: '/projects', body: { name: 'auto', rootPath: '/workspace/dsh-plugins' } })
     const id = created.body.project.id
-    assert.equal(created.body.project.autonomy, 'L0', 'a new project starts with the engine off')
+    assert.equal(created.body.project.autonomy, 'manual', 'a new project starts with the engine off')
+    assert.equal('autoDispatch' in created.body.project, true, 'semantic switch field present')
+    assert.equal(created.body.project.autoDispatch, false)
 
-    const patched = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L1', autoStart: true } })
+    const patched = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'you-approve', autoDispatch: true } })
     assert.equal(patched.status, 200)
-    assert.equal(patched.body.project.autonomy, 'L1')
-    assert.equal(patched.body.project.autoStart, true)
-    assert.equal(patched.body.project.autoApprove, false)
+    assert.equal(patched.body.project.autonomy, 'you-approve')
+    assert.equal(patched.body.project.autoDispatch, true)
+    assert.equal('autoApprove' in patched.body.project, false, 'legacy switch never stored')
+
+    // machine-approve ignores the switch (single source of truth is the level).
+    const machine = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'machine-approve', autoDispatch: true } })
+    assert.equal(machine.body.project.autonomy, 'machine-approve')
+    assert.equal(machine.body.project.autoDispatch, false, 'machine-approve never stores a switch')
 
     // Identity and rootPath are not writable through this route.
-    const attempt = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L2', rootPath: '/etc' } })
+    const attempt = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'manual', rootPath: '/etc' } })
     assert.equal(attempt.body.project.rootPath, '/workspace/dsh-plugins', 'rootPath must stay put')
 
     // Dirty values are refused, never normalised into "running".
@@ -135,7 +142,7 @@ test('PATCH /projects/:id writes autonomy separately from preparation', () => {
     assert.match(String(bad.body.error), /autonomy/)
 
     // Mixing the two concerns in one PATCH is refused.
-    const mixed = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L1', copyFiles: ['a'] } })
+    const mixed = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'you-approve', copyFiles: ['a'] } })
     assert.equal(mixed.status, 400)
   } finally { cleanup() }
 })

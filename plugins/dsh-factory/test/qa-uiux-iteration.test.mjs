@@ -227,7 +227,7 @@ test('AC-1.6: NS/RPC/schemaVersion/BUILD are self-consistent across client, stor
 
   // The storage version is a fixed contract; state from another version is
   // rejected by the real loader, so no git history is needed to prove it.
-  assert.equal(SCHEMA_VERSION, 1)
+  assert.equal(SCHEMA_VERSION, 2)
   assert.equal(emptyState().schemaVersion, SCHEMA_VERSION)
   const schemaDir = mkdtempSync(join(tmpdir(), 'qa-uiux-schema-'))
   try {
@@ -515,7 +515,7 @@ test('AC-bind-3: detection is one-shot, explicit issueRepo wins, and history is 
     const base = emptyState()
     const board = { id: 'hist-board', projectId: 'hist', name: 'Default', kind: 'dev', columns: ['planning', 'awaiting-approval', 'building', 'review', 'done'], createdAt: '2026-01-01T00:00:00.000Z' }
     base.boards = [board]
-    base.projects = [{ id: 'hist', name: 'hist', rootPath: '/workspace/hist', autonomy: 'L0', intakeBoardId: board.id }]
+    base.projects = [{ id: 'hist', name: 'hist', rootPath: '/workspace/hist', autonomy: 'manual', autoDispatch: false, intakeBoardId: board.id }]
     const file = join(histDir, 'factory.sqlite')
     seedState(file, base)
     const store = new FactoryStore({ file })
@@ -559,7 +559,7 @@ test('AC-bind-4: manual rebind persists, clears reason, rejects dirty/mixed PATC
     assert.equal(empty.body.project.issueRepo, null)
     assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'clear persisted')
 
-    const mixed = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'a/b', autonomy: 'L1' } })
+    const mixed = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'a/b', autonomy: 'you-approve' } })
     assert.equal(mixed.status, 400)
     assert.match(mixed.body?.error ?? '', /混改/)
     assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'failed PATCH changed nothing')

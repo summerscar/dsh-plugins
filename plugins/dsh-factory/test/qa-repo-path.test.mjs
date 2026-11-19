@@ -1,5 +1,5 @@
 /**
- * QA — `card.repo` vs `card.repoPath` separation (ROADMAP §5 "L2 前必修").
+ * QA — `card.repo` vs `card.repoPath` separation (ROADMAP §5 prerequisite).
  *
  * The bug this guards: `intake.js` writes a GitHub identifier (`owner/name`) into
  * `card.repo`, while `session-context.js` used to read `card.repo` as a LOCAL

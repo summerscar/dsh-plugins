@@ -130,10 +130,10 @@ export async function verifyLogin({ token, fetchImpl = globalThis.fetch, signal 
  * dispose function. `getClientId()` is read fresh at attempt time (settings are
  * HTTP-writable and must take effect without reload).
  *
- * The flow uses session.notify for the URL+code and session.prompt for a single
- * "I've finished" acknowledgement, then polls for the token. This is the zero-
- * build bridge story: the HTTP route supplies an interaction that forwards these
- * to the browser (notice queue + pending prompt), and the browser answers them.
+ * The flow uses session.notify for the URL+code, then polls for the token
+ * immediately — the human only reads the code from the browser and waits; there
+ * is no "I've finished" acknowledgement to click. Cancel still works through
+ * session.signal (the UI's Cancel route aborts the attempt).
  */
 export function registerGithubOAuthFlow({ authorization, getClientId, fetchImpl = globalThis.fetch, sleep, key = credentialKeyOf(OAUTH_KEY_ID) } = {}) {
   if (authorization === undefined || authorization === null || typeof authorization.registerFlow !== 'function') {
@@ -147,20 +147,12 @@ export function registerGithubOAuthFlow({ authorization, getClientId, fetchImpl 
       const clientId = typeof getClientId === 'function' ? getClientId() : ''
       const issued = await requestDeviceCode({ clientId, fetchImpl, signal: session.signal })
       session.notify({
-        message: '打开下面的网址，登录后把看到的码填进去，然后回来点“我完成了”。',
+        message: '打开下面的网址，登录后把看到的码填进去；页面会自动完成连接，请勿关闭。',
         url: issued.verificationUri,
         code: issued.userCode,
       })
-      await session.prompt({
-        kind: 'select',
-        message: '在上面那个网页完成授权后，点这里继续。',
-        options: [
-          { id: 'done', label: '我完成了，继续' },
-          { id: 'cancel', label: '取消' },
-        ],
-      }).then((answer) => {
-        if (answer === 'cancel') throw new Error('你取消了授权')
-      })
+      // No prompt gate: start polling as soon as the code is displayed. The UI
+      // shows a pending state and a single Cancel button while this runs.
       const token = await pollDeviceToken({
         deviceCode: issued.deviceCode, clientId, fetchImpl,
         interval: issued.interval, signal: session.signal, sleep,

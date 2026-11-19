@@ -1,5 +1,5 @@
 /**
- * QA — P2 L1 autonomy engine acceptance (PRD .scratch/prd-autonomy-l1.md §11).
+ * QA — P2 autonomy engine acceptance (PRD .scratch/prd-autonomy-l1.md §11).
  *
  * These cases exercise the REAL runTick / applyRemoteSync / state machine against
  * a real FactoryStore with injected host deps (fake gh / fake sessions / fake
@@ -30,7 +30,7 @@ import { canSyncAutoApply, canTransition } from '../state.js'
 // Fixture
 // ---------------------------------------------------------------------------
 
-function setup({ autonomy = 'L0', autoStart = false, autoApprove = false, withIntake = true, maxActiveSessions } = {}) {
+function setup({ autonomy = 'manual', autoDispatch = false, withIntake = true, maxActiveSessions } = {}) {
   const tmp = mkdtempSync(join(tmpdir(), 'qa-l1-'))
   const file = join(tmp, 'factory.json')
   const store = new FactoryStore({ file })
@@ -38,7 +38,7 @@ function setup({ autonomy = 'L0', autoStart = false, autoApprove = false, withIn
   const project = store.createProject({ name: 'qa-proj', rootPath: '/workspace/any' })
   const board = store.createBoard({ projectId: project.id, name: 'main' })
 
-  const patch = { autonomy, autoStart, autoApprove }
+  const patch = { autonomy, autoDispatch }
   store.updateAutonomy(project.id, patch)
   if (withIntake) {
     // maxActiveSessions is part of the INTAKE config (normalizeIntake), not the
@@ -116,33 +116,35 @@ const cardOf = (f, statusValue) => {
 }
 
 // ---------------------------------------------------------------------------
-// AE-1d — the重点: autoApprove=true must NOT let L1 advance past plan-review
+// AE-1d — you-approve NEVER auto-approves; only machine-approve does
 // ---------------------------------------------------------------------------
 
-test('AE-1d: L1 + autoApprove=true still stops at plan-review; autoApprove is read only under the L2 gate', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true, autoApprove: true })
+test('AE-1d: you-approve stops at plan-review; machine-approve is the only auto-approve level', async () => {
+  const { behaviorOf, MACHINE_APPROVE_TIER, AUTO_TIER } = await import('../autonomy.js')
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const waiting = cardOf(f, 'plan-review')
-
     await runTick({ store: f.store, status: f.status, deps: f.deps })
-
     assert.equal(f.store.getCard(waiting.id).status, 'plan-review',
-      'L1 must not advance a plan-approval card even with autoApprove=true')
+      'you-approve must not advance a plan-approval card')
     assert.equal(f.state.dispatchCalls, 0, 'no automatic dispatch for a non-Inbox card')
-
     const transitions = f.store.getCard(waiting.id).history.filter((h) => h.type === 'transition')
-    const autoRuleTransitions = transitions.filter((h) => h.actor === 'autoRule')
-    assert.equal(autoRuleTransitions.length, 0, 'no autoRule transition on the plan-approval card')
+    assert.equal(transitions.filter((h) => h.actor === 'autoRule').length, 0, 'no autoRule transition on the plan-approval card')
 
-    // Static guard: AE-1d now means autoApprove is read ONLY under the L2 gate.
-    // L2 legitimately reads project.autoApprove to approve plans; L0/L1 must not.
-    // Guard that every live `project.autoApprove` read is on the same line as the
-    // L2 condition, so a future L1-path read cannot silently reintroduce approval.
+    // Capability truth source: you-approve never approves, machine-approve does,
+    // and the tiers are distinct semantic values (P1 audit fix).
+    assert.deepEqual(behaviorOf('you-approve'), { intake: true, dispatch: true, approve: false })
+    assert.deepEqual(behaviorOf('machine-approve'), { intake: true, dispatch: true, approve: true })
+    assert.deepEqual(behaviorOf('manual'), { intake: false, dispatch: false, approve: false })
+    assert.notEqual(AUTO_TIER, MACHINE_APPROVE_TIER)
+    assert.equal(AUTO_TIER, 'you-approve')
+    assert.equal(MACHINE_APPROVE_TIER, 'machine-approve')
+
+    // The legacy autoApprove switch no longer exists anywhere in live code.
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(new URL('../autonomy.js', import.meta.url), 'utf8')
-    const reads = src.split('\n').filter((line) => /project\.autoApprove/.test(line) && !/^\s*(\*|\/\/)/.test(line))
-    const ungated = reads.filter((line) => !/L2/.test(line))
-    assert.equal(ungated.length, 0, `project.autoApprove must be read only inside the L2 gate; ungated: ${ungated.join(' | ')}`)
+    const live = src.split('\n').filter((l) => /project\.autoApprove/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+    assert.equal(live.length, 0, `live code never reads autoApprove; found: ${live.join(' | ')}`)
   } finally { f.cleanup() }
 })
 
@@ -151,7 +153,7 @@ test('AE-1d: L1 + autoApprove=true still stops at plan-review; autoApprove is re
 // ---------------------------------------------------------------------------
 
 test('AE-2b: PR CLOSED unmerged on a plan-review card records a suggestion, never moves it', () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const waiting = cardOf(f, 'plan-review')
     const remote = { pr: { state: 'CLOSED', merged: false } }
@@ -186,9 +188,9 @@ test('AE-2b: PR CLOSED unmerged on a plan-review card records a suggestion, neve
   } finally { f.cleanup() }
 })
 
-test('AE-2b guard: syncRule is frozen out of every auto edge, while autoRule keeps L2 semantics', () => {
+test('AE-2b guard: syncRule is frozen out of every auto edge, while autoRule keeps you-approve semantics', () => {
   // The fix must be narrow: sync's whitelist is empty (blocked), but the engine's
-  // autoRule must remain legal on plan-review->build so L2 can open it later.
+  // autoRule must remain legal on plan-review->build so machine-approve can open it.
   assert.equal(canSyncAutoApply('plan-review', 'build'), false)
   assert.equal(canTransition('plan-review', 'build', 'syncRule'), false)
   assert.equal(canTransition('plan-review', 'build', 'autoRule'), true,
@@ -196,44 +198,44 @@ test('AE-2b guard: syncRule is frozen out of every auto edge, while autoRule kee
 })
 
 // ---------------------------------------------------------------------------
-// AE-1 / AE-1b / AE-1c — default zero side effects and the L1 stop point
+// AE-1 / AE-1b / AE-1c — default zero side effects and the you-approve stop point
 // ---------------------------------------------------------------------------
 
-test('AE-1: L0 is a strict no-op across multiple ticks', async () => {
-  const f = setup({ autonomy: 'L0', autoStart: false })
+test('AE-1: manual is a strict no-op across multiple ticks', async () => {
+  const f = setup({ autonomy: 'manual', autoDispatch: false })
   try {
     const before = f.store.listCards({}).length
     for (let i = 0; i < 3; i += 1) await runTick({ store: f.store, status: f.status, deps: f.deps })
 
     assert.equal(f.store.listCards({}).length, before, 'no card was created')
-    assert.equal(f.state.intakeCalls, 0, 'L0 never runs discovery')
-    assert.equal(f.state.dispatchCalls, 0, 'L0 never dispatches')
+    assert.equal(f.state.intakeCalls, 0, 'manual never runs discovery')
+    assert.equal(f.state.dispatchCalls, 0, 'manual never dispatches')
 
     const audit = f.get('/audit?actor=autoRule')
-    assert.equal(audit.body.events.length, 0, 'no autoRule audit events at L0')
+    assert.equal(audit.body.events.length, 0, 'no autoRule audit events at manual')
 
     // A disabled engine must also be visible, not silently idle.
     assert.ok(f.status.ticks >= 3)
     assert.ok(f.status.projects.every((p) => p.action === 'skipped'))
-    assert.match(f.status.projects[0].reason, /L0/)
+    assert.match(f.status.projects[0].reason, /manual/)
   } finally { f.cleanup() }
 })
 
-test('AE-1b: autoStart=false discovers Inbox cards but never dispatches', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: false })
+test('AE-1b: autoDispatch=false discovers Inbox cards but never dispatches', async () => {
+  const f = setup({ autonomy: 'you-approve', autoDispatch: false })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
 
     const cards = f.store.listCards({})
     assert.ok(cards.length > 0, 'discovery still creates Inbox cards (discovery is not starting)')
     assert.ok(cards.every((c) => c.status === 'inbox'), 'nothing moved out of inbox')
-    assert.equal(f.state.dispatchCalls, 0, 'no dispatch while autoStart=false')
-    assert.equal(f.status.projects[0].reason, 'autoStart=false', 'the reason is readable in status')
+    assert.equal(f.state.dispatchCalls, 0, 'no dispatch while autoDispatch=false')
+    assert.equal(f.status.projects[0].reason, 'autoDispatch=false', 'the reason is readable in status')
   } finally { f.cleanup() }
 })
 
-test('AE-1c / AE-2: L1 runs exactly one automatic edge, then stops at plan-review', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true, autoApprove: false })
+test('AE-1c / AE-2: you-approve runs exactly one automatic edge, then stops at plan-review', async () => {
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     // The tick snapshots cards at its start, so newly discovered cards are picked
     // up by the NEXT tick. Two ticks: discover, then dispatch.
@@ -249,7 +251,7 @@ test('AE-1c / AE-2: L1 runs exactly one automatic edge, then stops at plan-revie
       assert.equal(autoEdges[0].from, 'inbox')
       assert.equal(autoEdges[0].to, 'triage')
       // Governance fields present on the automatic transition (AE-6).
-      assert.equal(autoEdges[0].tier, 'L1')
+      assert.equal(autoEdges[0].tier, 'you-approve')
       assert.equal(autoEdges[0].rule, 'auto-dispatch-triage')
       assert.equal(autoEdges[0].channel, 'poll')
       assert.ok(autoEdges[0].at)
@@ -262,7 +264,7 @@ test('AE-1c / AE-2: L1 runs exactly one automatic edge, then stops at plan-revie
 // ---------------------------------------------------------------------------
 
 test('AE-3: repeated ticks never duplicate a card for the same issue', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: false })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: false })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
     const afterFirst = f.store.listCards({}).length
@@ -280,7 +282,7 @@ test('AE-3: repeated ticks never duplicate a card for the same issue', async () 
 // ---------------------------------------------------------------------------
 
 test('AE-4: one timer, mounted once, cleared on unload; missing service is visible', () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const disposers = []
     let intervalCalls = 0
@@ -311,7 +313,7 @@ test('AE-4: after unload, a fresh load (new ctx) can mount a timer again', () =>
   // reload" — a worse bug, and one the double-call case above cannot see. The flag
   // must live on the engine state (or be reset by the disposer), so a genuinely
   // new mount after teardown still works.
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const makeScope = () => {
       const disposers = []
@@ -341,7 +343,7 @@ test('AE-4: after unload, a fresh load (new ctx) can mount a timer again', () =>
 })
 
 test('AE-4: a host without a timer service never pretends to run', () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     // ctx.inject exists but never fires the callback: the service is absent.
     startEngine({ ctx: { inject: () => {} }, store: f.store, status: f.status, deps: f.deps })
@@ -361,7 +363,7 @@ test('AE-4: a host without a timer service never pretends to run', () => {
 // ---------------------------------------------------------------------------
 
 test('AE-5: the project cap is honoured and queued cards stay in Inbox', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true, maxActiveSessions: 1 })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true, maxActiveSessions: 1 })
   try {
     // Tick 1 discovers the cards; tick 2 dispatches them under the cap.
     await runTick({ store: f.store, status: f.status, deps: f.deps })
@@ -389,7 +391,7 @@ test('AE-5: the project cap is honoured and queued cards stay in Inbox', async (
 })
 
 test('AE-5: the global cap counts runtime-active sessions across projects', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     // Simulate a global cap of 1 by occupying it with an active session elsewhere.
     const other = f.store.createProject({ name: 'other', rootPath: '/workspace/other' })
@@ -411,7 +413,7 @@ test('AE-5: the global cap counts runtime-active sessions across projects', asyn
 // ---------------------------------------------------------------------------
 
 test('AE-6: automatic actions are auditable and never dyed as human', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
 
@@ -433,7 +435,7 @@ test('AE-6: automatic actions are auditable and never dyed as human', async () =
 // ---------------------------------------------------------------------------
 
 test('AE-7: a paused engine dispatches nothing, and resumes without backfilling', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
     const dispatchedBefore = f.state.dispatchCalls
@@ -450,7 +452,7 @@ test('AE-7: a paused engine dispatches nothing, and resumes without backfilling'
 })
 
 test('AE-7: a taken-over card is never touched by later ticks', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const card = f.store.createCard({ boardId: f.board.id, title: 'mine' })
     f.store.takeOverCard(card.id)
@@ -471,7 +473,7 @@ test('AE-7: a taken-over card is never touched by later ticks', async () => {
 // ---------------------------------------------------------------------------
 
 test('AE-8: a project without intake config is skipped with a readable reason', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true, withIntake: false })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true, withIntake: false })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
 
@@ -484,7 +486,7 @@ test('AE-8: a project without intake config is skipped with a readable reason', 
 })
 
 test('AE-8: a configured-but-missing board is also a visible skip', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true, withIntake: false })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true, withIntake: false })
   try {
     f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: 'no-such-board' })
     await runTick({ store: f.store, status: f.status, deps: f.deps })
@@ -498,7 +500,7 @@ test('AE-8: a configured-but-missing board is also a visible skip', async () => 
 // ---------------------------------------------------------------------------
 
 test('AE-9: a card that already has a session trace is never dispatched twice', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const card = f.store.createCard({ boardId: f.board.id, title: 'half-done' })
     // Simulate "write happened, receipt lost": the trace exists but status stayed inbox.
@@ -513,7 +515,7 @@ test('AE-9: a card that already has a session trace is never dispatched twice', 
 })
 
 test('AE-9: an orphan is reported for a human, never cleaned up or rebuilt', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     const card = f.store.createCard({ boardId: f.board.id, title: 'orphan' })
     f.store.setWorktree(card.id, { worktreePath: '/tmp/wt-o', branch: 'b', baseBranch: 'main', sessionId: 'sess-gone' })
@@ -537,7 +539,7 @@ test('AE-9: an orphan is reported for a human, never cleaned up or rebuilt', asy
 // ---------------------------------------------------------------------------
 
 test('AE-10: permissionEnforced stays false and is exposed as a config value only', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
     assert.equal(f.status.permissionEnforced, false, 'the engine never claims enforcement')
@@ -555,7 +557,7 @@ test('AE-10: permissionEnforced stays false and is exposed as a config value onl
 // ---------------------------------------------------------------------------
 
 test('single-flight: an overlapping tick returns immediately instead of double-dispatching', async () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     f.status.singleFlight = true
     const result = await runTick({ store: f.store, status: f.status, deps: f.deps })
@@ -601,7 +603,7 @@ function cordisLikeCtx({ declared = [], services = {}, effect, inject } = {}) {
 }
 
 test('startEngine must not read undeclared service properties (Cordis inject discipline)', () => {
-  const f = setup({ autonomy: 'L1', autoStart: true })
+  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     // The plugin's real inject list is ['webServer', 'connection'] — `timer` is
     // NOT declared, so touching ctx.interval on this proxy must throw.

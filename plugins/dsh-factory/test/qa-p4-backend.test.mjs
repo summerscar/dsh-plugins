@@ -132,20 +132,20 @@ test('P4-4: autonomy / preparation / intake each save alone; mixing blocks is 40
     const { project } = makeProject(f.store)
     const id = project.id
 
-    assert.equal(f.patch(`/projects/${id}`, { autonomy: 'L1', autoStart: true }).status, 200)
+    assert.equal(f.patch(`/projects/${id}`, { autonomy: 'you-approve', autoDispatch: true }).status, 200)
     const prep = f.patch(`/projects/${id}`, { copyFiles: ['a.env'], postCreate: 'echo hi' })
     assert.equal(prep.status, 200)
     assert.deepEqual(prep.body.project.copyFiles, ['a.env'])
-    assert.equal(prep.body.project.autonomy, 'L1', 'a preparation write kept the saved autonomy')
+    assert.equal(prep.body.project.autonomy, 'you-approve', 'a preparation write kept the saved autonomy')
     const intake = f.patch(`/projects/${id}`, { maxActiveSessions: 2, issueRepo: 'o/r' })
     assert.equal(intake.status, 200)
     assert.equal(intake.body.project.maxActiveSessions, 2)
     assert.equal(intake.body.project.copyFiles.length, 1, 'an intake write kept the saved preparation')
 
-    const mixed = f.patch(`/projects/${id}`, { autonomy: 'L2', maxActiveSessions: 3 })
+    const mixed = f.patch(`/projects/${id}`, { autonomy: 'machine-approve', maxActiveSessions: 3 })
     assert.equal(mixed.status, 400)
     assert.match(mixed.body.error, /混改/)
-    assert.equal(f.store.getProject(id).autonomy, 'L1', 'the refused mixed write changed nothing')
+    assert.equal(f.store.getProject(id).autonomy, 'you-approve', 'the refused mixed write changed nothing')
     assert.equal(f.store.getProject(id).maxActiveSessions, 2)
   } finally { f.cleanup() }
 })
@@ -171,7 +171,7 @@ test('P4-7a: writing a smaller global cap throttles dispatch on the next tick wi
   const f = setup()
   try {
     const { project, board } = makeProject(f.store, 'throttle')
-    f.store.updateAutonomy(project.id, { autonomy: 'L1', autoStart: true })
+    f.store.updateAutonomy(project.id, { autonomy: 'you-approve', autoDispatch: true })
     f.store.updateIntake(project.id, { issueRepo: 'o/r', intakeBoardId: board.id, maxActiveSessions: 10 })
     for (let i = 0; i < 4; i += 1) f.store.createCard({ boardId: board.id, title: `c${i}` })
 

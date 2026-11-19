@@ -1,5 +1,5 @@
 /**
- * dsh-factory — pure request handler (L0 domain surface).
+ * dsh-factory — pure request handler (core domain surface).
  *
  * This is the transport-agnostic half of the HTTP API: it takes
  * `{ method, route, body }` and returns `{ status, body }`, so it is unit-tested
@@ -101,7 +101,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           // either all registered or none did. A silent import failure must never
           // again look like "the command worked but the agent has no tools".
           toolsRegistered: runtime.toolsRegistered === true,
-          // L1 engine state, readable at any time: why nothing is happening is
+          // Autonomy engine state, readable at any time: why nothing is happening is
           // never hidden. `permissionEnforced` stays false until the host really
           // wires the permission level into sessions (PRD §9.2, no false claim).
           // The effective global cap and its source are computed from the same
@@ -179,7 +179,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         // the caller thought it only changed a switch. Identity and rootPath are
         // never writable here. Pause/resume/takeover are separate actions below.
         if (method === 'PATCH' && seg.length === 2) {
-          const wantsAutonomy = ['autonomy', 'autoStart', 'autoApprove'].some((key) => key in body)
+          const wantsAutonomy = ['autonomy', 'autoDispatch'].some((key) => key in body)
           const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
           const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions', 'intakeLimit', 'githubCredentialId'].some((key) => key in body)
           const kinds = [wantsAutonomy, wantsPreparation, wantsIntake].filter(Boolean).length

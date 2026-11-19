@@ -26,7 +26,7 @@ import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot, expandHome }
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 import { detectGithubRepo, normalizeGithubRepo } from './git-exec.js'
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /**
  * Credential-key segment grammar, mirrored from the host's dsh-credentials seam
@@ -42,7 +42,7 @@ export function isCredentialKeySegment(value) {
 }
 
 export const DEFAULT_PERMISSION = 'workspace-write'
-export const DEFAULT_AUTONOMY = 'L0'
+export const DEFAULT_AUTONOMY = 'manual'
 
 /** Consecutive failed dispatches before a card stops being re-dispatched. */
 export const DEFAULT_DISPATCH_FAILURE_LIMIT = 3
@@ -117,22 +117,53 @@ function normalizePreparation(input) {
 }
 
 /**
- * Project-level autonomy config. Only the three values the engine reads are
- * mutable after creation; identity and paths deliberately are not.
- *
- * Values are validated, never silently rewritten: `L0` with a switch left on is
- * the caller's stored choice, and the engine simply does nothing at `L0`. Quietly
- * flipping switches would edit data the user did not touch.
+ * Project-level autonomy config. The semantic level is the only truth source;
+ * `autoDispatch` is a switch ONLY for you-approve. The old switches are never
+ * stored again.
  */
+const AUTONOMY_LEVELS = new Set(['manual', 'you-approve', 'machine-approve'])
+const LEGACY_AUTONOMY_LEVELS = new Set(['L0', 'L1', 'L2'])
+
+/** Map a stored v1 triple to the v2 level + single switch, by REAL behavior. */
+function migrateLegacyAutonomy(level, autoStart, autoApprove) {
+  if (level === 'L0') return { autonomy: 'manual', autoDispatch: false }
+  if (level === 'L1') return { autonomy: 'you-approve', autoDispatch: autoStart === true }
+  if (level === 'L2') {
+    if (autoStart === true && autoApprove === true) return { autonomy: 'machine-approve', autoDispatch: false }
+    if (autoStart === true) return { autonomy: 'you-approve', autoDispatch: true }
+    return { autonomy: 'you-approve', autoDispatch: false }
+  }
+  return { autonomy: 'manual', autoDispatch: false }
+}
+
 function normalizeAutonomy(input, current = {}) {
   const raw = input.autonomy === undefined ? current.autonomy : input.autonomy
-  if (raw !== undefined && raw !== 'L0' && raw !== 'L1' && raw !== 'L2') {
-    throw new Error(`autonomy 只能是 L0 / L1 / L2：${String(raw)}`)
+  if (raw !== undefined && LEGACY_AUTONOMY_LEVELS.has(raw)) {
+    return migrateLegacyAutonomy(raw, input.autoStart ?? current.autoStart, input.autoApprove ?? current.autoApprove)
+  }
+  if (raw !== undefined && !AUTONOMY_LEVELS.has(raw)) {
+    throw new Error(`autonomy 只能是 manual / you-approve / machine-approve：${String(raw)}`)
   }
   const autonomy = raw === undefined ? DEFAULT_AUTONOMY : raw
-  const autoStart = input.autoStart === undefined ? current.autoStart === true : input.autoStart === true
-  const autoApprove = input.autoApprove === undefined ? current.autoApprove === true : input.autoApprove === true
-  return { autonomy, autoStart, autoApprove }
+  // Machine-approve ignores the switch by contract; manual has no dispatch.
+  const autoDispatch = autonomy === 'you-approve'
+    ? (input.autoDispatch === undefined ? current.autoDispatch === true : input.autoDispatch === true)
+    : false
+  return { autonomy, autoDispatch }
+}
+
+/** Load-time normalization never rejects an old or corrupt archive. */
+function normalizeStoredAutonomy(project) {
+  try {
+    return normalizeAutonomy({
+      autonomy: project.autonomy,
+      autoDispatch: project.autoDispatch,
+      autoStart: project.autoStart,
+      autoApprove: project.autoApprove,
+    }, {})
+  } catch {
+    return { autonomy: DEFAULT_AUTONOMY, autoDispatch: false }
+  }
 }
 
 /**
@@ -172,7 +203,15 @@ function normalizeIntake(input, current = {}) {
   if (credentialId !== null && !isCredentialKeySegment(credentialId)) {
     throw new Error(`githubCredentialId 必须是小写字母/数字/连字符且以字母开头：${String(credentialId)}`)
   }
-  return { issueRepo: normalizedRepo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit, githubCredentialId: credentialId, bindingReason: current.bindingReason ?? null }
+  return { issueRepo: normalizedRepo, intakeBoardId: boardId, maxActiveSessions: maxActive, intakeLimit, githubCredentialId: credentialId, bindingReason: current.bindingReason ?? null,
+    // A permission result belongs to one exact repo + identity check. Any
+    // binding edit invalidates it until the full suite is run again.
+    permissionStatus: 'issueRepo' in input ? null : (current.permissionStatus ?? null),
+    permissionCheckedAt: 'issueRepo' in input ? null : (current.permissionCheckedAt ?? null),
+    permissionReason: 'issueRepo' in input ? null : (current.permissionReason ?? null),
+    permissionChecks: 'issueRepo' in input ? [] : (current.permissionChecks ?? []),
+    permissionRepo: 'issueRepo' in input ? null : (current.permissionRepo ?? null),
+  }
 }
 
 export function emptyState() {
@@ -202,6 +241,12 @@ export class FactoryStore {
     this._select = this.db.prepare('SELECT data FROM state WHERE id = 1')
     try {
       this.state = this._load()
+      // v1 → v2 migrations are rewritten once on load so no old switch name or
+      // level id survives in the stored state (or in a later read-back).
+      if (this._needsMigration === true) {
+        this._commit()
+        this._needsMigration = false
+      }
       // Idempotent, in-place convergence of legacy multi-board projects. Runs
       // BEFORE anything can read boards, and never bumps schemaVersion.
       this._convergeBoards()
@@ -223,12 +268,25 @@ export class FactoryStore {
   /** Validate + normalise one serialised state (schemaVersion + nested settings). */
   _parseState(raw) {
     const parsed = JSON.parse(raw)
-    if (parsed.schemaVersion !== SCHEMA_VERSION) {
+    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== SCHEMA_VERSION) {
       throw new Error(`不支持的 schemaVersion：${parsed.schemaVersion}（期望 ${SCHEMA_VERSION}）`)
     }
     // A partial state lacks `settings` or `worktreeRoot`; keep the defaults.
     const base = emptyState()
-    return { ...base, ...parsed, settings: { ...base.settings, ...(parsed.settings ?? {}) } }
+    const state = { ...base, ...parsed, settings: { ...base.settings, ...(parsed.settings ?? {}) } }
+    // Persist the new version even for an empty/already-conformant v1 archive;
+    // otherwise every load would repeat normalization on an on-disk v1 state.
+    if (parsed.schemaVersion !== SCHEMA_VERSION) this._needsMigration = true
+    state.schemaVersion = SCHEMA_VERSION
+    state.projects = (Array.isArray(state.projects) ? state.projects : []).map((p) => {
+      const { autoStart, autoApprove, ...rest } = p
+      const normalized = normalizeStoredAutonomy(p)
+      if ('autoStart' in p || 'autoApprove' in p || p.autonomy !== normalized.autonomy || p.autoDispatch !== normalized.autoDispatch) {
+        this._needsMigration = true
+      }
+      return { ...rest, ...normalized }
+    })
+    return state
   }
 
   /** Persist the whole state in one atomic upsert. */
@@ -418,7 +476,7 @@ export class FactoryStore {
     } else {
       intake.bindingReason = null
     }
-    // A bound project must also have a target board, or L1/L2 still skip it.
+    // A bound project must also have a target board, or discovery still skips it.
     intake.intakeBoardId = board.id
     const project = {
       id,
@@ -429,10 +487,15 @@ export class FactoryStore {
       defaultPermission: optionalString(input.defaultPermission) || DEFAULT_PERMISSION,
       worktreeRoot,
       ...normalizePreparation(input),
-      autonomy: input.autonomy === 'L1' || input.autonomy === 'L2' ? input.autonomy : DEFAULT_AUTONOMY,
-      autoStart: input.autoStart === true,
-      autoApprove: input.autoApprove === true,
+      // New projects always start manual; autonomy is an explicit later edit.
+      ...normalizeAutonomy({}, {}),
       ...intake,
+      // GitHub permission verification is opt-in until the full check runs.
+      permissionStatus: intake.permissionStatus ?? null,
+      permissionCheckedAt: intake.permissionCheckedAt ?? null,
+      permissionReason: intake.permissionReason ?? null,
+      permissionChecks: Array.isArray(intake.permissionChecks) ? intake.permissionChecks : [],
+      permissionRepo: intake.permissionRepo ?? null,
       // Project-level pause gate. Persisted so a reload keeps the gate closed;
       // the engine checks it every tick rather than dropping the timer (PRD §8).
       paused: false,
@@ -489,6 +552,30 @@ export class FactoryStore {
     // A manual edit/clear resolves the old detection notice either way.
     if ('issueRepo' in input) patch.bindingReason = null
     Object.assign(project, patch)
+    this._commit()
+    return clone(project)
+  }
+
+  /**
+   * Persist the result of a full, read-only GitHub capability check. Only the
+   * check summary is stored — never a token. A repo change clears it via
+   * updateIntake, so the badge cannot show a stale verification.
+   */
+  recordPermissionCheck(id, result, repo) {
+    const project = this._project(id)
+    const status = ['ok', 'insufficient', 'not-connected'].includes(result?.status) ? result.status : 'insufficient'
+    const checks = Array.isArray(result?.checks)
+      ? result.checks.map((c) => ({
+          key: typeof c?.key === 'string' ? c.key : 'unknown',
+          ok: c?.ok === true,
+          reason: typeof c?.reason === 'string' ? c.reason : null,
+        }))
+      : []
+    project.permissionStatus = status
+    project.permissionReason = typeof result?.reason === 'string' && result.reason !== '' ? result.reason : null
+    project.permissionCheckedAt = new Date().toISOString()
+    project.permissionChecks = checks
+    project.permissionRepo = typeof repo === 'string' && repo !== '' ? repo.trim() : null
     this._commit()
     return clone(project)
   }

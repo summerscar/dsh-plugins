@@ -366,46 +366,42 @@ test('skills: every packaged skill loads and factory-add-project is present', ()
 
 // --- autonomy normalisation: the UI must never claim "auto-running" wrongly --
 
-test('autonomy: default is L0, L1/L2 survive, and junk normalises to L0 (never "auto-running")', () => {
-  // The next-round UI will show a "running / paused / queued" marker keyed off
-  // this field. A junk value normalising to anything other than L0 would make
-  // the board claim a card is auto-running when nothing is driving it.
+test('autonomy: new projects start manual, semantic levels are an allow-list', () => {
   const { store, cleanup } = setup()
   try {
     const mk = (name, extra = {}) => store.createProject({ name, rootPath: '/workspace/p', ...extra })
-    assert.equal(mk('default').autonomy, 'L0', 'a new project is manual by default')
-    assert.equal(mk('explicit-l0', { autonomy: 'L0' }).autonomy, 'L0')
-    assert.equal(mk('l1', { autonomy: 'L1' }).autonomy, 'L1')
-    assert.equal(mk('l2', { autonomy: 'L2' }).autonomy, 'L2')
-    for (const junk of ['L9', '', 'l1', true, 0, null, 'L3']) {
-      assert.equal(
-        mk(`junk-${String(junk)}`, { autonomy: junk }).autonomy, 'L0',
-        `junk autonomy ${JSON.stringify(junk)} must fall back to L0, not look auto-running`,
-      )
+    // createProject always starts manual — autonomy is an explicit later edit.
+    for (const [name, extra] of [['default', {}], ['you', { autonomy: 'you-approve', autoDispatch: true }], ['legacy', { autonomy: 'L1', autoStart: true }], ['junk', { autonomy: 'L9' }]]) {
+      const p = mk(name, extra)
+      assert.equal(p.autonomy, 'manual', `${name}: new project is manual`)
+      assert.equal(p.autoDispatch, false, `${name}: no switch on by default`)
     }
-    // The constant itself is the contract the UI should compare against.
-    assert.equal(DEFAULT_AUTONOMY, 'L0')
+    assert.equal(DEFAULT_AUTONOMY, 'manual')
+
+    // Upsert via PATCH to set a semantic level; junk is refused there.
+    const api = createApi({ store, build: 'qa' })
+    const p = mk('patch')
+    for (const level of ['you-approve', 'machine-approve', 'manual']) {
+      const r = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: level } })
+      assert.equal(r.status, 200, `PATCH ${level} accepted`)
+      assert.equal(r.body.project.autonomy, level)
+    }
   } finally { cleanup() }
 })
 
-test('autonomy UI predicate: "auto-running" must be an ALLOW-LIST, never a deny-list', () => {
-  // PRD §5.3.2. The board will show a running marker from this field next round.
-  // The safe predicate is "is L1 or L2"; the unsafe one is "is not L1 and not L2"
-  // (or "=== L0"), because a junk value normalising to L0 would then be rendered
-  // as auto-running while nothing is driving it. This test pins the allow-list
-  // shape so a future rewrite cannot silently flip it.
-  const isAutoRunning = (autonomy) => autonomy === 'L1' || autonomy === 'L2'
-  const unsafeDenyList = (autonomy) => autonomy !== 'L0'
-
-  for (const value of ['L0', 'L9', '', 'l1', 'L3']) {
-    assert.equal(isAutoRunning(value), false, `${JSON.stringify(value)} must not look auto-running`)
+test('autonomy UI predicate: the semantic level set is an ALLOW-LIST', () => {
+  // The safe predicate enumerates the three semantic levels; a deny-list would
+  // treat any junk string as auto-running.
+  const LEVELS = ['manual', 'you-approve', 'machine-approve']
+  const isKnownLevel = (autonomy) => LEVELS.includes(autonomy)
+  const unsafeDenyList = (autonomy) => autonomy !== 'manual'
+  for (const value of ['manual', 'L9', '', 'l1', 'L3']) {
+    assert.equal(isKnownLevel(value), value === 'manual', `${JSON.stringify(value)} allow-list result`)
   }
-  for (const value of ['L1', 'L2']) {
-    assert.equal(isAutoRunning(value), true, `${value} is auto-running`)
-  }
-  // Demonstrate the trap concretely: a deny-list predicate would call L9 running.
+  assert.equal(isKnownLevel('you-approve'), true)
+  assert.equal(isKnownLevel('machine-approve'), true)
   assert.equal(unsafeDenyList('L9'), true, 'deny-list shape is exactly the bug we must avoid')
-  assert.notEqual(isAutoRunning('L9'), unsafeDenyList('L9'))
+  assert.notEqual(isKnownLevel('L9'), unsafeDenyList('L9'))
 })
 
 // --- PATCH /projects/:id autonomy (PRD §5.3.2, PM's four rules) --------------
@@ -415,17 +411,16 @@ test('PATCH autonomy: only the fields present change; identity and rootPath neve
   try {
     const api = createApi({ store, build: 'qa' })
     const p = api({ method: 'POST', route: '/projects', body: { name: 'p', rootPath: '/workspace/p' } }).body.project
-    assert.equal(p.autonomy, 'L0')
+    assert.equal(p.autonomy, 'manual')
 
-    const toL1 = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'L1' } })
-    assert.equal(toL1.status, 200)
-    assert.equal(toL1.body.project.autonomy, 'L1')
-    assert.equal(toL1.body.project.autoStart, false, 'an absent switch must not flip')
-    assert.equal(toL1.body.project.autoApprove, false)
+    const toYou = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'you-approve' } })
+    assert.equal(toYou.status, 200)
+    assert.equal(toYou.body.project.autonomy, 'you-approve')
+    assert.equal(toYou.body.project.autoDispatch, false, 'an absent switch must not flip')
 
-    const switchOnly = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autoStart: true } })
-    assert.equal(switchOnly.body.project.autoStart, true)
-    assert.equal(switchOnly.body.project.autonomy, 'L1', 'absent autonomy must stay put')
+    const switchOnly = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autoDispatch: true } })
+    assert.equal(switchOnly.body.project.autoDispatch, true)
+    assert.equal(switchOnly.body.project.autonomy, 'you-approve', 'absent level must stay put')
 
     // Identity / path are not writable through PATCH.
     api({ method: 'PATCH', route: `/projects/${p.id}`, body: { rootPath: '/etc', name: 'hacked' } })
@@ -436,7 +431,7 @@ test('PATCH autonomy: only the fields present change; identity and rootPath neve
     // Rule 5: mixing the two disjoint shapes is refused AND writes nothing.
     // A 400 alone is not enough — a handler could half-apply before rejecting.
     const beforeDisk = reopen(file).projects[0]
-    const mixed = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'L2', copyFiles: ['.other'] } })
+    const mixed = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'machine-approve', copyFiles: ['.other'] } })
     assert.equal(mixed.status, 400)
     assert.match(mixed.body.error, /混改/)
     const afterDisk = reopen(file).projects[0]
@@ -446,21 +441,27 @@ test('PATCH autonomy: only the fields present change; identity and rootPath neve
 })
 
 test('PATCH autonomy: a junk value is REFUSED and leaves every field untouched', () => {
-  // PRD §5.3.2 (settled 2026-11-15): PATCH REFUSES a junk autonomy with 400 and
-  // zero writes. createProject still normalises junk to L0 for backwards
-  // compatibility — two paths, two semantics, deliberately (a silent rewrite on
-  // a user-initiated edit is the silent-mutation bug PM rejected).
+  // PATCH REFUSES truly junk autonomy with 400 and zero writes. Legacy v1 ids
+  // (L0/L1/L2) are accepted and MIGRATED by normalizeAutonomy — that is the
+  // deliberate backwards-compat path, happening on PATCH as well as on load.
   const { store, cleanup } = setup()
   try {
     const api = createApi({ store, build: 'qa' })
-    const p = api({ method: 'POST', route: '/projects', body: { name: 'p', rootPath: '/workspace/p', autonomy: 'L1', autoStart: true } }).body.project
+    const p = api({ method: 'POST', route: '/projects', body: { name: 'p', rootPath: '/workspace/p' } }).body.project
+    api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'you-approve', autoDispatch: true } })
     for (const junk of ['L9', 'l1', '', true, 0, null]) {
       const r = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: junk } })
       assert.equal(r.status, 400, `junk ${JSON.stringify(junk)} must be refused, not silently stored`)
       const now = store.getProject(p.id)
-      assert.equal(now.autonomy, 'L1', 'a refused PATCH must not change autonomy')
-      assert.equal(now.autoStart, true, 'a refused PATCH must not change switches either')
+      assert.equal(now.autonomy, 'you-approve', 'a refused PATCH must not change the level')
+      assert.equal(now.autoDispatch, true, 'a refused PATCH must not change the switch either')
     }
+    // Legacy ids ARE migrated on PATCH (single source: normalizeAutonomy).
+    const migrated = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'L1', autoStart: true } })
+    assert.equal(migrated.status, 200)
+    assert.equal(migrated.body.project.autonomy, 'you-approve')
+    assert.equal(migrated.body.project.autoDispatch, true)
+    assert.equal('autoStart' in migrated.body.project, false, 'legacy switch not stored')
   } finally { cleanup() }
 })
 
@@ -472,12 +473,14 @@ test('legacy/dirty autonomy on disk: the store still loads it, and it never look
   const { store, file, cleanup } = setup()
   try {
     const p = store.createProject({ name: 'p', rootPath: '/workspace/p' })
-    patchStateRow(file, (data) => { data.projects[0].autonomy = 'L9' })
+    patchStateRow(file, (data) => { data.projects[0].autonomy = 'L9'; data.projects[0].autoDispatch = true })
 
+    // A dirty on-disk level is migrated to manual on LOAD (never rejected, never
+    // left looking auto-running), and the rewrite is committed to disk.
     const reloaded = new FactoryStore({ file })
     const loaded = reloaded.getProject(p.id)
-    assert.equal(loaded.autonomy, 'L9', 'the store loads the file instead of rejecting it')
-    const isAutoRunning = (a) => a === 'L1' || a === 'L2'
-    assert.equal(isAutoRunning(loaded.autonomy), false, 'a dirty on-disk value must not read as auto-running')
+    assert.equal(loaded.autonomy, 'manual', 'junk on-disk level migrates to manual')
+    assert.equal(loaded.autoDispatch, false, 'junk migration clears the switch')
+    assert.equal(reopen(file).projects[0].autonomy, 'manual', 'migration persisted to disk')
   } finally { cleanup() }
 })

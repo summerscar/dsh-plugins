@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；后续改动走正常更新流程。能力与限制见它自己的 README。 |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/docs/README.zh-CN.md) | `published` | 已发布，进入常规维护；同样的更新流程。账号处理、可选模型供应商与额度面板见其 README。 |
-| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2（L1）、P3（L2）、P4 自治档界面、P5/P6 整页改版与界面迭代（含 GitHub 项目级身份配置）、P7（卡片正文注入与单卡交还）均已实现；另有「取消卡片」软删（转 `canceled` 终态、保留卡与 source 防复活、后端零改动），页尾可用折叠条展开只读查看已取消卡，任务卡统计排除 canceled、保留 done。状态持久化在 SQLite。 |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/docs/README.zh-CN.md) | `draft` | 开发中；源码已入库但尚未发布。P1 添加链路、P2 自治引擎、P3 机器代批计划、P4 自治档界面、P5/P6 整页改版与界面迭代（含 GitHub 项目级身份配置）、P7（卡片正文注入与单卡交还）均已实现；自治现为语义三档（manual / you-approve / machine-approve）加唯一 autoDispatch 开关，取代旧 L0/L1/L2 与两个开关（旧存档加载时一次性迁移）；另有「取消卡片」软删（转 `canceled` 终态、保留卡与 source 防复活、后端零改动），页尾可用折叠条展开只读查看已取消卡，任务卡统计排除 canceled、保留 done。状态持久化在 SQLite。 |
 
 工厂是目前唯一在开发的插件。它现在能做什么、还有什么没解决，都要读它的路线图：[§2](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 写当前行为，[§5](plugins/dsh-factory/docs/ROADMAP.zh-CN.md) 列已知缺口。缺口清单不等于「已验证行为」的完整清单，判断以源码和真机为准。派发会话的权限边界与写入/回执窗口（工厂侧）都已修并验通。卡正文按「数据非指令」在技能指令前注入；单卡接管现在有对称的、幂等的交还路由；非终态卡可一键取消（软删），没有按卡硬删；已取消卡可在页尾折叠条只读查看，任务卡统计不含已取消卡、仍计已完成卡。
 
@@ -21,8 +21,8 @@
 | 阶段 | 目标 | 状态 | 去哪看 |
 | --- | --- | --- | --- |
 | P1 | 在真机上验证完整的添加链路 | 已完成 | 路线图 §4 P1：验收分组与逐轮账本 |
-| P2 | 自治引擎 L1 | 已实现；真实自动派发已在真机端到端验通，停在 plan-review | 路线图 §4 P2 与 §5 |
-| P3 | L2：机器代批计划（按项目 opt-in） | 已实现并真机验通——机器只走 `plan-review -> build`，交付授权仍留人 | 路线图 §4 P3 |
+| P2 | 自治引擎，语义三档 | 已实现；真实自动派发已在真机端到端验通，停在 plan-review | 路线图 §4 P2 与 §5 |
+| P3 | machine-approve：机器代批计划（按项目显式选档） | 已实现并真机验通——机器只走 `plan-review -> build`、不读任何开关，交付授权仍留人 | 路线图 §4 P3 |
 | P4 | 自治档位、状态、暂停／接管与并发设置的界面 | 已实现并验收；界面已在真机复测、P4-7a/7b 全局上限证明已用后端并发夹具验过 | 路线图 §4 P4 与 §5 |
 | P5 | UI/UX、文案与一项目一板 | 已实现；QA 报告全量通过 | 路线图 §4 P5 |
 | P6 | 整页视图、建项目一次性绑定与身份显示 | 已实现；QA 报告全量通过 | 路线图 §4 P6 |
