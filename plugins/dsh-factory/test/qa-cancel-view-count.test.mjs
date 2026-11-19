@@ -99,8 +99,11 @@ test('V1 fold bar renders canceledCards via renderCard (title + body summary)', 
   assert.match(clientSrc, /h\('details', \{ key: 'canceled'/, 'fold is a <details>')
   assert.match(clientSrc, /key: 'list',[\s\S]{0,160}canceledCards\.map\(renderCard\)/, 'expanded content = canceledCards.map(renderCard)')
   // renderCard renders Card (which shows title + 2-line body summary) + actions.
+  // Card now also takes working/sessionRows/uiWorkspace/onOpenReports (live
+  // session signal + reports entry); only assert it still renders Card with
+  // `card` and the new `onOpenReports` entry, not the exact prop list.
   const renderCardBlock = clientSrc.slice(clientSrc.indexOf('const renderCard ='), clientSrc.indexOf('const renderPage ='))
-  assert.match(renderCardBlock, /h\(Card, \{ key: 'card', card, t \}\)/, 'Card renders title + body summary')
+  assert.match(renderCardBlock, /h\(Card, \{[\s\S]*?\bcard\b[\s\S]*?onOpenReports/, 'Card renders title + body summary and passes card + onOpenReports')
 })
 
 // ==============================================================================

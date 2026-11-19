@@ -14,6 +14,8 @@
  * store, which enforces the state machine and the Review-only authorization gate.
  */
 
+import { createHash } from 'node:crypto'
+
 import { collectAudit } from './audit.js'
 import { inspectRepo } from './project-proposal.js'
 import { applyRemoteSync } from './sync.js'
@@ -114,6 +116,14 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
             cards: store.state.cards.length,
           },
         })
+      }
+
+      // One cheap probe for the board to poll. It hashes ONLY the material the
+      // page renders; engine ticks/audit events are excluded so a ticking timer
+      // does not force a full reload every few seconds. The client fetches the
+      // full set below only when this revision actually changes.
+      if (method === 'GET' && seg.length === 2 && seg[0] === 'state' && seg[1] === 'revision') {
+        return ok({ revision: panelRevision(store, engineConfig, runtime, query.get('projectId') ?? undefined) })
       }
 
       if (method === 'GET' && seg.length === 1 && seg[0] === 'settings') {
@@ -284,6 +294,28 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
 
 function ok(body, status = 200) {
   return { status, body }
+}
+
+/**
+ * Short digest of one project's board (or all, when no id is given). The page
+ * selects ONE project, so work on other projects must not churn its refresh.
+ * Global controls the same page renders — settings, engine pause, effective
+ * cap — stay in the digest either way. Engine ticks/audit events stay out.
+ */
+function panelRevision(store, engineConfig, runtime, projectId) {
+  const state = store.state ?? {}
+  const allBoards = state.boards ?? []
+  const boardProject = new Map(allBoards.map((board) => [board.id, board.projectId]))
+  const scoped = (row) => !projectId || boardProject.get(row.boardId) === projectId
+  const material = JSON.stringify({
+    projects: projectId ? (state.projects ?? []).filter((entry) => entry.id === projectId) : (state.projects ?? []),
+    boards: projectId ? allBoards.filter((entry) => entry.projectId === projectId) : allBoards,
+    cards: projectId ? (state.cards ?? []).filter(scoped) : (state.cards ?? []),
+    settings: state.settings ?? {},
+    enginePaused: runtime?.engine?.paused === true,
+    effectiveGlobalMaxActive: effectiveGlobalMaxActive(store, engineConfig).value ?? null,
+  })
+  return createHash('sha1').update(material).digest('hex').slice(0, 16)
 }
 
 /** Copy the observable engine state without leaking references to the caller. */

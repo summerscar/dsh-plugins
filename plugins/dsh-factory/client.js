@@ -20,6 +20,13 @@
 window.__ModuleLoader__.load({
   id: '@summerscar/dsh-factory',
   factory(require) {
+    // Host-provided Markdown renderer (a platform seed word in DSH's client
+    // module table). No npm dependency, no vendored parser, no build step.
+    let MarkdownText = null
+    try {
+      const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
+      MarkdownText = primitives && primitives.MarkdownText
+    } catch { MarkdownText = null }
     const React = require('react')
     const h = React.createElement
     const { useState, useEffect, useCallback, useRef } = React
@@ -135,6 +142,8 @@ window.__ModuleLoader__.load({
       emptyColumn: "—",
       actDispatch: "派发给 AI",
       actApprovePlan: "批准计划",
+      approvePlanWaiting: "会话仍在工作，结束后才能批准计划",
+      approvePlanNoReport: "还没有计划报告，生成后才能批准",
       actConfirmCommit: "确认 commit",
       actCreatePr: "推送分支并创建 PR",
       actMarkDone: "标记完成",
@@ -385,6 +394,32 @@ window.__ModuleLoader__.load({
       returnWithSessionNotice: "会话继续，引擎不会重复派发",
       cancelCard: "取消卡片",
       toastCardCanceled: "卡片已取消，保留在「已取消」列表",
+      working: "工作中…",
+      sessionLabel: "会话",
+      openSession: "打开会话",
+      sessionUnavailable: "会话已不可用",
+      viewReports: "查看报告",
+      reportsTitle: "阶段报告",
+      reportLabel: "报告",
+      reportAgent: "AI",
+      reportHuman: "人工",
+      reportEmpty: "这张卡还没有报告。",
+      reportSort: "排序",
+      reportNewestFirst: "最新在前",
+      reportOldestFirst: "最早在前",
+      reportSortHint: "点击切换报告时间顺序",
+      commitPending: "未提交",
+      commitDone: "已 commit",
+      prPending: "未提 PR",
+      prDone: "已提 PR",
+      viewPr: "查看 PR",
+      copy: "复制",
+      copied: "已复制",
+      codeBlockTitle: "代码",
+      codeBlockWrap: "自动换行",
+      codeBlockUnwrap: "取消换行",
+      footnotes: "脚注",
+      close: "关闭",
     }
     const en = {
       settings: "Project Factory",
@@ -411,6 +446,8 @@ window.__ModuleLoader__.load({
       emptyColumn: "—",
       actDispatch: "Dispatch to AI",
       actApprovePlan: "Approve plan",
+      approvePlanWaiting: "Session still working — approve when it finishes",
+      approvePlanNoReport: "No plan report yet — approve once it is written",
       actConfirmCommit: "Confirm commit",
       actCreatePr: "Push branch & create PR",
       actMarkDone: "Mark done",
@@ -661,6 +698,44 @@ window.__ModuleLoader__.load({
       returnWithSessionNotice: "The session continues; the engine will not dispatch again.",
       cancelCard: "Cancel card",
       toastCardCanceled: "Card canceled; kept in the canceled list",
+      working: "Working…",
+      sessionLabel: "Session",
+      openSession: "Open session",
+      sessionUnavailable: "Session unavailable",
+      viewReports: "View reports",
+      reportsTitle: "Stage reports",
+      reportLabel: "Report",
+      reportAgent: "Agent",
+      reportHuman: "Human",
+      reportEmpty: "No reports on this card yet.",
+      reportSort: "Sort",
+      reportNewestFirst: "Newest first",
+      reportOldestFirst: "Oldest first",
+      reportSortHint: "Click to switch report time order",
+      commitPending: "Not committed",
+      commitDone: "Committed",
+      prPending: "No PR yet",
+      prDone: "PR created",
+      viewPr: "View PR",
+      copy: "Copy",
+      copied: "Copied",
+      codeBlockTitle: "Code",
+      codeBlockWrap: "Wrap",
+      codeBlockUnwrap: "Unwrap",
+      footnotes: "Footnotes",
+      close: "Close",
+    }
+
+    /** Labels the host Markdown primitive needs for fences and footnotes. */
+    function markdownLabels(t) {
+      return {
+        code: {
+          copyLabel: t('copy'),
+          copiedLabel: t('copied'),
+          toolbarLabels: { codeLabel: t('codeBlockTitle'), wrapLabel: t('codeBlockWrap'), unwrapLabel: t('codeBlockUnwrap') },
+        },
+        footnotes: t('footnotes'),
+      }
     }
 
     /** Plain text for the two-line card summary: never render Markdown or HTML. */
@@ -719,16 +794,48 @@ window.__ModuleLoader__.load({
       }, t('takenOverBadge'))
     }
 
-    function Card({ card, t }) {
+    /** Delivery hints travel with the card, whatever column it sits in. */
+    function DeliveryStatus({ card, t }) {
+      const sha = typeof card.commitSha === 'string' ? card.commitSha.trim() : ''
+      const rawPr = typeof card.prUrl === 'string' ? card.prUrl.trim() : ''
+      let prLink = ''
+      try {
+        const parsed = new URL(rawPr)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') prLink = rawPr
+      } catch { prLink = '' }
+      const rows = [
+        { text: sha ? `${t('commitDone')} · ${sha.slice(0, 7)}` : t('commitPending'), done: sha !== '' },
+        prLink
+          ? { text: `${t('prDone')} · ${t('viewPr')} ↗`, done: true, href: prLink }
+          : { text: t('prPending'), done: false },
+      ]
+      const badge = (row) => ({
+        display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 5,
+        border: `1px solid ${row.href ? T.accent : row.done ? T.green : T.line}`,
+        background: row.href ? T.accentWash : row.done ? T.greenWash : T.grayWash,
+        color: row.href ? T.accentInk : row.done ? T.greenInk : T.mutedInk,
+        fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none',
+      })
+      return h('div', { className: 'df-delivery-status', style: { display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11, lineHeight: 1.4 } },
+        rows.map((row, index) => row.href
+          ? h('a', { key: index, href: row.href, target: '_blank', rel: 'noopener noreferrer', title: row.text, style: badge(row) }, row.text)
+          : h('span', { key: index, title: row.text, style: badge(row) }, row.text)))
+    }
+
+    function Card({ card, t, working, sessionRows, uiWorkspace, onOpenReports }) {
       const accent = STATUS_ACCENT[card.status] || T.muted
       const meta = (card.source && card.source !== 'manual' ? `${card.source} · ` : '') + card.status
       const fullBody = plainBodyText(card.body)
       const bodySummary = fullBody === '' ? '' : Array.from(fullBody).slice(0, 240).join('')
       return h('div', {
-        className: 'df-card',
-        style: { background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${accent}`, borderRadius: T.radiusLg, boxShadow: T.shadow, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
+        className: working ? 'df-card df-card-working' : 'df-card',
+        // The working glow is a CSS animation; an inline box-shadow would win
+        // over it, so let the scoped stylesheet own the shadow while running.
+        style: { background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${accent}`, borderRadius: T.radiusLg, ...(working ? { position: 'relative', overflow: 'hidden' } : { boxShadow: T.shadow }), padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
       }, [
+        working ? h('span', { key: 'workingBar', className: 'df-working-bar', 'aria-hidden': 'true' }) : null,
         h('div', { key: 'titleRow', style: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 } }, [
+          working ? h('span', { key: 'workingDot', className: 'df-working-dot', title: t('working'), style: { flex: '0 0 auto', width: 9, height: 9, borderRadius: '50%', background: T.blue } }) : null,
           h('span', { key: 'title', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, color: T.ink, fontWeight: 500, lineHeight: 1.55 } }, card.title),
           card.takenOver === true ? h(TakenOverBadge, { key: 'takenOver', t }) : null,
         ].filter(Boolean)),
@@ -737,26 +844,127 @@ window.__ModuleLoader__.load({
           style: { display: '-webkit-box', WebkitLineClamp: '2', WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', fontSize: '11.5px', lineHeight: 1.45, color: T.mutedInk },
         }, bodySummary),
         h('div', { key: 'meta', style: { fontSize: 11.5, color: T.mutedInk, lineHeight: 1.4 } }, meta),
+        h(DeliveryStatus, { key: 'deliveryStatus', card, t }),
+        h(CardExtras, { key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports }),
       ].filter(Boolean))
+    }
+
+    /**
+     * Session + report footer shared by the board, inbox and canceled lists.
+     * The title comes from the host's live client session catalog (no new
+     * backend field), and opening goes through the host's uiWorkspace service:
+     * DSH has no URL route for a session, so a guessed link would not work.
+     */
+    function CardExtras({ card, t, sessionRows, uiWorkspace, onOpenReports }) {
+      const reports = Array.isArray(card.history)
+        ? card.history.filter((entry) => entry && entry.type === 'report')
+        : []
+      const row = card.sessionId && sessionRows ? sessionRows[card.sessionId] : undefined
+      const title = row ? (row.displayTitle || row.title || card.sessionId) : card.sessionId
+      const canOpen = Boolean(card.sessionId) && typeof (uiWorkspace && uiWorkspace.openSession) === 'function'
+      const canViewReports = reports.length > 0 && typeof onOpenReports === 'function'
+      if (!card.sessionId && !canViewReports) return null
+      const linkStyle = { alignSelf: 'flex-start', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', color: T.accentInk, fontSize: 11.5, lineHeight: 1.4, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }
+      return h('div', { className: 'df-card-extras', style: { display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 } }, [
+        !card.sessionId ? null : (canOpen
+          ? h('button', {
+              key: 'session', type: 'button', title: title,
+              onClick: () => uiWorkspace.openSession(card.sessionId),
+              style: linkStyle,
+            }, `${t('openSession')} · ${title}`)
+          : h('div', { key: 'session', title: card.sessionId, style: { ...linkStyle, cursor: 'default', color: T.mutedInk } },
+            `${t('sessionLabel')} · ${title || t('sessionUnavailable')}`)),
+        !canViewReports ? null : h('button', {
+          key: 'reports', type: 'button', onClick: () => onOpenReports(card),
+          style: linkStyle,
+        }, `${t('viewReports')} · ${reports.length}`),
+      ].filter(Boolean))
+    }
+
+    /** Read-only report viewer: Markdown is rendered as text; raw HTML is omitted. */
+    const REPORT_ORDER_KEY = `${NS}:reportOrder`
+    function ReportsModal({ card, t, onClose }) {
+      // Browser-level preference, not a card field: newest first by default.
+      const [order, setOrder] = useState(() => {
+        try { return localStorage.getItem(REPORT_ORDER_KEY) === 'asc' ? 'asc' : 'desc' } catch { return 'desc' }
+      })
+      useEffect(() => { try { localStorage.setItem(REPORT_ORDER_KEY, order) } catch {} }, [order])
+      // Ordinals are fixed by chronological order within THIS card (earliest
+      // = 1), not by the card's whole history. The sort switch only changes
+      // display order, never the numbers.
+      const timeOf = (entry) => {
+        const ms = typeof entry.at === 'string' ? Date.parse(entry.at) : NaN
+        return Number.isNaN(ms) ? 0 : ms
+      }
+      const chronological = (Array.isArray(card.history) ? card.history : [])
+        .filter((entry) => entry && entry.type === 'report')
+        .map((entry, index) => ({ entry, index }))
+        .sort((a, b) => (timeOf(a.entry) - timeOf(b.entry)) || (a.index - b.index))
+        .map(({ entry }, index) => ({ entry, ordinal: index + 1 }))
+      const reports = order === 'asc' ? chronological : chronological.slice().reverse()
+      const stamp = (value) => {
+        if (typeof value !== 'string') return ''
+        const date = new Date(value)
+        return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
+      }
+      return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(18,24,32,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 18 } }, [
+        h('div', { className: 'df-modal', style: { background: T.card, width: '100%', maxWidth: 560, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 70px rgba(10,16,24,.28)', paddingBottom: 'env(safe-area-inset-bottom)' } }, [
+          h('div', { key: 'head', style: { padding: '16px 18px 12px', borderBottom: `1px solid ${T.line}`, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 } }, [
+            h('h3', { key: 'title', style: { margin: 0, fontSize: 16, fontWeight: 650, color: T.ink, overflowWrap: 'anywhere', minWidth: 0, flex: '1 1 auto' } }, `${t('reportsTitle')} · ${card.title}`),
+            h('button', {
+              key: 'sort', type: 'button',
+              onClick: () => setOrder((value) => (value === 'desc' ? 'asc' : 'desc')),
+              title: t('reportSortHint'), 'aria-label': t('reportSortHint'),
+              style: { flex: '0 0 auto', padding: '5px 9px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.panel, color: T.accentInk, fontSize: 11.5, fontWeight: 600, lineHeight: 1.4, cursor: 'pointer' },
+            }, `${t('reportSort')} · ${order === 'desc' ? t('reportNewestFirst') : t('reportOldestFirst')}`),
+          ]),
+          h('div', { style: { padding: '14px 18px', fontSize: 13, color: T.ink, lineHeight: 1.7, overflowY: 'auto', minHeight: 0 } },
+            reports.length === 0 ? h('div', { style: { color: T.mutedInk } }, t('reportEmpty'))
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } }, reports.map(({ entry, ordinal }) => h('div', {
+                key: `${entry.at || ''}:${ordinal}`,
+                style: { border: `1px solid ${T.line}`, borderRadius: T.radiusSm, padding: '10px 12px', background: T.panel },
+              }, [
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11.5, color: T.mutedInk, marginBottom: 6 } }, [
+                  h('span', { key: 'who' }, `${t('reportLabel')} ${ordinal} · ${entry.actor === 'human' ? t('reportHuman') : t('reportAgent')}`),
+                  h('span', { key: 'when' }, stamp(entry.at)),
+                ]),
+                h('div', { key: 'body', style: { overflowWrap: 'anywhere', fontSize: 12.5, lineHeight: 1.6 } },
+                  MarkdownText
+                    ? h(MarkdownText, { text: typeof entry.body === 'string' ? entry.body : '', labels: markdownLabels(t), omitHtml: true })
+                    : h('div', { style: { whiteSpace: 'pre-wrap' } }, typeof entry.body === 'string' ? entry.body : '')),
+              ])))),
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', padding: '12px 18px', borderTop: `1px solid ${T.line}`, background: T.panel } },
+            h(Button, { key: 'close', onClick: onClose }, h('span', { className: 'df-tap' }, t('close')))),
+        ]),
+      ])
     }
 
     // Per-card action buttons. Each drives the gated backend (authorize, then the
     // git action, or a human transition); the backend refuses anything not armed,
     // so the UI can never bypass the approval gate even if a button is mis-clicked.
-    function CardActions({ card, run, t, busy, onToast }) {
+    function CardActions({ card, run, t, busy, working, onToast }) {
       const buttons = []
       // Disable while a board action is in flight: a second click cannot start
       // a parallel run, and the backend gates still guard the write regardless.
-      const add = (label, fn) => buttons.push(h(Button, { key: label, onClick: () => void run(fn), disabled: busy }, label))
+      const add = (label, fn, extra = {}) => buttons.push(h(Button, {
+        key: label, onClick: () => void run(fn),
+        disabled: busy || extra.disabled === true, title: extra.title,
+      }, label))
       if (card.status === 'inbox') add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) })
       // Approving IS the human gate: one click moves plan-review -> build AND
       // continues the live session, so build starts running instead of leaving a
       // card with no button. Both gates stay server-side — only a human may take
       // this edge, and /continue reuses the existing worktree/session.
-      if (card.status === 'plan-review') add(t('actApprovePlan'), async () => {
-        await callApi('POST', `/cards/${card.id}/transition`, { to: 'build', actor: 'human' })
-        await callApi('POST', `/cards/${card.id}/continue`)
-      })
+      if (card.status === 'plan-review') {
+        // Approving starts implementation on the strength of the plan report;
+        // a card parked here with no report (or a still-running agent) has no
+        // plan to approve yet.
+        const hasReport = Array.isArray(card.history) && card.history.some((entry) => entry && entry.type === 'report')
+        add(t('actApprovePlan'), async () => {
+          await callApi('POST', `/cards/${card.id}/transition`, { to: 'build', actor: 'human' })
+          await callApi('POST', `/cards/${card.id}/continue`)
+        }, (working || !hasReport) ? { disabled: true, title: working ? t('approvePlanWaiting') : t('approvePlanNoReport') } : {})
+      }
       // Take-over pulls one card out of the engine's control, persisted on the
       // card. Available on any live (non-terminal) card (P4-6, third entry).
       if (card.status !== 'done' && card.status !== 'canceled' && card.takenOver !== true) {
@@ -1978,6 +2186,17 @@ window.__ModuleLoader__.load({
         '[data-dsh-factory-p4] :focus-visible{outline:2px solid var(--df-accent);outline-offset:2px}',
         // Unified card treatment (Design #2/#3): rounded, layered, radius system.
         '[data-dsh-factory-p4] .df-card{border-radius:var(--df-radius, 11px);box-shadow:var(--df-shadow, 0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}',
+        // Live-session treatment: a breathing halo on the card plus a pulsing
+        // dot, both driven by the host session row's `running` bit. Reduced
+        // motion is disabled globally by the rule at the end of this sheet.
+        '[data-dsh-factory-p4] .df-card-working{animation:df-working-glow 1.8s ease-in-out infinite}',
+        '@keyframes df-working-glow{0%,100%{box-shadow:0 0 0 0 rgba(47,125,225,.14),var(--df-shadow,0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}50%{box-shadow:0 0 0 5px rgba(47,125,225,.26),var(--df-shadow,0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}}',
+        // A sweeping top bar plus a breathing halo make the whole card read
+        // as live; no extra text is added to the card body.
+        '[data-dsh-factory-p4] .df-working-bar{position:absolute;left:0;top:0;height:3px;width:35%;border-radius:0 3px 3px 0;background:linear-gradient(90deg,transparent,var(--df-blue,#2f7de1),transparent);animation:df-working-sweep 1.4s linear infinite;pointer-events:none}',
+        '@keyframes df-working-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(390%)}}',
+        '[data-dsh-factory-p4] .df-working-dot{animation:df-working-pulse 1.2s ease-in-out infinite;box-shadow:0 0 0 3px rgba(47,125,225,.18)}',
+        '@keyframes df-working-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}',
         // Large containers share the 11px radius; controls share 7px (Design #3).
         '[data-dsh-factory-p4] .df-col,[data-dsh-factory-p4] .df-group,[data-dsh-factory-p4] .df-inbox{border-radius:var(--df-radius, 11px)!important}',
         '[data-dsh-factory-p4] input,[data-dsh-factory-p4] textarea,[data-dsh-factory-p4] select{border-radius:var(--df-radius-sm, 7px)!important}',
@@ -2079,13 +2298,19 @@ window.__ModuleLoader__.load({
       document.head.appendChild(style)
     }
 
-    function BoardPage({ t }) {
+    function BoardPage({ t, sessions, uiWorkspace }) {
       const [projects, setProjects] = useState([])
       const [boards, setBoards] = useState([])
       const [cards, setCards] = useState([])
       const [engine, setEngine] = useState(null)
       const [settings, setSettings] = useState(null)
-      const [projectId, setProjectId] = useState('')
+      // Which project is on screen is a browser preference, not a card/backend
+      // field: returning to the page reopens the project you were just using.
+      const PROJECT_KEY = `${NS}:selectedProject`
+      const [projectId, setProjectId] = useState(() => {
+        try { return localStorage.getItem(PROJECT_KEY) || '' } catch { return '' }
+      })
+      useEffect(() => { try { localStorage.setItem(PROJECT_KEY, projectId) } catch {} }, [projectId, PROJECT_KEY])
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
       // Initial fetch is distinct from an empty board: before the first load
@@ -2111,6 +2336,18 @@ window.__ModuleLoader__.load({
       const [railOpen, setRailOpen] = useState(false)
       const [showNewProject, setShowNewProject] = useState(false)
       const [showNewCard, setShowNewCard] = useState(false)
+      // Live session titles come from the host's client catalog. Subscribing
+      // keeps the card label current when a title is generated or renamed.
+      const [sessionRows, setSessionRows] = useState(
+        (sessions && sessions.list && sessions.list.getSnapshot && sessions.list.getSnapshot().byId) || {},
+      )
+      useEffect(() => {
+        if (!sessions || !sessions.list || typeof sessions.list.subscribe !== 'function') return undefined
+        return sessions.list.subscribe(() => {
+          const snap = sessions.list.getSnapshot()
+          setSessionRows((snap && snap.byId) || {})
+        })
+      }, [sessions])
       const [toast, setToast] = useState(null)
       const drawerBodyRef = useRef(null)
       // Project-card GitHub actions are global; switch scope and put the first
@@ -2140,9 +2377,17 @@ window.__ModuleLoader__.load({
       // AccountManager re-reads /auth/oauth/state and enables Connect at once.
       const [githubRefreshKey, setGithubRefreshKey] = useState(0)
 
-      const load = useCallback(async () => {
-        setBusy(true)
-        setError('')
+      // Silent polls keep the board current without stealing `busy` from a
+      // user action or wiping a real error banner. One poll at a time.
+      const polling = useRef(false)
+      const load = useCallback(async ({ silent = false } = {}) => {
+        if (silent) {
+          if (polling.current) return
+          polling.current = true
+        } else {
+          setBusy(true)
+          setError('')
+        }
         try {
           // Settings/status are read alongside the board so the config drawer
           // and the effective-slots readout never show a stale value after a save.
@@ -2158,16 +2403,60 @@ window.__ModuleLoader__.load({
         } catch (err) {
           setError(err.message)
         } finally {
-          setBusy(false)
+          if (silent) polling.current = false
+          else setBusy(false)
           setLoaded(true)
         }
       }, [])
 
-      useEffect(() => { void load() }, [load])
+      // ONE tiny probe decides whether the five full reads are needed at all.
+      // The digest is computed by the Host from the same store this page renders,
+      // so agent-side stage moves and engine/timer writes both reach the board.
+      const revisionRef = useRef(null)
+      const projectIdRef = useRef('')
+      useEffect(() => { projectIdRef.current = projectId }, [projectId])
+      const poll = useCallback(async () => {
+        try {
+          // Scope the digest to the project actually on screen; work in other
+          // projects must not refresh this board.
+          const pid = projectIdRef.current
+          const query = pid ? `?projectId=${encodeURIComponent(pid)}` : ''
+          const { revision } = await callApi('GET', `/state/revision${query}`)
+          if (revision === revisionRef.current) return
+          revisionRef.current = revision
+          await load({ silent: true })
+        } catch {
+          // A failed probe must not blank a good board; the next tick retries.
+          revisionRef.current = null
+        }
+      }, [load])
+
+      useEffect(() => {
+        void (async () => { await load(); await poll() })()
+      }, [load, poll])
+
+      // Card stages, intake and engine state are written to the Host store by
+      // agents and timers OUTSIDE this page. Poll one cheap endpoint; refresh
+      // immediately when the tab becomes visible again.
+      useEffect(() => {
+        const timer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.hidden) return
+          void poll()
+        }, 5000)
+        const onVisible = () => { if (!document.hidden) void poll() }
+        document.addEventListener('visibilitychange', onVisible)
+        return () => {
+          clearInterval(timer)
+          document.removeEventListener('visibilitychange', onVisible)
+        }
+      }, [poll])
 
       // Auto-select the first project once data arrives so the board is visible.
       useEffect(() => {
-        if (projectId === '' && projects.length > 0) setProjectId(projects[0].id)
+        if (projects.length === 0) return
+        // A remembered id that no longer exists (deleted project) falls back
+        // to the first one; an empty first visit picks the first one too.
+        if (projectId === '' || !projects.some((entry) => entry.id === projectId)) setProjectId(projects[0].id)
       }, [projects, projectId])
 
       const project = projects.find((entry) => entry.id === projectId) || null
@@ -2213,10 +2502,19 @@ window.__ModuleLoader__.load({
         setShowNewProject(false)
       })
 
-      const renderCard = (card) => h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
-        h(Card, { key: 'card', card, t }),
-        h(CardActions, { key: 'actions', card, run, t, busy, onToast: showToast }),
-      ])
+      // `running` is the host session catalog's live Agent-busy bit; it flips
+      // through the subscribed list snapshot, so the card reflects the session
+      // without any new backend field or guessed URL.
+      const renderCard = (card) => {
+        const working = Boolean(card.sessionId && sessionRows[card.sessionId] && sessionRows[card.sessionId].running === true)
+        return h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
+          h(Card, {
+            key: 'card', card, t, sessionRows, uiWorkspace, working,
+            onOpenReports: (item) => setPageModal(h(ReportsModal, { card: item, t, onClose: () => setPageModal(null) })),
+          }),
+          h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast }),
+        ])
+      }
 
       const children = []
 
@@ -2570,13 +2868,17 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'uiWorkspace', 'sessions'],
       apply(ctx) {
         // Scoped mobile CSS (44px targets, pinned action bar, bottom-sheet modal).
         // Injected once into the host document; no build step, no host token edits.
         ensureStyles()
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-factory: dictionaries')
         const t = ctx.locale.bind(NS)
+        // Host navigation + live session catalog, declared in `inject` so the
+        // Cordis fiber actually exposes them to this plugin.
+        const sessions = ctx.sessions
+        const uiWorkspace = ctx.uiWorkspace
         // Primary surface: an icon row in the global panel list…
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist',
@@ -2591,7 +2893,7 @@ window.__ModuleLoader__.load({
           name: 'main',
           key: 'dsh-factory',
           locale: NS,
-          inject: () => ({ t }),
+          inject: () => ({ t, sessions, uiWorkspace }),
         }, BoardPage))
       },
     }

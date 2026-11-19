@@ -67,6 +67,39 @@ test('an illegal transition and an out-of-Review authorization both return 400',
   }
 })
 
+test('state/revision is one cheap probe scoped to the selected project', () => {
+  const { api, cleanup } = setup()
+  try {
+    const rev = (projectId) => api({ method: 'GET', route: projectId ? `/state/revision?projectId=${projectId}` : '/state/revision' }).body.revision
+    const first = rev()
+    assert.equal(typeof first, 'string')
+    assert.equal(rev(), first, 'a stable store gives a stable digest')
+
+    const makeProject = (name) => {
+      const project = api({ method: 'POST', route: '/projects', body: { name, rootPath: `/workspace/${name}` } }).body.project
+      const board = api({ method: 'POST', route: '/boards', body: { projectId: project.id, name: 'b' } }).body.board
+      const card = api({ method: 'POST', route: '/cards', body: { boardId: board.id, title: 'c' } }).body.card
+      return { project, card }
+    }
+    const a = makeProject('a')
+    const b = makeProject('b')
+    const aBefore = rev(a.project.id)
+    const bBefore = rev(b.project.id)
+    const allBefore = rev()
+    assert.notEqual(aBefore, bBefore)
+
+    api({ method: 'POST', route: `/cards/${b.card.id}/transition`, body: { to: 'triage', actor: 'human' } })
+    assert.equal(rev(a.project.id), aBefore, 'work in another project does not churn this board')
+    assert.notEqual(rev(b.project.id), bBefore)
+    assert.notEqual(rev(), allBefore)
+
+    api({ method: 'POST', route: `/cards/${a.card.id}/transition`, body: { to: 'triage', actor: 'human' } })
+    assert.notEqual(rev(a.project.id), aBefore)
+  } finally {
+    cleanup()
+  }
+})
+
 test('POST /projects/inspect is read-only, returns signals, and writes nothing', () => {
   const { store, api, cleanup } = setup()
   try {

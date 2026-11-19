@@ -33,7 +33,7 @@ function captureInlineDictionaries() {
   let registered = null
   const sandbox = {
     window: { __ModuleLoader__: { load: (def) => { registered = def } } },
-    require: (name) => { if (name === 'react') return reactShim(); throw new Error(`unexpected require: ${name}`) },
+    require: (name) => { if (name === 'react') return reactShim(); if (name === '@deepseek-ai/dsh-client-ui-primitives') return { MarkdownText: () => null }; throw new Error(`unexpected require: ${name}`) },
     fetch: async () => ({ ok: true, text: async () => '{}' }),
     console,
   }

@@ -34,6 +34,7 @@ test('client registers a sidebar entry + main page, applies cleanly, and renders
     window: { __ModuleLoader__: { load: (def) => { registered = def } } },
     require: (name) => {
       if (name === 'react') return reactShim()
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { MarkdownText: () => null }
       throw new Error(`unexpected require: ${name}`)
     },
     fetch: async () => ({ ok: true, text: async () => '{}' }),
@@ -48,13 +49,15 @@ test('client registers a sidebar entry + main page, applies cleanly, and renders
   const mod = registered.factory(sandbox.require)
   // `inject` was built inside the vm realm, so its Array prototype differs from
   // this realm's; Array.from normalises it before a strict deep-equal.
-  assert.deepEqual(Array.from(mod.inject), ['slots', 'locale'])
+  assert.deepEqual(Array.from(mod.inject), ['slots', 'locale', 'uiWorkspace', 'sessions'])
 
   const slotCalls = []
   let localeRegistered = false
   const ctx = {
     effect: (fn) => { fn(); return () => {} },
     locale: { register: () => { localeRegistered = true }, bind: () => (key) => key },
+    sessions: { list: { getSnapshot: () => ({ byId: {} }), subscribe: () => () => {} } },
+    uiWorkspace: { openSession: () => {} },
     slots: {
       inject: (ownerKey, callback) => { callback() },
       register: (options, Component) => { slotCalls.push({ options, Component }) },
@@ -87,4 +90,77 @@ test('client registers a sidebar entry + main page, applies cleanly, and renders
   // Render the page once with empty data — must not throw.
   const tree = main.Component({ t: (key) => key })
   assert.ok(tree && typeof tree === 'object', 'page renders an element')
+})
+
+test('board polls ONE revision probe and only then reloads the full set', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /\/state\/revision\$\{query\}/, 'the probe is scoped to the selected project')
+  assert.match(code, /setInterval\(\(\) => \{[\s\S]{0,300}?\}, 5000\)/, 'a 5s probe timer exists')
+  assert.match(code, /void poll\(\)/, 'the timer calls the probe, not the five reads')
+  assert.match(code, /await load\(\{ silent: true \}\)/, 'a changed revision triggers a silent full load')
+  assert.match(code, /if \(silent\) polling\.current = false/, 'polls are single-flight')
+  assert.match(code, /visibilitychange/, 'returning to the tab refreshes immediately')
+})
+
+test('report panel sorts newest-first by default and persists the choice', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /REPORT_ORDER_KEY = `\$\{NS\}:reportOrder`/)
+  assert.match(code, /=== 'asc' \? 'asc' : 'desc'/, 'unknown or missing preference is descending')
+  assert.match(code, /localStorage\.setItem\(REPORT_ORDER_KEY, order\)/, 'choice persists in the browser')
+  assert.match(code, /\.sort\(\(a, b\) => \(timeOf\(a\.entry\) - timeOf\(b\.entry\)\)/, 'ordinals follow chronological order')
+  assert.match(code, /ordinal: index \+ 1/, 'numbers restart at 1 for this card')
+  assert.match(code, /reports\.map\(\(\{ entry, ordinal \}\) =>/, 'display order never renumbers')
+})
+
+test('approve-plan waits for the session to finish', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast \}\)/)
+  assert.match(code, /disabled: busy \|\| extra\.disabled === true/)
+  assert.match(code, /card\.history\.some\(\(entry\) => entry && entry\.type === 'report'\)/, 'requires a plan report')
+  assert.match(code, /\(working \|\| !hasReport\) \? \{ disabled: true, title: working \? t\('approvePlanWaiting'\) : t\('approvePlanNoReport'\) \}/)
+  assert.match(code, /h\(CardActions, \{ key: 'actions', card, run, t, busy, working, onToast/)
+})
+
+test('session and report entries are part of the card body', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /h\(CardExtras, \{ key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports \}\)/, 'rendered inside Card')
+  assert.doesNotMatch(code, /h\(Card, \{ key: 'card'[\s\S]{0,400}?\}\),\s*\n\s*h\(CardExtras/, 'no detached extras row')
+})
+
+test('commit and PR state travel with the card in every column', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /function DeliveryStatus\(/)
+  assert.match(code, /h\(DeliveryStatus, \{ key: 'deliveryStatus', card, t \}\)/, 'rendered by Card itself, no stage gate')
+  assert.match(code, /card\.commitSha/)
+  assert.match(code, /card\.prUrl/)
+  assert.match(code, /target: '_blank', rel: 'noopener noreferrer'/, 'the PR badge is a safe link')
+  assert.match(code, /parsed\.protocol === 'http:' \|\| parsed\.protocol === 'https:'/, 'only http(s) links open')
+})
+
+test('the selected project is persisted and falls back when it disappears', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /PROJECT_KEY = `\$\{NS\}:selectedProject`/)
+  assert.match(code, /localStorage\.getItem\(PROJECT_KEY\) \|\| ''/, 'restores the last project')
+  assert.match(code, /localStorage\.setItem\(PROJECT_KEY, projectId\)/, 'saves each switch')
+  assert.match(code, /!projects\.some\(\(entry\) => entry\.id === projectId\)/, 'missing project falls back')
+})
+
+test('report bodies render through the host Markdown primitive with raw HTML off', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /require\('@deepseek-ai\/dsh-client-ui-primitives'\)/, 'uses the host module-table package')
+  assert.match(code, /h\(MarkdownText, \{[^}]*omitHtml: true/, 'raw HTML is not executed')
+  assert.match(code, /labels: markdownLabels\(t\)/, 'fence/footnote copy is localized')
+})
+
+test('a running host session drives the card working animation', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  // The signal is the host session catalog's live Agent-busy bit, read from
+  // the subscribed list snapshot — not a guessed status or a new backend field.
+  assert.match(code, /sessionRows\[card\.sessionId\]\.running === true/)
+  assert.match(code, /className: working \? 'df-card df-card-working' : 'df-card'/)
+  assert.match(code, /@keyframes df-working-glow/)
+  assert.match(code, /@keyframes df-working-pulse/)
+  assert.match(code, /@keyframes df-working-sweep/, 'a top sweep bar is visible at a glance')
+  assert.match(code, /className: 'df-working-bar'/)
+  assert.doesNotMatch(code, /className: 'df-working-badge'/, 'no extra text on the card')
 })

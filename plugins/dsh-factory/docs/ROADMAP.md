@@ -111,6 +111,19 @@ Approvals share the same concurrency budget as dispatch: a per-project and a glo
 - **Idempotent, with no second confirmation.** Calling `POST /cards/:id/release` on a card that is not taken over is a silent no-op — no new history or audit entry. Return is reversible, so the UI shows no confirmation dialog; `busy` is the only guard against a double submit. With a live session or dispatch lock, the success toast appends a second line telling the user that the session continues and the engine will not dispatch again.
 - **Return is not the dispatch lock.** `/release` means "a person gives the card back to the engine"; it is a different route from `releaseClaim`, which frees a concurrency slot. Do not confuse them.
 
+### 2.12 Session link and stage reports on the card
+
+- A dispatched card shows its linked session title from one source only: the host client catalog `ctx.sessions.list` (`displayTitle`, updated through a subscription when a title is generated or renamed). No backend field, no schema change. Clicking it calls the host's `ctx.uiWorkspace.openSession(sessionId)`; without a catalog row it falls back to the session id, and without the navigation service it renders a read-only label.
+- **View reports · N** opens a read-only dialog listing every `type:'report'` entry in `card.history` with author (agent / human), time and full text. Report bodies render as Markdown through the host UI primitive with raw HTML omitted; the button is hidden when a card has no report.
+- No URL is involved: DSH keeps session selection in client state, does not change the URL, and ignores `?session=`. The host service is the only real navigation entry point (see §3).
+
+### 2.13 Live board sync, delivery state and review gating
+
+- The board watches one cheap digest of the selected project (one HTTP probe every 5s, full reads only when it changes, plus an immediate probe when the tab becomes visible). Stage moves made by an agent or the engine therefore reach the board without a manual refresh; work in other projects does not churn it. The selected project and report sort order are browser preferences, not card or backend fields.
+- Delivery state is read from the same fields the action gates use: commit SHA and PR link appear on every card, whatever column it is in; PR links open http(s) only, in a new tab with `noopener noreferrer`. A running session animates the whole card (sweeping top bar, breathing halo, pulsing dot) without adding banner text.
+- Report ordinals are fixed chronologically within this card (earliest = 1); the sort switch changes display order only. Markdown uses the host-provided `MarkdownText` primitive with raw HTML omitted, so the plugin adds no runtime markdown dependency.
+- **Approve plan** requires `plan-review`, an idle session and at least one report on the card; otherwise the button is disabled with the reason. **Mark done** stays available throughout `review` — the human decides when the work is accepted.
+
 ## 3. Decisions already settled — no need to reopen them
 
 | Decision | Reason |
@@ -134,6 +147,7 @@ Approvals share the same concurrency budget as dispatch: a per-project and a glo
 | Return clears only `takenOver`, leaves the session / lock / worktree alone, and dispatches on the next tick | Those fields belong to a running session; clearing them would double-dispatch or lose the workspace. Deferring one tick lets the engine pick the card up under its own concurrency gate |
 | Return is idempotent and needs no confirmation | Repeating a return is a meaningless write; the operation is reversible and lighter than takeover, so a confirmation only interrupts |
 | Cancelling a card is a soft delete (move to `canceled`), not a physical delete; `source` keeps its place to prevent recreation | Intake deduplicates on existing cards' `source` and ignores status; hard-deleting an auto card removes its source so the next round recreates it as a fresh issue, and breaks the history / audit chain. Keeping the card and changing its state both exits the pipeline and avoids recreation, using backend and rendering that already exist |
+| Open sessions through the host's `uiWorkspace.openSession`, never a guessed URL | DSH keeps the current session in client state: the URL stays at the root and `?session=` has no effect. The host service is the only real navigation entry; `ctx.sessions.list` is the only title source, cards store no title |
 
 ## 4. What comes next (in priority order)
 
@@ -231,6 +245,29 @@ Both lines were built inside the existing zero-build view and engine — no comp
 **Increment (Cancel card, option A soft delete):** after the user reported no visible way to delete a card, a source check confirmed the backend already had the `canceled` terminal state, human→canceled edges for every stage, rendering and audit; only the UI button was missing. The fast-lane small change added "Cancel card" to CardActions for non-terminal cards (`POST /cards/:id/transition {to:'canceled',actor:'human'}`) and two keys, `cancelCard` / `toastCardCanceled`, to the four dictionaries, byte-identical across all four; backend and worktree were untouched. QA added a dedicated test file and reported the cancel cases and related files green, with non-recreation of cancelled auto cards verified and zero business bugs; the full suite was not run under the fast lane, and counts come from an actual run. Capability in §2.1, rationale in §3.
 
 **Increment (Canceled disclosure strip + task-card count fix):** the user reported that the "canceled list" was not visible and that the top-right still showed 3 task cards after cancelling all three. A source check found the footer was plain text while the toast promised a "canceled list", and the count loop did not exclude cancelled cards. The fast-lane change touched three places in `client.js`, zero dictionary and zero backend changes: the plain footer text became a `details/summary` strip (`summary` shows `${t('canceled')} · N`, body is `canceledCards.map(renderCard)`, read-only); the top-right stat subtracts cancelled cards; and `cardCounts` skips cancelled cards, fixing the sidebar and tab strip together. `done` still counts and the totals conserve. QA added a dedicated test file and reported the cancel cases green, all-cancelled-zero and conservation verified, and zero business bugs; the full suite was not run, and counts come from an actual run.
+
+### TODO — candidate next round (**recorded only, not scheduled**)
+
+User-supplied ideas captured before any build approval. PM/Design turns them into PRDs and acceptance criteria, Chief decides priority. Nothing in this section is a decision to start development.
+
+| # | Idea | Requested shape | Acceptance / decisions still needed |
+|---|---|---|---|
+| T1 | Global settings visual style | Bring the global settings pane in line with the single-project settings UI style: numbered blocks with a title, one-line purpose and tone, plus card surfaces and spacing consistent with the project pane, instead of the current loose group headings. | Style-only; no setting moves across scopes and no cross-scope writes; all four dictionaries stay byte-identical; real-machine check of both panes. |
+| T2 | Per-project custom skill injection | A project may supply its own skill text that **replaces** the default loaded skills, rather than being added alongside them. Lives in a new project-settings section titled **Custom prompt & skills**（自定义 prompt 与 skill）at position **04**; the danger zone moves to **05**. Above each custom-skill field show the reference GitHub URL of the corresponding default skill. | Decided (user's call): scope = the six phase skills (triage/plan/build/self-review/review/rereview; add-project is not included); a blank field = unset = fall back to the packaged default with its trigger points intact; one field per skill, the whole section saved at once, 8000 characters per skill and 1000 for the system instruction; the four dictionaries stay in sync. Injected text is untrusted data: it must not bypass stage transitions, approval gates or the sandbox. Still open: self-review/rereview activation follows the T4 session-level shape; host registration/source conflicts are not relied on by the plan (host semantics still need a real-machine re-check). |
+| T3 | Per-project custom system instruction | In the same 04 section, allow a per-project custom system instruction, e.g. "use Chinese for stage reports". | Decided: it does not apply to `/factory add` sessions (the project does not exist yet; add-project is not included). Still open: merge order with the stage skill and card-body injection; how to test it. It must not override the state machine, approval gates, sandbox or the untrusted-data notices. |
+| T4 | Independent review session (code review / pr review) | Keep the board on a single `review` stage; the stage carries two sessions plus a human doing commit/PR: before commit/PR an independent fresh session reviews the branch diff (code review, reading `factory-self-review`); after the PR is opened, a human reviews it or a separate independent session reviews the PR (pr review, reading `factory-review`, plus `factory-rereview` on rework). No new board column, no verdict hard gate, no automatic commit / automatic PR; commit/push/open-PR/mark-done all stay with the human through the existing authorize gates. The session fields `codeReviewSessionId` / `prReviewSessionId` must not clobber `card.sessionId`; both review sessions get the blocking-findings discipline injected on every run (Blocking vs follow-up). | Decided (user's call): session-level independence, not stage-level (no self-review column, no `selfReviewApprovedHead` hard gate; upstream mastra has already dropped this stage from the default Work board); both automatic and manual triggers, with automatic narrowable to manual if real-machine cost/noise is too high. Still open: whether pr review is a human review or a second independent session; Dev feasibility re-check not done, PRD draft in `.scratch/prd-t4-independent-review-session.md`, not scheduled. The review-skill activation in T2/T3 follows this row. |
+
+Reference URLs to show above the custom-skill fields (verified on `main` of `summerscar/dsh-plugins`; read-only hints, not editable values; refresh when the packaged skills change):
+
+- `factory-triage` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-triage
+- `factory-plan` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-plan
+- `factory-build` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-build
+- `factory-self-review` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-self-review
+- `factory-review` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-review
+- `factory-rereview` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-rereview
+- `factory-add-project` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-add-project
+
+`factory-add-project` has no corresponding input field (add-project is out of the replacement scope, see the decided T2 scope); its address is kept as a registry of the packaged skill bodies only.
 
 | Gap | Impact | Note |
 |---|---|---|

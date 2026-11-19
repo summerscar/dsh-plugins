@@ -111,6 +111,19 @@
 - **幂等且无二次确认。** 对没接管的卡重复 `POST /cards/:id/release` 是静默 no-op，历史与审计都不新增；交还可逆，界面不弹确认，只用 `busy` 挡重复点击。有活会话或派发锁时，成功 toast 追加第二行提示「会话继续，引擎不会重复派发」。
 - **交还与派发锁是两回事。** `/release` 是「人把卡还给引擎」，与释放并发名额的 `releaseClaim` 不是一个接口，不要混。
 
+### 2.12 卡片上的会话入口与阶段报告
+
+- 派发过的卡片显示已关联会话的标题，来源只用一个：宿主客户端会话目录 `ctx.sessions.list` 的 `displayTitle`（标题生成或改名后随订阅更新），没有后端字段、不改 schema。点击走宿主导航 `ctx.uiWorkspace.openSession(sessionId)` 跳到那个会话；没有对应行时退回显示会话 id，宿主不提供导航服务时只显示只读标签。
+- 卡片上的「查看报告 · N」打开只读弹窗，按时间列出 `card.history` 里所有 `type:'report'` 条目，带作者（AI / 人工）、时间与全文。报告正文用宿主 UI 组件按 Markdown 渲染，原始 HTML 不执行；没有报告时不显示按钮。
+- 会话跳转不用 URL：DSH 切换会话是客户端状态，URL 不变、`?session=` 也不生效，猜链接必然落空；宿主服务才是唯一入口（取舍见 §3）。
+
+### 2.13 看板同步、交付状态与批准门槛
+
+- 看板只看当前选中项目的一份轻量摘要（每 5 秒一次 HTTP 探针，摘要变了才拉全量，切回标签页立即探一次）。agent 或引擎改了阶段会自己反映到看板，不用手动刷新；别的项目动卡不会让这里空转。选中项目与报告排序是浏览器偏好，不进卡片、不进后端。
+- 交付状态与按钮闸门读同一批字段：commit 短 sha 与 PR 链接在任何阶段的卡片上都显示；PR 链接只放行 http(s)，新窗口打开并带 `noopener noreferrer`。会话在跑时整张卡做动效（顶部扫光、呼吸光晕、脉动小点），不加文字横幅。
+- 报告编号固定按这张卡的时间正序（最早 = 1）；排序开关只改显示顺序。Markdown 用宿主自带 `MarkdownText`，原始 HTML 不执行，插件不额外引入运行时依赖。
+- 「批准计划」要求 `plan-review` + 会话已跑完 + 卡片至少有一份报告，否则按钮禁用并说明原因。「标记完成」在 `review` 阶段一直可用，何时算完成由人判断。
+
 ## 3. 已经定死、不必再争的设计
 
 | 决定 | 理由 |
@@ -134,6 +147,7 @@
 | 交还只清 `takenOver`，不动会话 / 派发锁 / worktree，下一 tick 才派发 | 那些字段属于在跑的会话，清掉会重复派发或丢工作区；延后一个 tick 让引擎按自己的并发闸门接手 |
 | 交还原地幂等、不弹确认 | 重复交还是无意义的写；操作可逆且比接管更轻，二次确认只会打断 |
 | 取消卡片走软删（转 `canceled`）而非物理删除，`source` 占位防复活 | intake 按现有卡的 `source` 去重且不看状态；硬删自动卡会让它的 source 消失、下一轮被当新 issue 重建，还断掉 history / 审计链。留卡改状态既退出管线又不复活，后端与渲染都已支持 |
+| 会话入口走宿主 `uiWorkspace.openSession`，不猜 URL | DSH 会话选择是客户端状态，URL 始终是根路径、`?session=` 不生效；宿主服务是唯一真实导航口。`ctx.sessions.list` 是标题的唯一来源，卡片自己不存标题 |
 
 ## 4. 后续计划（按优先级）
 
@@ -231,6 +245,29 @@
 **增量（取消卡片，A 档软删）：** 用户反馈看不到删除卡片入口后，核对确认后端早有 `canceled` 终态与各阶段 human→canceled 边、渲染与审计，缺的只是 UI 按钮。按快车道小改在 CardActions 非终态末尾加「取消卡片」（`POST /cards/:id/transition {to:'canceled',actor:'human'}`），四字典新增 `cancelCard` / `toastCardCanceled` 两个 key，四处逐字节一致；后端与 worktree 一行未动。QA 新增独立用例文件，报告取消相关用例与相关文件全绿、自动卡取消不复活验实、业务 bug 0；按快车道未跑全量，数字以实际运行为准。能力见 §2.1，取舍见 §3。
 
 **增量（已取消折叠列表 + 任务卡统计修正）：** 用户反馈看不到「已取消列表」、且全取消后右上角仍显示 3 任务卡。核对发现页尾原本只有纯文本计数、toast 却说「保留在已取消列表」名不副实，统计遍历也未排除 canceled。快车道改 client.js 三处、零字典零后端：页尾纯文本改为 `details/summary` 折叠条（`summary` 显示 `${t('canceled')} · N`，展开 `canceledCards.map(renderCard)`，只读）；右上角统计减去 canceled；`cardCounts` 跳过 canceled，侧栏与标签页一起修正；`done` 仍计入、数量守恒成立。QA 新增独立用例文件，报告取消相关用例全绿、全取消归零与守恒验实、业务 bug 0，未跑全量；数字以实际运行为准。
+
+### TODO — 候选下一轮（**仅记录，未排期**）
+
+以下为用户提出、尚未授权开工的想法；先记在这里，由 PM/Design 出 PRD 与验收标准、Chief 排优先级。本节任何一条都不是开发指令。
+
+| # | 想法 | 要求的形态 | 验收标准 / 待定决策 |
+|---|---|---|---|
+| T1 | 全局设置参考单仓设置的 UI 风格优化 | 全局设置面板改用与单仓设置一致的视觉语言：带编号的分栏、标题 + 一行用途说明 + 语气色，卡片容器与间距对齐单仓面板，替换目前较松散的分组标题。 | 只动表现层；任何设置不跨作用域、不跨作用域写入；四份字典逐字节一致；两栏都要真机核对。 |
+| T2 | 单仓支持自定义注入 skill，替换默认加载的那几个 skill | 项目可填自己的 skill 正文，**替换**默认加载的技能，不是与默认技能并存。放在单仓设置新开的 **自定义 prompt 与 skill** 栏，位置 **04**；危险区顺延 **05**。每个自定义 skill 输入框上方给出对应默认 skill 的参考 GitHub 地址。 | 已定（用户拍板）：范围＝6 篇阶段技能（triage/plan/build/self-review/review/rereview，add-project 不进框）；留空＝未配置＝回退内置默认、触发点照常生效；一技能一框、整栏一次保存，每技能 8000 字符、系统指令 1000 字符；四份字典同步。注入正文按不可信数据处理：不得绕过阶段流转、授权闸门与沙箱。待定：self-review/rereview 的激活以 T4 会话级版为准；宿主技能注册/source 冲突处理不作为方案依赖（宿主语义仍待真机复核）。 |
+| T3 | 单仓注入自定义系统指令 | 同一个 04 栏允许填项目级系统指令，例如「使用中文生成阶段报告」。 | 已定：不作用于 `/factory add` 会话（该时项目尚未创建，add-project 不进框）。待定：与阶段技能、卡片正文注入的先后合并顺序；怎么验收。不得覆盖状态机、授权闸门、沙箱与「数据非指令」防御。 |
+| T4 | 独立评审会话（code review / pr review） | 看板仍是一个 `review` 阶段；阶段内分两个会话 + 人做 commit/PR：commit/PR 前由独立新会话审分支 diff（code review，读 `factory-self-review`）；PR 开后人审或另起独立会话审 PR（pr review，读 `factory-review`，回炉追加 `factory-rereview`）。不新增看板列、不加 verdict 硬闸、不自动 commit/自动开 PR；commit/push/开 PR/标完成全由人经现有 authorize 闸门完成。会话字段 `codeReviewSessionId` / `prReviewSessionId` 不得覆盖 `card.sessionId`；两类评审会话每次注入阻断项纪律（Blocking vs follow-up）。 | 已定（用户拍板）：会话级独立，不做阶段级（不加 self-review 列、不加 `selfReviewApprovedHead` 硬闸；上游 mastra 已把该阶段从默认 Work 看板移除）；自动 + 手动触发都要，若真机成本/噪音过大可收窄为手动。待定：pr review 由人审还是第二个独立会话；Dev 可行性复核未做，PRD 草稿 `.scratch/prd-t4-independent-review-session.md`，未排期。T2/T3 中 review 技能的激活以本条为准。 |
+
+自定义 skill 输入框上方要展示的参考地址（已在 `summerscar/dsh-plugins` 的 `main` 上核对；只读提示、不是可编辑值；内置技能变动时同步更新）：
+
+- `factory-triage` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-triage
+- `factory-plan` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-plan
+- `factory-build` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-build
+- `factory-self-review` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-self-review
+- `factory-review` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-review
+- `factory-rereview` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-rereview
+- `factory-add-project` — https://github.com/summerscar/dsh-plugins/tree/main/plugins/dsh-factory/skills/factory-add-project
+
+其中 `factory-add-project` 没有对应输入框（add-project 不在替换范围，见 T2 已定范围），该地址仅作为内置技能正文登记保留。
 
 | 缺口 | 影响 | 备注 |
 |---|---|---|
