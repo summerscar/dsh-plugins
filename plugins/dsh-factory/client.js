@@ -2874,6 +2874,20 @@ window.__ModuleLoader__.load({
         // Injected once into the host document; no build step, no host token edits.
         ensureStyles()
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-factory: dictionaries')
+        // Mirror the browser-resolved display language into the Host store:
+        // Host settings only carry an explicit preference, which is empty
+        // while the client follows the browser. Dispatched sessions read the
+        // mirrored value so replies and stage reports use the same language.
+        const mirrorLocale = () => {
+          const snap = typeof ctx.locale?.getSnapshot === 'function' ? ctx.locale.getSnapshot() : null
+          const active = snap && typeof snap.active === 'string' ? snap.active : ''
+          if (active === '') return
+          void callApi('POST', '/ui-locale', { locale: active }).catch(() => {})
+        }
+        ctx.effect(() => {
+          mirrorLocale()
+          return typeof ctx.locale?.subscribe === 'function' ? ctx.locale.subscribe(mirrorLocale) : undefined
+        }, 'dsh-factory: mirror display language')
         const t = ctx.locale.bind(NS)
         // Host navigation + live session catalog, declared in `inject` so the
         // Cordis fiber actually exposes them to this plugin.

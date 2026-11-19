@@ -26,12 +26,24 @@ import enLocale from './locale/en.json' with { type: 'json' }
 /** Max characters of a card body injected into sectionText (Dev recommendation). */
 export const BODY_CHAR_LIMIT = 3000
 
+/** ICU language names: any BCP 47 id gets a name without a maintained table. */
+const LANGUAGE_NAMES = (() => {
+  try { return new Intl.DisplayNames(['en'], { type: 'language' }) } catch { return null }
+})()
+
+/** BCP 47-style base language id, lowercased; '' for unsafe prompt input. */
+function normalizeLocale(value) {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase().replace(/_/g, '-') : ''
+  return /^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/.test(raw) ? raw.split('-')[0] : ''
+}
+
 /**
- * Read the host's UI locale without depending on one exact service shape.
- * Unknown/missing service means zh (the long-standing default), so a profile
- * that does not expose locale keeps working exactly as before.
+ * Read the user's display language. The Client mirrors its resolved active
+ * language into the factory store (the Host cannot see the browser-resolved
+ * value); an explicit Host `locale.preference` and older service shapes stay
+ * as fallbacks. Unknown/missing sources default to zh as before.
  */
-export function localeFromContext(ctx) {
+export function localeFromContext(ctx, store) {
   const read = (value) => {
     if (typeof value === 'function') {
       try { return read(value()) } catch { return '' }
@@ -39,6 +51,7 @@ export function localeFromContext(ctx) {
     return typeof value === 'string' ? value : ''
   }
   const candidates = [
+    () => read(store?.getUiLocaleSetting?.()),
     () => read(ctx?.locale?.current),
     () => read(ctx?.locale?.language),
     () => read(ctx?.locale?.locale),
@@ -50,14 +63,36 @@ export function localeFromContext(ctx) {
       const service = typeof ctx?.get === 'function' ? ctx.get('locale') : undefined
       return read(service?.current ?? service?.language ?? service?.locale ?? service)
     },
+    // DSH stores the user's display language in the Host user-settings
+    // document as `locale.preference` (a volatile field, projected as a plain
+    // string by settings.describe()). This is the authoritative Host-side
+    // source; the earlier shapes stay as fallbacks for older profiles.
+    () => {
+      const settings = typeof ctx?.get === 'function' ? ctx.get('settings') : undefined
+      if (settings === undefined || settings === null || typeof settings.describe !== 'function') return ''
+      const rows = settings.describe()
+      const row = Array.isArray(rows) ? rows.find((entry) => entry && entry.ns === 'locale') : undefined
+      return read(row?.value?.preference)
+    },
   ]
   for (const candidate of candidates) {
     let value = ''
     try { value = candidate() } catch { value = '' }
-    if (/^en([-_]|$)/i.test(value)) return 'en'
-    if (/^zh([-_]|$)/i.test(value)) return 'zh'
+    const id = normalizeLocale(value)
+    if (id !== '') return id
   }
   return 'zh'
+}
+
+/** One dynamic directive for every language — no per-language dictionary copy. */
+function languageDirective(locale) {
+  const id = normalizeLocale(locale) || 'en'
+  let name = id
+  try {
+    const resolved = LANGUAGE_NAMES?.of(id)
+    if (typeof resolved === 'string' && resolved !== '') name = resolved
+  } catch { name = id }
+  return `Reply in ${name} (${id}) and write every factory_report body in ${name}; keep code, commands, file paths and proper nouns as-is.`
 }
 
 /** Plain text only: never render a card body as Markdown or HTML in a prompt. */
@@ -199,9 +234,11 @@ export function buildSessionContext({ card, project, locale = 'zh' } = {}) {
     return Array.isArray(value) ? (value.length === 0 ? '—' : value.join(', ')) : String(value)
   }
   const bodyLines = bodyBlock(card, locale)
+  const languageLine = languageDirective(locale)
   const sectionText = [
     ...bodyLines,
     ...(bodyLines.length === 0 ? [] : ['']),
+    ...(languageLine === '' ? [] : [languageLine, '']),
     'You are working on exactly ONE factory card. Do not touch any other card.',
     'Advance through the agent-owned stages (\`triage\`, \`plan\`, \`build\`, \`review\`) continuously within this single session — finish the current stage and move the card yourself; do not end your turn expecting another session to take over. Only \`plan-review\`, \`done\` and \`canceled\` are stop-and-wait states where a human acts.',
     `- cardId: ${fields.cardId}`,
@@ -228,6 +265,7 @@ export function buildSessionContext({ card, project, locale = 'zh' } = {}) {
     `phase: ${fields.phase}`,
     `worktree: ${show(fields.worktreePath)}`,
     `repo: ${show(fields.repo)}${fields.branch ? ` (branch ${fields.branch})` : ''}`,
+    ...(languageLine === '' ? [] : [languageLine]),
     'Stages triage / plan / build / review continue in this same session — finish the current one and advance the card yourself; only plan-review / done / canceled wait for a human.',
     '',
     ...(fields.skill === null

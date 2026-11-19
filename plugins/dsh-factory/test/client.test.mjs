@@ -112,6 +112,13 @@ test('report panel sorts newest-first by default and persists the choice', () =>
   assert.match(code, /reports\.map\(\(\{ entry, ordinal \}\) =>/, 'display order never renumbers')
 })
 
+test('client mirrors the resolved display language to the host', () => {
+  const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
+  assert.match(code, /ctx\.locale\.getSnapshot\(\)/, 'reads the active client locale')
+  assert.match(code, /callApi\('POST', '\/ui-locale', \{ locale: active \}\)/, 'posts it to the host')
+  assert.match(code, /ctx\.locale\.subscribe\(mirrorLocale\)/, 'follows live language changes')
+})
+
 test('approve-plan waits for the session to finish', () => {
   const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
   assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast \}\)/)

@@ -100,6 +100,18 @@ test('state/revision is one cheap probe scoped to the selected project', () => {
   }
 })
 
+test('ui-locale round-trips and rejects invalid ids', () => {
+  const { api, cleanup } = setup()
+  try {
+    assert.equal(api({ method: 'GET', route: '/ui-locale' }).body.uiLocale, '')
+    assert.equal(api({ method: 'POST', route: '/ui-locale', body: { locale: 'fr-CA' } }).body.uiLocale, 'fr-CA')
+    assert.equal(api({ method: 'GET', route: '/ui-locale' }).body.uiLocale, 'fr-CA')
+    assert.equal(api({ method: 'POST', route: '/ui-locale', body: { locale: 'bad id' } }).status, 400)
+  } finally {
+    cleanup()
+  }
+})
+
 test('POST /projects/inspect is read-only, returns signals, and writes nothing', () => {
   const { store, api, cleanup } = setup()
   try {

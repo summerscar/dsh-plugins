@@ -172,7 +172,7 @@ export function apply(ctx, config = {}) {
   startEngine({
     ctx, store, status: runtime.engine,
     deps: defaultEngineDeps({
-      ctx,
+      ctx, store,
       ghPort: createGhPort(),
       ghPortFor: async (project) => createGhPort((await resolveIdentity(project)).git),
     }),
@@ -296,7 +296,7 @@ export function apply(ctx, config = {}) {
     if (method === 'POST' && dispatch !== null) {
       try {
         const port = createHostPort({ ctx })
-        const result = await dispatchCard({ store, cardId: decodeURIComponent(dispatch[1]), port, locale: localeFromContext(ctx) })
+        const result = await dispatchCard({ store, cardId: decodeURIComponent(dispatch[1]), port, locale: localeFromContext(ctx, store) })
         sendJson(res, 200, result)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -316,7 +316,7 @@ export function apply(ctx, config = {}) {
           store,
           cardId: decodeURIComponent(continuation[1]),
           port,
-          locale: localeFromContext(ctx),
+          locale: localeFromContext(ctx, store),
           message: typeof body.message === 'string' ? body.message : undefined,
         })
         sendJson(res, 200, result)

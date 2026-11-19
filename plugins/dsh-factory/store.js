@@ -444,6 +444,23 @@ export class FactoryStore {
     return { githubClientId: trimmed }
   }
 
+  /** Browser-resolved display language mirrored by the Client, or '' when unset. */
+  getUiLocaleSetting() {
+    const raw = this.state.settings?.uiLocale
+    return typeof raw === 'string' && raw !== '' ? raw : ''
+  }
+
+  /** Accept any BCP 47-style id (language packs may add new ones); '' clears it. */
+  updateUiLocale(value) {
+    const raw = typeof value === 'string' ? value.trim() : ''
+    if (raw !== '' && !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(raw)) {
+      throw new Error('uiLocale 必须是 BCP 47 风格的语言标识或空字符串')
+    }
+    this.state.settings = { ...(this.state.settings ?? {}), uiLocale: raw }
+    this._commit()
+    return { uiLocale: raw }
+  }
+
   // ---- projects -----------------------------------------------------------
 
   listProjects() {

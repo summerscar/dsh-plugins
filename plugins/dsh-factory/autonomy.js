@@ -456,13 +456,13 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
  * that one card (caught by runTick), never the whole tick. Injectable `deps` let
  * QA exercise the same runTick with a fake store and fake host, offline.
  */
-export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = {}) {
+export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor } = {}) {
   return {
     intake: intakeIssues,
     // Per-project gh port from the identity ladder (PGH-9). The host supplies it
     // via index.js; when absent, runTick falls back to the single `ghPort` above.
     ...(typeof ghPortFor === 'function' ? { ghPortFor } : {}),
-    dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx) }),
+    dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
     // Machine plan-approval: same store gate as a human button, write-before-
     // receipt prechecked, actor=autoRule. Ports left default (the approval value
     // schema is this repo's own, not a host tool's output — no host validator needed).
@@ -470,7 +470,7 @@ export function defaultEngineDeps({ ctx, ghPort = createGhPort(), ghPortFor } = 
     // Machine approval's second half: continue the same session so build runs. Same
     // lazy host port as dispatch, so a profile without `agents` fails only this
     // card (caught by runTick), never the whole tick.
-    continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx) }),
+    continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
     isSessionActive: (sessionId) => {
       const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
       if (agents === undefined || agents === null || typeof agents.get !== 'function') return false

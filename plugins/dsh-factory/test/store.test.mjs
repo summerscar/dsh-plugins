@@ -98,6 +98,16 @@ test('a created PR keeps the card in Review; Done is still a separate human step
   assert.equal(store.transitionCard(card.id, 'done', 'human').status, 'done')
 }))
 
+test('uiLocale persists a BCP 47 id and can be cleared', () => withStore((file) => {
+  const store = new FactoryStore({ file })
+  assert.equal(store.getUiLocaleSetting(), '')
+  assert.equal(store.updateUiLocale('fr').uiLocale, 'fr')
+  assert.equal(new FactoryStore({ file }).getUiLocaleSetting(), 'fr', 'survives reload')
+  assert.throws(() => store.updateUiLocale('bad id'), /BCP 47/)
+  assert.equal(store.updateUiLocale('').uiLocale, '')
+  assert.equal(store.getUiLocaleSetting(), '')
+}))
+
 test('a project under the data root is accepted with a warning; defaults are sane (E4/F1)', () => withTempDataRoot((dataRoot) => withStore((file) => {
   const store = new FactoryStore({ file })
   // The data root is INJECTED, not borrowed: a literal /data/dsh would pass on this

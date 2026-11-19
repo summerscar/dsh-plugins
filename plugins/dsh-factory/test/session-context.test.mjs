@@ -48,6 +48,27 @@ test('buildSessionContext carries the full field set and puts worktree + id in t
   }
 })
 
+test('session context tells the agent which language to reply and report in', () => {
+  const { store, project, card, cleanup } = setup()
+  try {
+    const fresh = store.getCard(card.id)
+    const zh = buildSessionContext({ card: fresh, project, locale: 'zh' })
+    const en = buildSessionContext({ card: fresh, project, locale: 'en' })
+    assert.match(zh.sectionText, /Chinese \(zh\)[\s\S]*factory_report/)
+    assert.match(zh.firstMessage, /Chinese \(zh\)[\s\S]*factory_report/)
+    assert.match(en.sectionText, /English \(en\)[\s\S]*factory_report/)
+    assert.match(en.firstMessage, /English \(en\)[\s\S]*factory_report/)
+    const fr = buildSessionContext({ card: fresh, project, locale: 'fr' })
+    assert.match(fr.sectionText, /French \(fr\)[\s\S]*factory_report/)
+    const ko = buildSessionContext({ card: fresh, project, locale: 'ko' })
+    assert.match(ko.sectionText, /Korean \(ko\)[\s\S]*factory_report/, 'new languages need no table entry')
+    // Ahead of the card fields, so the instruction is not lost in the detail block.
+    assert.ok(zh.sectionText.indexOf('Chinese (zh)') < zh.sectionText.indexOf('- cardId:'))
+  } finally {
+    cleanup()
+  }
+})
+
 test('attachSessionContext registers variables + a section that read the store live', () => {
   const { store, card, cleanup } = setup()
   try {

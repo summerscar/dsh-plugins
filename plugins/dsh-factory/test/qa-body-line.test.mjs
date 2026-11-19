@@ -311,8 +311,14 @@ test('B2 localeFromContext parses common host shapes and defaults to zh', () => 
   assert.equal(localeFromContext({ i18n: { locale: 'zh-CN' } }), 'zh')
   assert.equal(localeFromContext({ config: { get: (k) => (k === 'locale' ? 'en' : '') } }), 'en')
   assert.equal(localeFromContext({ get: (name) => (name === 'locale' ? { current: 'en' } : undefined) }), 'en')
+  assert.equal(localeFromContext({ get: (name) => (name === 'settings' ? { describe: () => [{ ns: 'locale', value: { preference: 'en-US' } }] } : undefined) }), 'en', 'host locale.preference wins')
+  assert.equal(localeFromContext({}, { getUiLocaleSetting: () => 'fr' }), 'fr', 'client-mirrored active locale wins')
+  assert.equal(localeFromContext({ locale: { current: 'en' } }, { getUiLocaleSetting: () => 'zh-CN' }), 'zh', 'mirrored locale outranks host preference')
+  assert.equal(localeFromContext({ get: (name) => (name === 'settings' ? { describe: () => [{ ns: 'locale', value: { preference: 'en' } }] } : undefined) }, { getUiLocaleSetting: () => '' }), 'en')
+  assert.equal(localeFromContext({ get: (name) => (name === 'settings' ? { describe: () => [{ ns: 'ui-chat', value: { preference: 'en' } }] } : undefined) }), 'zh', 'other namespaces do not count')
   assert.equal(localeFromContext({}), 'zh')
-  assert.equal(localeFromContext({ locale: { current: 'fr' } }), 'zh', 'unknown locale falls back to zh')
+  assert.equal(localeFromContext({ locale: { current: 'fr' } }), 'fr', 'known non-zh/en locale is preserved')
+  assert.equal(localeFromContext({ locale: { current: '??' } }), 'zh', 'invalid locale falls back to zh')
 })
 
 test('B2 dispatch.js / index.js / autonomy.js pass locale from host ctx', () => {
@@ -321,10 +327,10 @@ test('B2 dispatch.js / index.js / autonomy.js pass locale from host ctx', () => 
   const autonomySrc = readFileSync(join(packageRoot, 'autonomy.js'), 'utf8')
   assert.match(dispatchSrc, /function makeAgentSetup\(\{ store, cardId, locale = 'zh' \}\)/)
   assert.match(dispatchSrc, /attachSessionContext\(\{ agentCtx, store, cardId, locale \}\)/)
-  assert.match(indexSrc, /locale: localeFromContext\(ctx\)/)
-  assert.match(autonomySrc, /locale: localeFromContext\(ctx\)/)
-  const idxMatches = indexSrc.match(/locale: localeFromContext\(ctx\)/g) || []
-  const autMatches = autonomySrc.match(/locale: localeFromContext\(ctx\)/g) || []
+  assert.match(indexSrc, /locale: localeFromContext\(ctx, store\)/)
+  assert.match(autonomySrc, /locale: localeFromContext\(ctx, store\)/)
+  const idxMatches = indexSrc.match(/locale: localeFromContext\(ctx, store\)/g) || []
+  const autMatches = autonomySrc.match(/locale: localeFromContext\(ctx, store\)/g) || []
   assert.ok(idxMatches.length >= 2, 'index.js dispatch + continue entries pass locale')
   assert.ok(autMatches.length >= 2, 'autonomy.js dispatch + continue entries pass locale')
 })

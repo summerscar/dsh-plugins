@@ -126,6 +126,13 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         return ok({ revision: panelRevision(store, engineConfig, runtime, query.get('projectId') ?? undefined) })
       }
 
+      // The Client mirrors the browser-resolved display language here; the
+      // Host cannot see that value from its own settings alone.
+      if (seg.length === 1 && seg[0] === 'ui-locale') {
+        if (method === 'GET') return ok({ uiLocale: store.getUiLocaleSetting() })
+        if (method === 'POST') return ok(store.updateUiLocale(body.locale))
+      }
+
       if (method === 'GET' && seg.length === 1 && seg[0] === 'settings') {
         return ok({
           settings: {
