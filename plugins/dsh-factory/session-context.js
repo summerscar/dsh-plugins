@@ -18,6 +18,7 @@ import { join } from 'node:path'
 
 import { defaultSkillsDir, parseSkillMarkdown } from './skills.js'
 import { nextStatuses } from './state.js'
+import { isFullSha, reviewedHeadFor } from './verdict.js'
 // The session prompt must use the SAME copy as the UI; read the packaged
 // dictionaries instead of keeping a second, drifting literal copy here.
 import zhLocale from './locale/zh.json' with { type: 'json' }
@@ -207,7 +208,7 @@ function repoOf(card, project) {
  * (cardId / title / phase / nextPhases / repo / branch / worktreePath /
  * planStatus / prUrl), plus the rendered `sectionText` and `firstMessage`.
  */
-export function buildSessionContext({ card, project, locale = 'zh' } = {}) {
+export function buildSessionContext({ card, project, locale = 'zh', reviewMode = false, review = {} } = {}) {
   if (card === undefined || card === null) throw new Error('buildSessionContext needs a card')
   const fields = {
     cardId: card.id,
@@ -235,6 +236,64 @@ export function buildSessionContext({ card, project, locale = 'zh' } = {}) {
   }
   const bodyLines = bodyBlock(card, locale)
   const languageLine = languageDirective(locale)
+
+  // PRD §5.2: a REVIEW session is a different role. It receives the review
+  // fields and NEVER the phase-advance / move-card instructions that drive a
+  // builder session — those directly contradict factory-review's "You cannot
+  // move the card". reviewMode is explicit so P2 can wire it to its dedicated
+  // review dispatch; the builder path stays byte-for-byte unchanged.
+  if (reviewMode === true) {
+    if (card.status !== 'review') {
+      throw new Error(`评审会话上下文要求卡片处于 review 阶段，当前为 ${card.status ?? '未知'}；拒绝降级为普通会话`)
+    }
+    const head = review.reviewedHead ?? reviewedHeadFor({
+      worktreePath: card.worktreePath,
+      readHead: review.readHead,
+    })
+    if (!isFullSha(head)) {
+      throw new Error('评审会话上下文缺少完整的 reviewedHead（需要 git rev-parse HEAD 的 40/64 位 SHA）；拒绝在无 head 的会话中评审')
+    }
+    const sandboxMode = typeof review.readSandboxMode === 'function' ? review.readSandboxMode() : review.sandboxMode
+    if (sandboxMode !== 'read-only') {
+      throw new Error(`评审会话上下文要求只读沙箱，当前为 ${sandboxMode ?? '未知'}；拒绝以可写权限评审`)
+    }
+    fields.reviewedHead = head
+    fields.previousVerdict = card.reviewVerdict ?? null
+    fields.commitSha = card.commitSha ?? null
+    fields.nextPhases = []
+    fields.skill = skillForPhase('review')
+    const previous = fields.previousVerdict === null ? '—' : JSON.stringify(fields.previousVerdict)
+    const sectionText = [
+      ...bodyLines,
+      ...(bodyLines.length === 0 ? [] : ['']),
+      ...(languageLine === '' ? [] : [languageLine, '']),
+      'You are an INDEPENDENT REVIEW session on exactly ONE factory card. You are read-only: never move the card, authorize git actions, commit, push or open a PR. The human decides after reading your verdict.',
+      `- cardId: ${fields.cardId}`,
+      `- title: ${fields.title}`,
+      `- phase: ${fields.phase}`,
+      `- repo: ${show(fields.repo)} (local repository path)`,
+      `- branch: ${show(fields.branch)}`,
+      `- worktreePath: ${show(fields.worktreePath)}`,
+      `- prUrl: ${show(fields.prUrl)}`,
+      `- reviewedHead: ${fields.reviewedHead}`,
+      `- previousVerdict: ${previous}`,
+      `- commitSha: ${show(fields.commitSha)}`,
+      `Read the \`factory-review\` skill below first. Report with \`factory_report\` using its structured verdict fields (source, verdict, blocking, followUps, checks, reviewerSessionId); reviewedHead is computed by the factory from git and must NOT be supplied by you.`,
+    ].join('\n')
+    const firstMessage = [
+      `Factory review ${fields.cardId}: ${fields.title}`,
+      `phase: ${fields.phase}`,
+      `worktree: ${show(fields.worktreePath)}`,
+      `repo: ${show(fields.repo)}${fields.branch ? ` (branch ${fields.branch})` : ''}`,
+      ...(languageLine === '' ? [] : [languageLine]),
+      `reviewedHead: ${fields.reviewedHead}`,
+      `previousVerdict: ${previous}`,
+      `commitSha: ${show(fields.commitSha)}`,
+      'This is a read-only review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the factory-review skill and record a structured verdict with factory_report.',
+    ].join('\n')
+    return { ...fields, sectionText, firstMessage }
+  }
+
   const sectionText = [
     ...bodyLines,
     ...(bodyLines.length === 0 ? [] : ['']),
@@ -288,6 +347,9 @@ const VARIABLE_FIELDS = {
   factory_branch: (built) => built.branch ?? '',
   factory_worktree: (built) => built.worktreePath ?? '',
   factory_pr_url: (built) => built.prUrl ?? '',
+  factory_reviewed_head: (built) => built.reviewedHead ?? '',
+  factory_previous_verdict: (built) => built.previousVerdict === null || built.previousVerdict === undefined ? '' : JSON.stringify(built.previousVerdict),
+  factory_commit_sha: (built) => built.commitSha ?? '',
 }
 
 /** Section order fallback if the host cannot allocate one; distinct name avoids clash. */
@@ -300,7 +362,7 @@ const DEFAULT_ORDER = 60
  *
  * @param {{ agentCtx: object, store: import('./store.js').FactoryStore, cardId: string }} args
  */
-export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill, locale = 'zh' } = {}) {
+export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill, locale = 'zh', reviewMode = false, review = {} } = {}) {
   const systemPrompt = agentCtx?.systemPrompt
   if (systemPrompt === undefined || systemPrompt === null) {
     throw new Error('attachSessionContext needs an agent context exposing systemPrompt')
@@ -318,8 +380,13 @@ export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readS
   const current = () => {
     const card = store.getCard(cardId)
     if (card === undefined || card === null) return null
-    return buildSessionContext({ card, project: store.getProject(card.projectId), locale })
+    return buildSessionContext({ card, project: store.getProject(card.projectId), locale, reviewMode, review })
   }
+
+  // Review mode fails CLOSED at attach time: a missing head or a writable
+  // sandbox must abort the dispatch here, not degrade into a builder-style
+  // session that can move the card. The host setup awaits this call.
+  if (reviewMode === true) current()
 
   const disposers = []
 

@@ -42,6 +42,7 @@ export { sandboxModeForWorkMode, readAutoReviewPluginState } from './dispatch.js
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
 export { buildSessionContext, attachSessionContext } from './session-context.js'
+export * as verdict from './verdict.js'
 export * as state from './state.js'
 export * as worktree from './worktree.js'
 export * as identity from './identity.js'
@@ -54,7 +55,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.1'
+export const BUILD = 'factory-2026-11-20.2'
 
 export const name = 'dsh-factory'
 

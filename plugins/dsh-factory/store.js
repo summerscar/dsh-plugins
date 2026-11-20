@@ -25,6 +25,7 @@ import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus } from './state.js
 import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot, expandHome } from './worktree.js'
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 import { detectGithubRepo, normalizeGithubRepo } from './git-exec.js'
+import { normalizeVerdict } from './verdict.js'
 
 export const SCHEMA_VERSION = 2
 
@@ -734,6 +735,9 @@ export class FactoryStore {
       prUrl: null,
       commitSha: null,
       commitMessage: null,
+      // Latest structured review verdict (P1). null until a reviewer records
+      // one; history keeps every verdict for audit / re-review.
+      reviewVerdict: null,
       // Single-slot gate: set by a Review-time human authorization, consumed by
       // the matching git action. Its presence is what makes a git write legal.
       pendingAuthorization: null,
@@ -845,6 +849,37 @@ export class FactoryStore {
     const count = card.history.filter((entry) => entry.type === 'report').length
     this._commit()
     return { count }
+  }
+
+  /**
+   * P1: write a free-text report AND the structured verdict in one commit.
+   *
+   * Idempotency is by the backend-computed `reviewedHead`: the first verdict for
+   * a head becomes the card's machine-readable mirror (`card.reviewVerdict`)
+   * and a structured history entry. A repeated submission for the SAME head
+   * appends the human-readable report but creates NO new verdict — the mirror
+   * and the verdict history stay unchanged. A later head overwrites the mirror
+   * while every earlier history entry is kept for re-review and audit (§5.3).
+   *
+   * A dirty worktree does not change reviewedHead: it names the committed tree
+   * that was reviewed, so unsaved edits cannot be laundered into an approval.
+   */
+  appendReportWithVerdict(id, report, verdict, actor = 'agent') {
+    const card = this._card(id)
+    const body = reqString(report, 'report')
+    const canonical = normalizeVerdict(verdict, { reviewedHead: verdict?.reviewedHead })
+    const at = new Date().toISOString()
+    const previous = card.reviewVerdict ?? null
+    const idempotent = previous !== null && previous.reviewedHead === canonical.reviewedHead
+
+    card.history.push({ type: 'report', actor, body, at })
+    if (!idempotent) {
+      card.history.push({ type: 'verdict', actor, ...canonical, at })
+      card.reviewVerdict = { ...canonical, recordedBy: actor, recordedAt: at }
+    }
+    const count = card.history.filter((entry) => entry.type === 'report').length
+    this._commit()
+    return { count, idempotent, verdict: card.reviewVerdict }
   }
 
   /**

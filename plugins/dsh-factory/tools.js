@@ -17,6 +17,7 @@ import { STATUSES } from './state.js'
 import { assertRepoRoot, inspectRepo } from './project-proposal.js'
 import { defaultLsFilesPort, dropTrackedCopyFiles } from './worktree-setup.js'
 import { precheckReceipt } from './receipt.js'
+import { normalizeVerdict, reviewedHeadFor, VERDICT_SOURCES, VERDICT_VALUES } from './verdict.js'
 
 const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review', 'canceled']
 const ATTENTION_STATUSES = ['inbox', 'plan-review', 'review']
@@ -39,7 +40,7 @@ const CARD_SCHEMA = {
 const cardsArray = () => ({ type: 'array', items: CARD_SCHEMA })
 const cardsListSchema = (key) => ({ type: 'object', additionalProperties: false, properties: { [key]: cardsArray() } })
 
-export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort(), receiptPorts = {} } = {}) {
+export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort(), receiptPorts = {}, readHead } = {}) {
   if (store === undefined || store === null) throw new Error('factoryToolSpecs needs a store')
 
   // Per-session, per-card, per-target counter for no-op transitions. An agent
@@ -57,8 +58,14 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
     render: (args, value) => textBlock(value.notice ?? `Card ${value.id} is now ${value.status}.`),
   }
   const REPORT_OUTPUT = {
-    schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, reports: { type: 'integer' } } },
-    render: (args, value) => textBlock(`Recorded a report on ${value.id} (${value.reports} total).`),
+    schema: {
+      type: 'object', additionalProperties: false,
+      properties: { id: { type: 'string' }, reports: { type: 'integer' }, verdict: { type: 'string', enum: [...VERDICT_VALUES] } },
+    },
+    render: (args, value) => textBlock([
+      `Recorded a report on ${value.id} (${value.reports} total).`,
+      ...(value.verdict ? [`Verdict ${value.verdict} recorded.`] : []),
+    ].join('\n')),
   }
   const CREATE_OUTPUT = {
     schema: {
@@ -139,19 +146,69 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
     },
     {
       name: 'factory_report',
-      description: 'Write a progress or result report back onto a card, so the board and the human see what the session did.',
+      description: 'Write a progress or result report back onto a card, so the board and the human see what the session did. Reviewers pass the structured verdict fields as well; reviewedHead is always computed from git by the backend, never from the arguments.',
       parameters: {
         cardId: { type: 'string', required: true, description: 'Card id.' },
-        report: { type: 'string', required: true, description: 'The report text.' },
+        report: { type: 'string', required: true, description: 'The human-readable report text.' },
+        source: { type: 'string', enum: [...VERDICT_SOURCES], description: 'Verdict source: review for the first pass, rereview for a later pass. Required together with the other verdict fields.' },
+        verdict: { type: 'string', enum: [...VERDICT_VALUES], description: 'Verdict value. Required together with the other verdict fields.' },
+        blocking: {
+          type: 'array', description: 'Blocking findings; empty array when none. Required for a structured verdict.',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: {
+              file: { type: 'string', required: true }, line: { type: 'integer', required: true }, reason: { type: 'string', required: true },
+            },
+          },
+        },
+        followUps: {
+          type: 'array', description: 'Non-blocking follow-ups; empty array when none. Required for a structured verdict.',
+          items: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', required: true } } },
+        },
+        checks: {
+          type: 'array', description: 'Checks actually run (name/result/tests). Required for a structured verdict.',
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: {
+              name: { type: 'string', required: true }, result: { type: 'string', required: true }, tests: { type: 'string' },
+            },
+          },
+        },
+        reviewerSessionId: { type: 'string', description: 'Review session id; the host execution context is preferred when available.' },
       },
       output: REPORT_OUTPUT,
-      execute: async (args) => {
+      execute: async (args, exec) => {
+        const verdictKeys = ['source', 'verdict', 'blocking', 'followUps', 'checks', 'reviewerSessionId']
+        const hasVerdict = verdictKeys.some((key) => Object.prototype.hasOwnProperty.call(args ?? {}, key))
+        let canonical = null
+        if (hasVerdict) {
+          // The ONLY head source is git in the card's worktree. A model-supplied
+          // reviewedHead is deliberately not in the parameter schema and is
+          // ignored here even if an old caller passes it as an extra key.
+          const card = store.getCard(args.cardId)
+          if (card === undefined || card === null) throw new Error(`卡片不存在：${args.cardId}`)
+          const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead })
+          const fromExec = exec?.agent?.session?.id ?? exec?.agent?.id
+          canonical = normalizeVerdict({
+            cardId: args.cardId,
+            source: args.source,
+            verdict: args.verdict,
+            blocking: args.blocking,
+            followUps: args.followUps,
+            checks: args.checks,
+            reviewerSessionId: args.reviewerSessionId,
+          }, { reviewedHead, reviewerSessionId: typeof fromExec === 'string' && fromExec !== '' ? fromExec : undefined })
+        }
         // Precheck a same-shape probe BEFORE the write: `reports` is an integer
-        // supplied by the store at write time, so 0 stands in for it — the
-        // schema and render only depend on its type, not its exact value.
-        precheck('factory_report', REPORT_OUTPUT, args, { id: args.cardId, reports: 0 })
-        const { count } = store.appendReport(args.cardId, args.report, 'agent')
-        return { id: args.cardId, reports: count }
+        // supplied by the store at write time, so 0 stands in for it. Include
+        // the verdict branch when present so the stricter shape is checked too.
+        precheck('factory_report', REPORT_OUTPUT, args, {
+          id: args.cardId, reports: 0, ...(canonical ? { verdict: canonical.verdict } : {}),
+        })
+        const result = canonical
+          ? store.appendReportWithVerdict(args.cardId, args.report, canonical, 'agent')
+          : store.appendReport(args.cardId, args.report, 'agent')
+        return { id: args.cardId, reports: result.count, ...(canonical ? { verdict: canonical.verdict } : {}) }
       },
     },
     {
