@@ -152,6 +152,15 @@ window.__ModuleLoader__.load({
       actReturnToInbox: "退回 Inbox", notePromptReturnInbox: "说明缺少的信息，卡片会回到 Inbox 等你补充。",
       actResupply: "补充信息并重新派发", notePromptResupply: "补充信息（必填）：",
       actCommitExisting: "确认提交（回炉）", actPushExisting: "推送更新草稿 PR",
+      axisTitle: "自动化程度", axisHint: "越往右机器走得越远；自动化停在哪一步见下方。",
+      currentLevel: "当前：L{level}", ariaLevel: "L{n}，五档中的第 {ordinal} 档",
+      autoEndLabel: "自动化终点", machineLabel: "机器", youLabel: "你",
+      lvL0: "L0", lvL1: "L1", lvL2: "L2", lvL3: "L3", lvL4: "L4",
+      leL0End: "无：不拉 issue、不建卡", leL0M: "什么都不自动做。", leL0Y: "自己建卡、派发、批准计划、确认提交与 PR。",
+      leL1End: "Inbox 建卡", leL1M: "自动拉取 issue 建卡，不自动派发。", leL1Y: "手动派发、批准计划，之后确认提交与 PR。",
+      leL2End: "待批准计划", leL2M: "在 L1 基础上自动派发给 AI 并出计划。", leL2Y: "批准计划，之后到评审仍需你。",
+      leL3End: "待评审", leL3M: "在 L2 基础上自动批准计划并实现，停在待评审；不碰 git。", leL3Y: "在待评审确认提交、开 PR 并标完成。",
+      leL4End: "草稿 PR", leL4M: "在 L3 基础上，评审无阻断项后自动提交、推送并开草稿 PR。", leL4Y: "只做合并与标完成；不会自动合并。",
       setupTitle: "worktree 准备",
       setupPurpose: "每次派生新 worktree 时：从项目根复制指定本地文件，然后运行准备命令。",
       setupCopyLabel: "要复制的本地文件",
@@ -461,6 +470,15 @@ window.__ModuleLoader__.load({
       actReturnToInbox: "Return to inbox", notePromptReturnInbox: "Describe the missing information; the card returns to Inbox for you to supply it.",
       actResupply: "Add info and redispatch", notePromptResupply: "Additional information (required):",
       actCommitExisting: "Confirm commit (rework)", actPushExisting: "Push update to draft PR",
+      axisTitle: "Automation level", axisHint: "Further right, the machine goes further; see below for where it stops.",
+      currentLevel: "Current: L{level}", ariaLevel: "L{n}, level {ordinal} of 5",
+      autoEndLabel: "Stops at", machineLabel: "Machine", youLabel: "You",
+      lvL0: "L0", lvL1: "L1", lvL2: "L2", lvL3: "L3", lvL4: "L4",
+      leL0End: "None: no discovery, no cards", leL0M: "Nothing runs automatically.", leL0Y: "Create cards, dispatch, approve plans, commit and open PRs yourself.",
+      leL1End: "Inbox (cards created)", leL1M: "Pulls issues into cards automatically; does not dispatch them.", leL1Y: "Dispatch by hand, approve the plan, then commit and open the PR.",
+      leL2End: "Plan review", leL2M: "On top of L1, dispatches to the AI and drafts a plan.", leL2Y: "Approve the plan; you still decide at Review.",
+      leL3End: "Review", leL3M: "On top of L2, approves plans and builds, stopping at Review; no git writes.", leL3Y: "At Review: confirm the commit, open the PR and mark done.",
+      leL4End: "Draft PR", leL4M: "On top of L3, commits, pushes and opens a draft PR once review has no blocking findings.", leL4Y: "Only merge and mark done; never auto-merged.",
       setupTitle: "Worktree setup",
       setupPurpose: "On each new worktree: copy selected local files from the project root, then run the setup command.",
       setupCopyLabel: "Local files to copy",
@@ -998,7 +1016,7 @@ window.__ModuleLoader__.load({
         add(t('actReturnToPlan'), async () => {
           const note = askNote(t('notePromptReturnPlan'))
           if (note === null) return
-          await callApi('POST', `/cards/${card.id}/return-to-plan`, { note, takeOver: false })
+          await callApi('POST', `/cards/${card.id}/return-to-plan`, { note })
         }, working ? { disabled: true } : {})
       }
       // Take-over pulls one card out of the engine's control, persisted on the
@@ -1264,12 +1282,20 @@ window.__ModuleLoader__.load({
     // The FIRST hard line: the status badge is derived ONLY from the `autonomy`
     // field, never from autoDispatch. A switch left on at manual/machine-approve
     // is never stored; reading it would misreport the engine's real behavior.
-    const LEVELS = ['manual', 'you-approve', 'machine-approve']
-    const LEVEL_META = {
-      manual: { label: 'lvManual', badge: 'badgeManual', m: 'leManualM', y: 'leManualY', wash: T.grayWash, ink: T.gray },
-      'you-approve': { label: 'lvYouApprove', badge: 'badgeYouApprove', m: 'leYouApproveM', y: 'leYouApproveY', wash: T.blueWash, ink: T.blue },
-      'machine-approve': { label: 'lvMachineApprove', badge: 'badgeMachineApprove', m: 'leMachineApproveM', y: 'leMachineApproveY', wash: T.orangeWash, ink: T.orange },
-    }
+    // P3: five display levels over four stored semantic tiers. L1/L2 differ
+    // only by autoDispatch; L4 is a separate stored tier with code-gated writes.
+    const LEVEL_TIERS = ['manual', 'you-approve', 'you-approve', 'machine-approve', 'auto-delivery']
+    const LEVEL_META = [
+      { label: 'lvL0', badge: 'badgeManual', wash: T.grayWash, ink: T.gray },
+      { label: 'lvL1', badge: 'badgeYouApprove', wash: T.blueWash, ink: T.blue },
+      { label: 'lvL2', badge: 'badgeYouApprove', wash: T.blueWash, ink: T.blue },
+      { label: 'lvL3', badge: 'badgeMachineApprove', wash: T.orangeWash, ink: T.orange },
+      { label: 'lvL4', badge: 'lvL4', wash: T.dangerWash, ink: T.dangerInk },
+    ]
+    const storedToLevel = (p) => p?.autonomy === 'machine-approve' ? 3
+      : p?.autonomy === 'auto-delivery' ? 4
+        : p?.autonomy === 'you-approve' ? (p?.autoDispatch === true ? 2 : 1) : 0
+    const levelToStored = (n) => ({ autonomy: LEVEL_TIERS[n], autoDispatch: n === 2 })
 
     function Modal({ title, tone, children, onCancel, onConfirm, confirmLabel, confirmTone, busy, confirmDisabled, t }) {
       return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(18,24,32,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 18 } }, [
@@ -1295,133 +1321,102 @@ window.__ModuleLoader__.load({
     }
 
     function AutonomySection({ project, t, onSaved, onModal }) {
-      // `savedLevel` is what the backend stored; `level` is the pending choice.
-      // Clicking a segment changes ONLY the pending value + explainer card; the
-      // badge keeps showing the saved level until Save commits.
-      const savedLevel = LEVELS.includes(project?.autonomy) ? project.autonomy : 'manual'
-      const savedAutoDispatch = savedLevel === 'you-approve' && project?.autoDispatch === true
-      const [level, setLevel] = useState(savedLevel)
-      const [autoDispatch, setAutoDispatch] = useState(savedAutoDispatch)
-      const [machineConfirm, setMachineConfirm] = useState(false)
+      // P3: the slider's pending value is NEVER written until Save. The badge
+      // reads only the saved tier; L3/L4 upgrades require a confirm as well as
+      // Save (two steps), and downgrades never confirm.
+      const saved = storedToLevel(project)
+      const [pending, setPending] = useState(saved)
+      const [confirmed, setConfirmed] = useState(saved)
+      const [confirmTarget, setConfirmTarget] = useState(null)
       const [saving, setSaving] = useState(false)
       const [message, setMessage] = useState('')
       const [error, setError] = useState('')
+      const dirty = pending !== saved
 
-      // Switching projects remounts this component (key=project.id at the call
-      // site), so these useState initialisers re-run on the newly saved values.
-      const dirty = level !== savedLevel || (level === 'you-approve' && autoDispatch !== savedAutoDispatch)
-
-      const chooseLevel = (next) => {
-        if (next === 'machine-approve' && level !== 'machine-approve') { setMachineConfirm(true); return }
-        setLevel(next)
+      const commitTo = (n) => { setConfirmed(n); setPending(n) }
+      const moveTo = (n) => {
+        if (!Number.isInteger(n) || n < 0 || n > 4) return
+        setPending(n)
+        if (n > saved && n >= 3) { setConfirmTarget(n); return }
+        commitTo(n)
       }
-      // The machine-approve confirmation commits immediately; cancelling leaves
-      // the pending level and switch untouched (no hidden mutation).
-      const confirmMachine = () => {
-        setMachineConfirm(false)
-        setLevel('machine-approve')
-        setAutoDispatch(false)
-        return save('machine-approve', false)
+      const onRangeChange = (event) => setPending(Number(event?.target?.value))
+      const onRangeCommit = () => moveTo(pending)
+      const confirmUpgrade = () => {
+        const n = confirmTarget
+        setConfirmTarget(null)
+        if (n !== null) commitTo(n)
       }
-      // Render the confirm dialog at the page root: inside the transformed drawer
-      // a fixed overlay would be positioned relative to the drawer, not the page.
       useEffect(() => {
         if (!onModal) return undefined
-        if (!machineConfirm) { onModal(null); return undefined }
+        if (confirmTarget === null) { onModal(null); return undefined }
+        const n = confirmTarget
         onModal(h(Modal, {
-          key: 'machineConfirm', title: t('l2Title'), confirmLabel: t('enableL2'), busy: false, t,
-          onCancel: () => setMachineConfirm(false), onConfirm: confirmMachine,
-        }, t('l2Body')))
+          key: 'levelConfirm', title: t('axisTitle'), confirmLabel: t('enableL2'), busy: false, t,
+          onCancel: () => { setConfirmTarget(null); setPending(confirmed) }, onConfirm: confirmUpgrade,
+        }, h('div', null, [
+          h('div', { key: 'm', style: { fontSize: 13 } }, t(`leL${n}M`)),
+          h('div', { key: 'y', style: { fontSize: 12, color: T.mutedInk } }, t(`leL${n}Y`)),
+        ])))
         return () => onModal(null)
-      }, [machineConfirm, level, autoDispatch, saving, message, error, onModal, t])
+      }, [confirmTarget, confirmed, onModal, t])
 
-      const save = async (overrideLevel, overrideDispatch) => {
-        const nextLevel = overrideLevel || level
-        const nextDispatch = nextLevel === 'you-approve'
-          ? (overrideDispatch === undefined ? autoDispatch : overrideDispatch)
-          : false
+      const save = async () => {
+        const next = levelToStored(confirmed)
         setSaving(true); setError(''); setMessage('')
         try {
-          const data = await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, {
-            autonomy: nextLevel, autoDispatch: nextDispatch,
-          })
-          // Adopt the ACTUAL stored values from the backend, never the form's
-          // originals, so badge, pending choice and switch converge.
-          const p = data.project
-          setLevel(p.autonomy)
-          setAutoDispatch(p.autonomy === 'you-approve' && p.autoDispatch === true)
+          const data = await callApi('PATCH', `/projects/${encodeURIComponent(project.id)}`, next)
+          const actual = storedToLevel(data.project)
+          setPending(actual); setConfirmed(actual)
           setMessage(t('setupSaved'))
           onSaved()
         } catch (err) { setError(err.message) } finally { setSaving(false) }
       }
 
       const small = { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 }
-      // Selected segment uses a soft brand wash + coloured label: manual grey,
-      // you-approve blue, machine-approve orange — never a solid blue fill.
-      const segBtn = (lv) => {
-        const on = level === lv
-        const meta = LEVEL_META[lv]
-        return {
-          padding: '7px 12px', borderRadius: T.radiusSm, border: `1px solid ${on ? meta.ink : T.line}`,
-          background: on ? meta.wash : T.card,
-          color: on ? meta.ink : T.ink, fontSize: 12, fontWeight: 600, cursor: 'pointer', minHeight: 44,
-        }
-      }
-
-      // Explain card: two fixed lines — "machine does / you do" — that follow the
-      // PENDING choice so a first-time reader can tell what each level means.
+      const meta = LEVEL_META[pending]
       const explainer = h('div', {
         key: 'explain',
         style: { background: T.accentWash, border: `1px solid ${T.line}`, borderLeft: `3px solid ${T.accent}`, borderRadius: T.radiusLg, padding: '10px 12px', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 },
       }, [
-        h('div', { key: 'h', style: { fontSize: 13, fontWeight: 700, color: T.accentInk } }, t(LEVEL_META[level].label)),
-        h('div', { key: 'm', style: small }, `${t('leMachine')}：${t(LEVEL_META[level].m)}`),
-        h('div', { key: 'y', style: small }, `${t('leYou')}：${t(LEVEL_META[level].y)}`),
+        h('div', { key: 'h', style: { fontSize: 13, fontWeight: 700, color: T.accentInk } }, t(`lvL${pending}`)),
+        h('div', { key: 'e', style: small }, `${t('autoEndLabel')}：${t(`leL${pending}End`)}`),
+        h('div', { key: 'm', style: small }, `${t('machineLabel')}：${t(`leL${pending}M`)}`),
+        h('div', { key: 'y', style: small }, `${t('youLabel')}：${t(`leL${pending}Y`)}`),
       ])
+      const ariaText = t('ariaLevel').replace('{n}', String(pending)).replace('{ordinal}', String(pending + 1))
+      const tick = (n) => h('button', {
+        key: n, type: 'button', onClick: () => moveTo(n),
+        style: { minHeight: 44, minWidth: 44, padding: '4px 2px', border: 'none', background: 'transparent', cursor: 'pointer',
+          fontSize: 11, fontWeight: n === pending ? 700 : 500, color: n === pending ? LEVEL_META[n].ink : T.mutedInk },
+      }, t(`lvL${n}`))
 
-      const children = [
-        h('div', { key: 'seg', style: { display: 'inline-flex', gap: 4, flexWrap: 'wrap' } },
-          LEVELS.map((lv) => h('button', { key: lv, type: 'button', style: segBtn(lv), onClick: () => chooseLevel(lv) }, h('span', { className: 'df-tap' }, t(LEVEL_META[lv].label))))),
-        // Badge reflects the SAVED level only — never the pending choice or switch.
-        h('div', { key: 'badgeRow', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
+      return h('div', { key: 'autonomy', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 2 } }, [
+        h('div', { key: 'axisTitle', style: { fontSize: 13, fontWeight: 650 } }, t('axisTitle')),
+        h('div', { key: 'axisHint', style: small }, t('axisHint')),
+        h('input', {
+          key: 'range', type: 'range', min: '0', max: '4', step: '1', value: pending,
+          'aria-label': t('axisTitle'), 'aria-valuetext': ariaText,
+          onChange: onRangeChange, onPointerUp: onRangeCommit, onKeyUp: onRangeCommit,
+          style: { width: '100%', minHeight: 44, accentColor: meta.ink, cursor: 'pointer' },
+        }),
+        h('div', { key: 'ticks', style: { display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap' } }, [0, 1, 2, 3, 4].map(tick)),
+        h('div', { key: 'badgeRow', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 } }, [
           h('span', {
             key: 'badge',
             style: { display: 'inline-flex', gap: 7, alignItems: 'center', padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 650,
-              background: LEVEL_META[savedLevel].wash, color: LEVEL_META[savedLevel].ink },
-          }, [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t(LEVEL_META[savedLevel].badge)]),
-          project?.paused === true
-            ? h('span', { key: 'paused', style: { display: 'inline-flex', gap: 6, alignItems: 'center', padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 650, background: T.panel, color: T.mutedInk } },
-              [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t('badgePaused')])
-            : null,
-          // The badge block ends with the unsaved marker; it shows only the saved
-          // level, never the preference switches below.
+              background: LEVEL_META[saved].wash, color: LEVEL_META[saved].ink },
+          }, [h('span', { key: 'dot', style: { width: 7, height: 7, borderRadius: '50%', background: 'currentColor' } }), t(`lvL${saved}`)]),
+          project?.paused === true ? h('span', { key: 'paused', style: { fontSize: 11, color: T.mutedInk } }, t('badgePaused')) : null,
           dirty ? h('span', { key: 'rb', style: { fontSize: 11, color: T.warningInk, fontWeight: 600 } }, t('unsaved')) : null,
         ]),
         explainer,
-        // The single switch exists ONLY at you-approve; other levels hide the
-        // whole block instead of greying it out.
-        level === 'you-approve' ? h('div', { key: 'dispatchSwitch', style: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 12 } }, [
-          h('div', { key: 'row', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
-            h('button', {
-              type: 'button', role: 'switch', 'aria-checked': autoDispatch ? 'true' : 'false',
-              onClick: () => setAutoDispatch(!autoDispatch),
-              style: { minWidth: 44, minHeight: 44, border: 'none', padding: 0, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' },
-            }, h('span', {
-              style: { position: 'relative', width: 38, height: 22, borderRadius: 999, display: 'inline-block', background: autoDispatch ? T.info : T.line },
-            }, h('span', {
-              style: { position: 'absolute', top: 3, left: autoDispatch ? 19 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .16s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' },
-            }))),
-            h('span', { style: { ...small, color: T.ink, fontWeight: 600 } }, t('autoDispatchLabel')),
-          ]),
-          h('div', { key: 'hint', style: small }, t('autoDispatchHint')),
-        ]) : null,
         h('div', { key: 'save', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 } }, [
           h('span', { key: 'btn', className: 'df-tap' }, h(Button, { disabled: saving, onClick: () => void save() }, saving ? t('setupSaving') : t('saveLevel'))),
           message ? h('span', { key: 'ok', style: { ...small, color: T.success } }, message) : null,
           error ? h('span', { key: 'err', style: { ...small, color: T.dangerInk, whiteSpace: 'pre-line' } }, `${t('errorPrefix')}${error}`) : null,
         ]),
-      ]
-      return h('div', { key: 'autonomy', style: { borderTop: `1px solid ${T.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 2 } }, children)
+      ])
     }
 
     function PauseSection({ project, t, onSaved }) {
@@ -2585,7 +2580,7 @@ window.__ModuleLoader__.load({
       // Project navigation: A sidebar / B top tabs, one shared projectId.
       // Card counts are derived from the already-loaded boards+cards; no API change.
       const initials = (name) => String(name || '').split('/').pop().slice(0, 2).toUpperCase()
-      const levelOf = (p) => LEVELS.includes(p?.autonomy) ? p.autonomy : 'manual'
+      const levelOf = storedToLevel
       const levelTone = (lv) => [LEVEL_META[lv].wash, LEVEL_META[lv].ink]
       const pickProject = (p) => { setProjectId(p.id); setRailOpen(false); showToast(t('toastSwitched', { name: p.name }), 'ok') }
       const railContent = h('div', { key: 'railInner', style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [

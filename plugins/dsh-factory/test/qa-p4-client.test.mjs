@@ -86,17 +86,17 @@ function apiFetch(payload) {
 // P4-2 — the badge reads ONLY the saved semantic level, never the switch.
 // ---------------------------------------------------------------------------
 
-test('P4-2 source guard: badge is derived from savedLevel, not from the switch', () => {
-  assert.match(clientSrc, /const savedLevel = LEVELS\.includes\(project\?\.autonomy\) \? project\.autonomy : 'manual'/,
-    'saved level must come from the stored semantic autonomy field, default manual')
-  assert.match(clientSrc, /LEVEL_META\[savedLevel\]\.badge/,
-    'badge text must be selected by the saved level alone')
+test('P4-2 source guard: badge is derived only from the saved tier', () => {
+  assert.match(clientSrc, /const saved = storedToLevel\(project\)/,
+    'saved level derives from the stored semantic autonomy field + switch')
+  assert.match(clientSrc, /t\(`lvL\$\{saved\}`\)/,
+    'badge text is selected by the saved level alone')
   // The badge span colours itself off savedLevel and never reads the switch.
   const badgeStart = clientSrc.indexOf("key: 'badge'")
   const badgeBlock = clientSrc.slice(badgeStart, badgeStart + 400)
   assert.ok(badgeStart > 0, 'badge render block found')
-  assert.match(badgeBlock, /LEVEL_META\[savedLevel\]/)
-  assert.doesNotMatch(badgeBlock, /autoDispatch|autoApprove|autoStart/,
+  assert.match(badgeBlock, /LEVEL_META\[saved\]/)
+  assert.doesNotMatch(badgeBlock, /pending|confirmed|autoDispatch|autoApprove|autoStart/,
     'badge block must not read any switch')
 })
 
@@ -163,10 +163,14 @@ test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE name
   assert.equal(zh.lvMachineApprove, '机器批准')
   assert.equal(en.lvYouApprove, 'You approve')
   assert.equal(en.lvMachineApprove, 'Machine approves')
+  for (const n of [0, 1, 2, 3, 4]) {
+    assert.equal(zh[`lvL${n}`], `L${n}`)
+    assert.equal(en[`lvL${n}`], `L${n}`)
+  }
   assert.equal(en.autoDispatchLabel, 'Auto-dispatch new cards')
   assert.notEqual(en.lvMachineApprove, en.autoDispatchLabel, 'level name and switch label differ')
   // No legacy keys or switch names survive.
-  for (const k of ['lvL0', 'lvL1', 'lvL2', 'badgeL0', 'badgeL1', 'badgeL2', 'autoStart', 'autoApprove']) {
+  for (const k of ['badgeL0', 'badgeL1', 'badgeL2', 'autoStart', 'autoApprove']) {
     assert.equal(k in zh, false, `${k} deleted`)
   }
 })
@@ -176,12 +180,10 @@ test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE name
 // form originals. Guard the exact save() call shape.
 // ---------------------------------------------------------------------------
 
-test('P4-3 source guard: save() PATCHes autonomy+autoDispatch and re-reads both from the response', () => {
-  assert.match(clientSrc, /autonomy: nextLevel, autoDispatch: nextDispatch/, 'save sends semantic level + single switch only')
-  assert.match(clientSrc, /const p = data\.project/, 'save() reads back the server project')
-  assert.match(clientSrc, /setLevel\(p\.autonomy\)/, 'pending level adopts the read-back value')
-  assert.match(clientSrc, /setAutoDispatch\(p\.autonomy === 'you-approve' && p\.autoDispatch === true\)/,
-    'switch adopts read-back only for you-approve')
+test('P4-3 source guard: save() PATCHes the mapped tier and re-reads it from the response', () => {
+  assert.match(clientSrc, /const next = levelToStored\(confirmed\)/, 'save sends tier + mapped autoDispatch only')
+  assert.match(clientSrc, /const data = await callApi\('PATCH'/, 'save() reads back the server project')
+  assert.match(clientSrc, /const actual = storedToLevel\(data\.project\)/, 'pending level adopts the read-back value')
   assert.doesNotMatch(clientSrc, /autoStart|autoApprove/, 'no legacy switch in client live code')
 })
 

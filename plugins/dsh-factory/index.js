@@ -22,6 +22,7 @@ import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
 import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview } from './dispatch.js'
 import { commitCard, commitForExistingPr, createGitPort, createPrForCard, pushExistingCard } from './git-exec.js'
+import { runAutoDelivery } from './delivery.js'
 import { localeFromContext } from './session-context.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
@@ -45,6 +46,7 @@ export { commitForExistingPr, pushExistingCard } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
 export { buildSessionContext, attachSessionContext } from './session-context.js'
 export * as verdict from './verdict.js'
+export * as delivery from './delivery.js'
 export * as state from './state.js'
 export * as worktree from './worktree.js'
 export * as identity from './identity.js'
@@ -57,7 +59,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.7'
+export const BUILD = 'factory-2026-11-20.10'
 
 export const name = 'dsh-factory'
 
@@ -179,6 +181,16 @@ export function apply(ctx, config = {}) {
       ctx, store,
       ghPort: createGhPort(),
       ghPortFor: async (project) => createGhPort((await resolveIdentity(project)).git),
+      deliver: async ({ store: s, cardId }) => {
+        const card = s.getCard(cardId)
+        const project = card?.projectId ? s.getProject(card.projectId) : undefined
+        const identity = await resolveIdentity(project)
+        return runAutoDelivery({
+          store: s, cardId,
+          port: createGitPort(identity.git),
+          resolveIdentity: async () => identity,
+        })
+      },
     }),
     config: config.engine,
   })
@@ -438,13 +450,17 @@ export function apply(ctx, config = {}) {
     const returnToPlan = /^\/cards\/([^/?]+)\/return-to-plan(?:\?.*)?$/.exec(route)
     if (method === 'POST' && returnToPlan !== null) {
       const cardId = decodeURIComponent(returnToPlan[1])
+      const beforeCard = store.getCard(cardId)
+      const tier = beforeCard?.projectId ? store.getProject(beforeCard.projectId)?.autonomy : undefined
       const text = typeof body.note === 'string' ? body.note.trim() : ''
       if (text === '') { sendJson(res, 400, { error: '修改意见必填，不能为空' }); return }
       const before = store.getCard(cardId)
       if (before?.status !== 'plan-review') { sendJson(res, 400, { error: `退回修改计划仅 Plan-review 可执行（当前 ${before?.status ?? '未知'}）` }); return }
       try {
         const feedback = store.getCard(cardId).history.filter((h) => h && h.type === 'plan-feedback').at(-1) ?? null
-        const takenOver = body.takeOver === true
+        const takenOver = body.takeOver === undefined
+          ? ['machine-approve', 'auto-delivery'].includes(tier)
+          : body.takeOver === true
         if (takenOver) store.takeOverCard(cardId, 'human')
         store.transitionCard(cardId, 'plan', 'human', text)
         const card = store.getCard(cardId)

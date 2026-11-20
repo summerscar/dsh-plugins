@@ -286,7 +286,19 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
       const count = Number.parseInt(run('git', ['rev-list', '--count', `${base}..HEAD`], cwd), 10)
       return Number.isFinite(count) && count > 0
     },
-    push(cwd, branch) { run('git', ['push', '-u', 'origin', branch], cwd) },
+    /**
+     * True only when the worktree has NO uncommitted changes. hasDiff() above
+     * counts commits vs a base ref; it is NOT a dirty-tree check. Auto-delivery
+     * uses this to refuse unpublished (unreviewed) edits.
+     */
+    isWorktreeClean(cwd) {
+      return run('git', ['status', '--porcelain'], cwd) === ''
+    },
+    // git itself has no gh credential helper unless the profile configured one;
+    // pass it explicitly so buildGitEnv's gh-login path actually authenticates.
+    push(cwd, branch) {
+      run('git', ['-c', 'credential.helper=!gh auth git-credential', 'push', '-u', 'origin', branch], cwd)
+    },
     createPr(cwd, { title, body, branch, draft = true }) {
       return run('gh', ['pr', 'create', '--title', title, '--body', body, '--head', branch, ...(draft ? ['--draft'] : [])], cwd)
     },

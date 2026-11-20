@@ -206,17 +206,19 @@ test('B3 schemaVersion other than 1 or 2 is still rejected', () => {
 // ==============================================================================
 // B4 — UI: no visible L0/L1/L2, switch only on you-approve, hint present
 // ==============================================================================
-test('B4 no L0/L1/L2 in dictionary values; semantic LEVELS order; switch only you-approve', () => {
+test('B4 L0–L4 slider ticks in copy; no independent autoDispatch switch', () => {
   for (const [name, dict] of [['zh', zh], ['en', en]]) {
-    const hits = Object.entries(dict).filter(([k, v]) => typeof v === 'string' && /\bL[012]\b/.test(v))
-    assert.deepEqual(hits.map((x) => x[0]), [], `${name}: no L0/L1/L2 in visible copy`)
+    for (const n of [0, 1, 2, 3, 4]) {
+      assert.equal(dict[`lvL${n}`], `L${n}`, `${name}: tick ${n}`)
+      assert.equal(typeof dict[`leL${n}End`], 'string')
+      assert.equal(typeof dict[`leL${n}M`], 'string')
+      assert.equal(typeof dict[`leL${n}Y`], 'string')
+    }
   }
-  assert.match(clientSrc, /const LEVELS = \['manual', 'you-approve', 'machine-approve'\]/, 'level order fixed')
-  assert.match(clientSrc, /level === 'you-approve'/, 'switch gating on you-approve')
-  assert.match(clientSrc, /t\('autoDispatchHint'\)/, 'hint rendered')
-  assert.ok(zh.autoDispatchHint.includes('手动'), 'zh hint explicitly contrasts manual level')
-  assert.ok(en.autoDispatchHint.includes('Manual'), 'en hint explicitly contrasts Manual level')
-  assert.match(clientSrc, /setAutoDispatch\(p\.autonomy === 'you-approve' && p\.autoDispatch === true\)/, 'read-back switch only you-approve')
+  assert.match(clientSrc, /const LEVEL_TIERS = \['manual', 'you-approve', 'you-approve', 'machine-approve', 'auto-delivery'\]/, 'five-level mapping fixed')
+  assert.match(clientSrc, /type: 'range', min: '0', max: '4', step: '1'/, 'single native range slider')
+  assert.match(clientSrc, /'aria-valuetext': ariaText/, 'aria-valuetext wired')
+  assert.doesNotMatch(clientSrc, /role: 'switch', 'aria-checked': autoDispatch/, 'no independent autoDispatch switch')
 })
 
 // ==============================================================================
@@ -262,9 +264,9 @@ test('B6 new/changed keys byte-identical across four dicts; deleted keys zero re
     reg.factory(req).apply({ effect: (f) => { f(); return () => {} }, locale: { register: (_n, d) => { cap = d; return () => {} }, bind: () => (k) => k }, slots: { inject: (_o, cb) => cb(), register: () => () => {} } })
     return JSON.parse(JSON.stringify(cap))
   })()
-  const added = ['badgeManual', 'badgeYouApprove', 'badgeMachineApprove', 'lvManual', 'lvYouApprove', 'lvMachineApprove', 'leManualM', 'leManualY', 'leYouApproveM', 'leYouApproveY', 'leMachineApproveM', 'leMachineApproveY', 'autoDispatchLabel', 'autoDispatchHint', 'pauseScopeNote']
-  const changed = ['pauseSem', 'l2Title', 'l2Body'] // Design-exempt names; UI shows no L2
-  const deleted = ['badgeL0', 'badgeL1', 'badgeL2', 'lvL0', 'lvL1', 'lvL2', 'leL0M', 'leL0Y', 'leL1M', 'leL1Y', 'leL2M', 'leL2Y', 'prefHead', 'prefNote', 'autoStart', 'autoApprove', 'inactiveAtLevel', 'pauseSub', 'projPause']
+  const added = ['badgeManual', 'badgeYouApprove', 'badgeMachineApprove', 'lvManual', 'lvYouApprove', 'lvMachineApprove', 'leManualM', 'leManualY', 'leYouApproveM', 'leYouApproveY', 'leMachineApproveM', 'leMachineApproveY', 'axisTitle', 'axisHint', 'currentLevel', 'ariaLevel', 'autoEndLabel', 'machineLabel', 'youLabel', ...[0, 1, 2, 3, 4].flatMap((n) => [`lvL${n}`, `leL${n}End`, `leL${n}M`, `leL${n}Y`])]
+  const changed = ['pauseSem', 'l2Title', 'l2Body']
+  const deleted = ['badgeL0', 'badgeL1', 'badgeL2', 'prefHead', 'prefNote', 'autoStart', 'autoApprove', 'inactiveAtLevel', 'pauseSub', 'projPause']
   for (const k of [...added, ...changed]) {
     assert.equal(inline.zh[k], zh[k], `four-place zh.${k}`)
     assert.equal(inline.en[k], en[k], `four-place en.${k}`)
@@ -288,8 +290,8 @@ test('B6 new/changed keys byte-identical across four dicts; deleted keys zero re
 test('P1 machine-approve dispatch/intake events carry machine-approve tier; you-approve carry you-approve', async () => {
   assert.equal(AUTO_TIER, 'you-approve')
   assert.equal(MACHINE_APPROVE_TIER, 'machine-approve')
-  // Static: tierForLevel is used by intakeOrigin/dispatchMeta.
-  assert.match(autonomySrc, /const tierForLevel = \(level\) => level === 'machine-approve' \? MACHINE_APPROVE_TIER : AUTO_TIER/)
+  // Static: tierForLevel covers the new L4 tier and feeds intake/dispatch.
+  assert.match(autonomySrc, /const tierForLevel = \(level\) => level === AUTO_DELIVERY_TIER \? AUTO_DELIVERY_TIER/)
   assert.match(autonomySrc, /const intakeOrigin = \(level\) => \(\{[^}]*tier: tierForLevel\(level\)/)
   assert.match(autonomySrc, /const dispatchMeta = \(level\) => \(\{ tier: tierForLevel\(level\)/)
 

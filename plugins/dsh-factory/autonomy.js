@@ -44,12 +44,21 @@ export const RULE_DISPATCH = 'auto-dispatch-triage'
 // Machine plan-approval belongs to the machine-approve level. arm-delivery stays
 // human — no rule id here.
 export const MACHINE_APPROVE_TIER = 'machine-approve'
+export const AUTO_DELIVERY_TIER = 'auto-delivery'
 export const RULE_APPROVE = 'auto-approve-plan'
+export const RULE_DELIVER = 'auto-deliver-approved-head'
 
-/** The level → capabilities map. No switch is read for machine-approve. */
+/** L4 inherits L3's capabilities; the extra delivery power is gated separately. */
+export function canDeliver(level) {
+  return level === AUTO_DELIVERY_TIER
+}
+
+/** The level → capabilities map. No switch is read for machine-approve/L4. */
 export function behaviorOf(level) {
   if (level === 'you-approve') return { intake: true, dispatch: true, approve: false }
-  if (level === 'machine-approve') return { intake: true, dispatch: true, approve: true }
+  if (level === 'machine-approve' || level === AUTO_DELIVERY_TIER) {
+    return { intake: true, dispatch: true, approve: true }
+  }
   return { intake: false, dispatch: false, approve: false }
 }
 
@@ -201,7 +210,8 @@ export async function readAutoReviewStateForStatus(deps) {
 }
 
 /** The audit tier is the project's semantic level — one truth source for all events. */
-const tierForLevel = (level) => level === 'machine-approve' ? MACHINE_APPROVE_TIER : AUTO_TIER
+const tierForLevel = (level) => level === AUTO_DELIVERY_TIER ? AUTO_DELIVERY_TIER
+  : level === 'machine-approve' ? MACHINE_APPROVE_TIER : AUTO_TIER
 /** Auto-discovery provenance attached to cards the engine creates. */
 const intakeOrigin = (level) => ({ actor: 'autoRule', tier: tierForLevel(level), rule: RULE_INTAKE, channel: AUTO_CHANNEL })
 /** Audit metadata for the single automatic transition (inbox -> triage). */
@@ -286,6 +296,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         dispatched: 0,
         approved: 0,
         continued: 0,
+        delivered: 0,
         approvalHeld: 0,
         queued: 0,
       }
@@ -409,6 +420,24 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           }
         }
 
+        // P3: L4 auto-delivery. The gate lives in delivery.js, NOT here: this
+        // loop only offers Review cards. Pause/takeover are checked again by
+        // the gate, so a stale tick snapshot cannot widen the permission.
+        if (canDeliver(level) && typeof deps.deliver === 'function' && status.paused !== true && project.paused !== true) {
+          const deliverable = allCards.filter((card) => card.projectId === project.id
+            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true)
+          for (const card of deliverable) {
+            try {
+              const outcome = await deps.deliver({ store, cardId: card.id })
+              if (outcome?.delivered === true) report.delivered += 1
+            } catch (error) {
+              errors += 1
+              const message = error instanceof Error ? error.message : String(error)
+              status.lastError = `auto-delivery failed for card ${card.id}: ${message}`
+            }
+          }
+        }
+
         // G1/G3 explicit opt-in: without BOTH a GitHub issue source and a target
         // board the engine skips. It never guesses a repo from a local path, reads
         // `git remote`, or creates a board (PRD §10). The reason stays visible.
@@ -527,7 +556,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
  * that one card (caught by runTick), never the whole tick. Injectable `deps` let
  * QA exercise the same runTick with a fake store and fake host, offline.
  */
-export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor } = {}) {
+export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor, deliver } = {}) {
   return {
     intake: intakeIssues,
     // Per-project gh port from the identity ladder (PGH-9). The host supplies it
@@ -563,6 +592,9 @@ export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortF
     },
     // P0-3: inventory read on demand; P2 gates the work-mode option on this.
     readAutoReviewPluginState: () => readAutoReviewPluginState(ctx),
+    // P3: L4 delivery is wired here. Without this the tick's `deps.deliver`
+    // guard is always false and the host silently never delivers (QA BUG1).
+    ...(typeof deliver === 'function' ? { deliver } : {}),
     ghPort,
   }
 }

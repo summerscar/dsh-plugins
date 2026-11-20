@@ -44,6 +44,7 @@ export function isCredentialKeySegment(value) {
 
 export const DEFAULT_PERMISSION = 'workspace-write'
 export const DEFAULT_AUTONOMY = 'manual'
+export const AUTO_DELIVERY_TIER = 'auto-delivery'
 export const WORK_MODES = Object.freeze(['workspace-write', 'full-access', 'auto-review'])
 export const DEFAULT_WORK_MODE = 'workspace-write'
 
@@ -131,7 +132,7 @@ function normalizePreparation(input) {
  * `autoDispatch` is a switch ONLY for you-approve. The old switches are never
  * stored again.
  */
-const AUTONOMY_LEVELS = new Set(['manual', 'you-approve', 'machine-approve'])
+export const AUTONOMY_LEVELS = new Set(['manual', 'you-approve', 'machine-approve', 'auto-delivery'])
 const LEGACY_AUTONOMY_LEVELS = new Set(['L0', 'L1', 'L2'])
 
 /** Map a stored v1 triple to the v2 level + single switch, by REAL behavior. */
@@ -152,10 +153,11 @@ function normalizeAutonomy(input, current = {}) {
     return migrateLegacyAutonomy(raw, input.autoStart ?? current.autoStart, input.autoApprove ?? current.autoApprove)
   }
   if (raw !== undefined && !AUTONOMY_LEVELS.has(raw)) {
-    throw new Error(`autonomy 只能是 manual / you-approve / machine-approve：${String(raw)}`)
+    throw new Error(`autonomy 只能是 manual / you-approve / machine-approve / auto-delivery：${String(raw)}`)
   }
   const autonomy = raw === undefined ? DEFAULT_AUTONOMY : raw
-  // Machine-approve ignores the switch by contract; manual has no dispatch.
+  // Only you-approve reads autoDispatch. auto-delivery inherits machine-approve
+  // behavior and explicitly ignores the switch.
   const autoDispatch = autonomy === 'you-approve'
     ? (input.autoDispatch === undefined ? current.autoDispatch === true : input.autoDispatch === true)
     : false
@@ -796,6 +798,9 @@ export class FactoryStore {
       // Latest structured review verdict (P1). null until a reviewer records
       // one; history keeps every verdict for audit / re-review.
       reviewVerdict: null,
+      // P3: per-head auto-delivery state, arm→delivered/failed. Never a
+      // standing permission; the code gate re-evaluates on every tick.
+      autoDelivery: null,
       // Single-slot gate: set by a Review-time human authorization, consumed by
       // the matching git action. Its presence is what makes a git write legal.
       pendingAuthorization: null,
@@ -906,6 +911,18 @@ export class FactoryStore {
     return clone(card)
   }
 
+  /** P3: record the machine's per-head delivery state + audit history. */
+  setAutoDelivery(id, { head, state, error, actor = AUTO_DELIVERY_TIER } = {}) {
+    const card = this._card(id)
+    if (typeof head !== 'string' || head === '') throw new Error('自动交付状态缺少 head')
+    const entry = { head, state, actor, at: new Date().toISOString() }
+    if (typeof error === 'string' && error !== '') entry.error = error
+    card.autoDelivery = entry
+    card.history.push({ type: 'auto-delivery', ...entry, tier: AUTO_DELIVERY_TIER })
+    this._commit()
+    return clone(card)
+  }
+
   /**
    * Record a human authorization event (§9.4). The two delivery buttons and the
    * escalation are only meaningful from Review — except escalation, which has no
@@ -945,12 +962,12 @@ export class FactoryStore {
    * Record a commit that an authorized `confirm-commit` performed. Stores the sha
    * + message, clears the pending authorization, and logs the audit entry.
    */
-  recordCommit(id, { sha, message } = {}) {
+  recordCommit(id, { sha, message, actor = 'human' } = {}) {
     const card = this._card(id)
     card.commitSha = reqString(sha, 'sha')
     card.commitMessage = typeof message === 'string' ? message : ''
     card.pendingAuthorization = null
-    card.history.push({ type: 'commit', sha: card.commitSha, message: card.commitMessage, actor: 'human', at: new Date().toISOString() })
+    card.history.push({ type: 'commit', sha: card.commitSha, message: card.commitMessage, actor, at: new Date().toISOString() })
     this._commit()
     return clone(card)
   }
@@ -959,12 +976,12 @@ export class FactoryStore {
    * Record that a PR was created. Only valid from Review, and the card *stays*
    * in Review (D6): Done remains a separate human decision.
    */
-  setPrUrl(id, prUrl) {
+  setPrUrl(id, prUrl, actor = 'human') {
     const card = this._card(id)
     if (card.status !== STATUS.REVIEW) throw new Error(`仅 Review 状态可写回 PR（当前 ${card.status}）`)
     card.prUrl = reqString(prUrl, 'prUrl')
     card.pendingAuthorization = null
-    card.history.push({ type: 'pr-created', prUrl: card.prUrl, staysAt: PR_SUCCESS_STAYS, at: new Date().toISOString() })
+    card.history.push({ type: 'pr-created', prUrl: card.prUrl, staysAt: PR_SUCCESS_STAYS, actor, at: new Date().toISOString() })
     this._commit()
     return clone(card)
   }
@@ -999,13 +1016,13 @@ export class FactoryStore {
    * Record a non-force push that UPDATED an existing draft PR. Deliberately
    * separate from setPrUrl: it never creates a PR and never rewrites prUrl.
    */
-  recordPushUpdate(id, { prUrl, sha } = {}) {
+  recordPushUpdate(id, { prUrl, sha, actor = 'human' } = {}) {
     const card = this._card(id)
     if (card.status !== STATUS.REVIEW) throw new Error(`仅 Review 状态可记录 PR 更新（当前 ${card.status}）`)
     if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡没有已有 PR，不能记录 push-existing')
     card.pendingAuthorization = null
     card.history.push({
-      type: 'push-existing', actor: 'human', prUrl: card.prUrl,
+      type: 'push-existing', actor, prUrl: card.prUrl,
       sha: typeof sha === 'string' ? sha : card.commitSha,
       at: new Date().toISOString(),
     })
