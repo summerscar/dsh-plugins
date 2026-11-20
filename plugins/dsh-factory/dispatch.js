@@ -163,8 +163,18 @@ function makeAgentSetup({ store, cardId, locale = 'zh', reviewMode = false, revi
 }
 
 /** Branch name a card's work gets in its worktree. */
-export function branchForCard(cardId) {
-  return `factory/${cardId}`
+export function branchForCard(cardId, redispatchCount = 0) {
+  const n = Number.isInteger(redispatchCount) && redispatchCount > 0 ? redispatchCount : 0
+  // P2b bug fix: the old worktree/branch is deliberately kept in history and
+  // not deleted, so a return→resupply cycle needs a fresh deterministic name.
+  // First dispatch keeps the legacy name for backward compatibility.
+  return n === 0 ? `factory/${cardId}` : `factory/${cardId}-r${n + 1}`
+}
+
+/** Worktree path segment for a dispatch attempt (same suffix convention). */
+export function worktreeKeyForCard(cardId, redispatchCount = 0) {
+  const n = Number.isInteger(redispatchCount) && redispatchCount > 0 ? redispatchCount : 0
+  return n === 0 ? String(cardId) : `${cardId}-r${n + 1}`
 }
 
 /** Statuses a session may work in. `plan-review` / `review` wait for a human. */
@@ -201,10 +211,15 @@ function resolveTargets({ store, cardId }) {
  *   { createWorktree, removeWorktree, prepareWorktree?, createSession,
  *     disposeSession, isSessionActive? }
  */
-export async function dispatchCard({ store, cardId, port, baseBranch = 'main', transitionActor = 'human', transitionMeta = undefined, locale = 'zh' } = {}) {
+export async function dispatchCard({ store, cardId, port, baseBranch = 'main', transitionActor = 'human', transitionMeta = undefined, locale = 'zh', firstMessageExtra } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
   const gate = assertDispatchable(card)
   if (gate.ok !== true) throw new Error(`该卡当前不可派发：${gate.reason}`)
+  // P2b: a returned card may only be re-dispatched through the resupply path,
+  // which carries the human's information as extra first-message context.
+  if (card.needsHumanInfo === true && (typeof firstMessageExtra !== 'string' || firstMessageExtra === '')) {
+    throw new Error('该卡待补充信息，请先补充后再重新派发；不能绕过人工信息闸门')
+  }
   const effective = await effectiveWorkModeFor({ project, cardId, store, port })
 
   // FIRST dispatch only. A card that already has a worktree or a session has
@@ -231,12 +246,16 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
     throw new Error(`该卡当前不可派发：${claim.reason}`)
   }
 
-  const branch = branchForCard(cardId)
+  // Each return-to-Inbox archives its traces; the count is the attempt number.
+  // Old worktrees/branches stay on disk per PRD, so names must never collide.
+  const redispatchCount = Array.isArray(card.history)
+    ? card.history.filter((entry) => entry && entry.type === 'session-archived').length : 0
+  const branch = branchForCard(cardId, redispatchCount)
   let worktreePath = null
   let created = null
   let worktreeMade = false
   try {
-    worktreePath = worktreePathFor(project, cardId)
+    worktreePath = worktreePathFor(project, worktreeKeyForCard(cardId, redispatchCount))
     port.createWorktree({ repoPath: project.rootPath, worktreePath, branch, baseBranch })
     worktreeMade = true
 
@@ -263,7 +282,10 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
       // preset (gives the agent its real tool set) and register the per-session
       // work-item context. See makeAgentSetup for why mount must live here.
       setup: makeAgentSetup({ store, cardId, locale, builderMode: true }),
-      firstMessage: built.firstMessage,
+      // P2b: a resupplied Inbox card needs its extra context appended to the
+      // standard card context — never a replacement that drops cardId/worktree.
+      firstMessage: typeof firstMessageExtra === 'string' && firstMessageExtra !== ''
+        ? `${built.firstMessage}\n\n${firstMessageExtra}` : built.firstMessage,
     })
 
     // Success path — persist and only now advance the card.
@@ -274,7 +296,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
     // `autoRule` (plus tier/rule/channel) so audits can tell the two apart. The
     // actor is validated by assertTransition against `inbox->triage`.
     if (fresh.status === 'inbox') store.transitionCard(cardId, 'triage', transitionActor, undefined, transitionMeta)
-    return { sessionId: created.sessionId, worktreePath, mode: 'created' }
+    return { sessionId: created.sessionId, worktreePath, branch, redispatchCount, mode: 'created' }
   } catch (error) {
     // Roll back everything we created; the card stays as it was (never transitioned).
     try { if (created !== null) await port.disposeSession(created) } catch { /* best effort */ }

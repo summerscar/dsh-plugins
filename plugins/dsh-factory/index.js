@@ -21,7 +21,7 @@ import { createEngineStatus, defaultEngineDeps, startEngine } from './autonomy.j
 import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
 import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview } from './dispatch.js'
-import { commitCard, createGitPort, createPrForCard } from './git-exec.js'
+import { commitCard, commitForExistingPr, createGitPort, createPrForCard, pushExistingCard } from './git-exec.js'
 import { localeFromContext } from './session-context.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
@@ -41,6 +41,7 @@ export { dispatchCard, continueCard, createHostPort } from './dispatch.js'
 export { dispatchReview, followupReview } from './dispatch.js'
 export { sandboxModeForWorkMode, readAutoReviewPluginState } from './dispatch.js'
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
+export { commitForExistingPr, pushExistingCard } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
 export { buildSessionContext, attachSessionContext } from './session-context.js'
 export * as verdict from './verdict.js'
@@ -56,7 +57,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.5'
+export const BUILD = 'factory-2026-11-20.7'
 
 export const name = 'dsh-factory'
 
@@ -380,7 +381,9 @@ export function apply(ctx, config = {}) {
       const current = store.getCard(cardId)
       if (current?.status === 'review') {
         try {
-          const card = store.transitionCard(cardId, 'build', 'human', body.note)
+          const note = typeof body.note === 'string' ? body.note.trim() : ''
+          if (note === '') throw new Error('退回构建必须填写修改意见；builder 需要据此修改')
+          const card = store.transitionCard(cardId, 'build', 'human', note)
           let continued = null
           try {
             continued = await continueCard({ store, cardId, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) })
@@ -399,6 +402,131 @@ export function apply(ctx, config = {}) {
         }
         return
       }
+    }
+
+    // P2b A: mandatory-note human returns. These are dedicated routes so the
+    // UI button cannot forget the note and no generic transition can forge the
+    // decision record. State edges and actors stay exactly as state.js defines.
+    const requireNote = (value) => {
+      const text = typeof value === 'string' ? value.trim() : ''
+      if (text === '') throw new Error('修改意见必填，不能为空')
+      return text
+    }
+    const returnToBuild = /^\/cards\/([^/?]+)\/return-to-build(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && returnToBuild !== null) {
+      const cardId = decodeURIComponent(returnToBuild[1])
+      try {
+        const text = requireNote(body.note)
+        const card = store.transitionCard(cardId, 'build', 'human', text)
+        let continued = null
+        try {
+          continued = await continueCard({ store, cardId, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store), message: text })
+        } catch (continueError) {
+          store.recordEvent({
+            type: 'return-to-build-continue-failed', scope: 'card', targetId: cardId,
+            actor: 'human', decision: 'failed',
+            note: continueError instanceof Error ? continueError.message : String(continueError),
+          })
+        }
+        sendJson(res, 200, { card, continued })
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    const returnToPlan = /^\/cards\/([^/?]+)\/return-to-plan(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && returnToPlan !== null) {
+      const cardId = decodeURIComponent(returnToPlan[1])
+      const text = typeof body.note === 'string' ? body.note.trim() : ''
+      if (text === '') { sendJson(res, 400, { error: '修改意见必填，不能为空' }); return }
+      const before = store.getCard(cardId)
+      if (before?.status !== 'plan-review') { sendJson(res, 400, { error: `退回修改计划仅 Plan-review 可执行（当前 ${before?.status ?? '未知'}）` }); return }
+      try {
+        const feedback = store.getCard(cardId).history.filter((h) => h && h.type === 'plan-feedback').at(-1) ?? null
+        const takenOver = body.takeOver === true
+        if (takenOver) store.takeOverCard(cardId, 'human')
+        store.transitionCard(cardId, 'plan', 'human', text)
+        const card = store.getCard(cardId)
+        try {
+          const continued = await continueCard({
+            store, cardId, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store), message: text,
+          })
+          sendJson(res, 200, { feedback, card, takenOver, continued })
+        } catch (continueError) {
+          // AC24: a failed continuation must leave the card retryable in
+          // plan-review. plan→plan-review is an agent-only edge, so this is a
+          // deliberate synthetic rollback, not a permission widening.
+          store.transitionCard(cardId, 'plan-review', 'agent', 'continuation failed; retry')
+          const message = continueError instanceof Error ? continueError.message : String(continueError)
+          store.recordEvent({
+            type: 'return-to-plan-continue-failed', scope: 'card', targetId: cardId,
+            actor: 'human', decision: 'failed', note: message,
+          })
+          sendJson(res, 400, { error: message, retryable: true })
+        }
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // P2b B: supply missing information and re-dispatch a returned Inbox card.
+    // Dispatch FIRST (while needsHumanInfo is still true) so a failure cannot
+    // clear the gate; success clears it and records the resupply.
+    const resupply = /^\/cards\/([^/?]+)\/resupply(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && resupply !== null) {
+      const cardId = decodeURIComponent(resupply[1])
+      try {
+        const text = requireNote(body.note ?? body.text)
+        const card = store.getCard(cardId)
+        if (card?.status !== 'inbox') throw new Error(`补充信息仅用于 Inbox 卡片（当前 ${card?.status ?? '未知'}）`)
+        if (card.needsHumanInfo !== true) throw new Error('该卡不处于待补充信息状态')
+        const lastReturn = [...card.history].reverse().find((entry) => entry && entry.type === 'triage-return')
+        const extra = [
+          '人工补充信息（新会话必须据此继续，不要重复追问已说明的信息）：',
+          text,
+          `上次退回原因：${typeof lastReturn?.reason === 'string' && lastReturn.reason !== '' ? lastReturn.reason : '（无）'}`,
+        ].join('\n')
+        const dispatched = await dispatchCard({
+          store, cardId, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store), firstMessageExtra: extra,
+        })
+        const updated = store.resupplyInbox(cardId, { text })
+        sendJson(res, 200, { dispatched, card: updated })
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error), retryable: true })
+      }
+      return
+    }
+
+    // P2b C: second commit + push to the SAME draft PR, each with its own
+    // single-use human authorization. createPrForCard still refuses existing PRs.
+    const commitExisting = /^\/cards\/([^/?]+)\/commit-existing(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && commitExisting !== null) {
+      try {
+        const port = createGitPort()
+        const result = await commitForExistingPr({
+          store, cardId: decodeURIComponent(commitExisting[1]), port, message: body.message,
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+    const pushExisting = /^\/cards\/([^/?]+)\/push-existing(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && pushExisting !== null) {
+      try {
+        const cardId = decodeURIComponent(pushExisting[1])
+        const card = store.getCard(cardId)
+        const project = card?.projectId ? store.getProject(card.projectId) : undefined
+        const decision = await resolveIdentity(project)
+        const result = await pushExistingCard({ store, cardId, port: createGitPort(decision.git) })
+        sendJson(res, 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
     }
 
     // Authorized git execution. The gate is enforced inside commitCard /

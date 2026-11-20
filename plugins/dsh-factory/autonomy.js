@@ -455,6 +455,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           .filter((card) => card.status === 'inbox')
           .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
         const dispatchable = inbox.filter((card) => card.takenOver !== true
+          && card.needsHumanInfo !== true
           && card.stalled !== true
           && !(card.pendingDispatch !== null && card.pendingDispatch !== undefined)
           // Idempotency (PRD §9.1): never re-dispatch a card that already has a

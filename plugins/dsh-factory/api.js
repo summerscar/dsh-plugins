@@ -249,7 +249,11 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'POST' && seg.length === 1) return ok({ card: store.createCard(body) }, 201)
         if (method === 'GET' && seg.length === 2) return ok({ card: store.getCard(seg[1]) })
         if (method === 'POST' && seg.length === 3 && seg[2] === 'transition') {
-          return ok({ card: store.transitionCard(seg[1], body.to, body.actor, body.note) })
+          // External callers always supply a string note; a missing note on a
+          // human return becomes an explicit empty one and is refused by the
+          // store hard boundary. Direct internal callers may still omit it.
+          const transitionNote = typeof body.note === 'string' ? body.note : ''
+          return ok({ card: store.transitionCard(seg[1], body.to, body.actor, transitionNote) })
         }
         if (method === 'POST' && seg.length === 3 && seg[2] === 'authorize') {
           return ok({ authorization: store.authorize(seg[1], body.action) })

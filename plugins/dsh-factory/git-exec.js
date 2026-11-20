@@ -36,6 +36,31 @@ export async function commitCard({ store, cardId, port, message = 'factory: impl
   }
 }
 
+/**
+ * P2b AC9: a SECOND commit for a card that already has a draft PR.
+ * `commitCard` deliberately refuses an existing commitSha — do not loosen it.
+ * This separate action keeps the same Review + human authorization gate but
+ * records a new head on the same card/PR.
+ */
+export async function commitForExistingPr({ store, cardId, port, message = 'factory: address review feedback' } = {}) {
+  const card = store.getCard(cardId)
+  if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
+  if (card.status !== 'review') throw new Error(`回炉提交仅 Review 可执行（当前 ${card.status}）`)
+  if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡尚无 PR；请使用「确认提交」')
+  if (!store.hasPendingAuthorization(cardId, 'confirm-commit')) {
+    throw new Error('缺少「确认提交」授权，拒绝执行 git 提交')
+  }
+  try {
+    port.add(card.worktreePath)
+    const sha = port.commit(card.worktreePath, message)
+    store.recordCommit(cardId, { sha, message })
+    return { sha }
+  } catch (error) {
+    try { port.reset(card.worktreePath) } catch { /* best effort unstage */ }
+    throw error
+  }
+}
+
 /** Branches a PR job must never push to directly. */
 export const DEFAULT_PROTECTED_BRANCHES = ['main', 'master', 'trunk', 'develop']
 
@@ -86,6 +111,38 @@ export async function createPrForCard({ store, cardId, port, title, body, protec
   })
   store.setPrUrl(cardId, url)
   return { url }
+}
+
+/**
+ * P2b AC9: push a reworked head to the EXISTING draft PR. Never creates a PR,
+ * never merges, never force-pushes, and never rewrites `prUrl`. The human
+ * authorization is per-action (`push-existing`) and single-use.
+ */
+export async function pushExistingCard({ store, cardId, port, protectedBranches = DEFAULT_PROTECTED_BRANCHES } = {}) {
+  const card = store.getCard(cardId)
+  if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
+  if (card.status !== 'review') throw new Error(`「推送更新草稿 PR」仅 Review 可执行（当前 ${card.status}）`)
+  if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡尚无 PR，不能更新已有 PR')
+  if (!card.commitSha) throw new Error('请先提交回炉改动再推送更新')
+  if (!store.hasPendingAuthorization(cardId, 'push-existing')) {
+    throw new Error('缺少「推送更新草稿 PR」授权，拒绝 push')
+  }
+  if (isProtectedBranch(card.branch, protectedBranches)) {
+    throw new Error(`拒绝向受保护分支「${card.branch}」推送；PR 只能来自特性分支`)
+  }
+  if (card.baseBranch && String(card.branch).toLowerCase() === String(card.baseBranch).toLowerCase()) {
+    throw new Error(`拒绝向 base 分支「${card.branch}」推送，请使用独立任务分支`)
+  }
+  if (typeof port.hasDiff === 'function') {
+    const base = card.baseBranch || 'main'
+    if (port.hasDiff(card.worktreePath, base) !== true) {
+      throw new Error(`没有可推送的改动（HEAD 与 ${base} 无差异），拒绝 push`)
+    }
+  }
+  // No force push, ever. A failure leaves Review + worktree intact for retry.
+  port.push(card.worktreePath, card.branch)
+  store.recordPushUpdate(cardId, { prUrl: card.prUrl, sha: card.commitSha })
+  return { url: card.prUrl, sha: card.commitSha }
 }
 
 /**

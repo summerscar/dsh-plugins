@@ -781,6 +781,9 @@ export class FactoryStore {
       source: optionalString(input.source) || 'manual',
       status: STATUS.INBOX,
       sessionId: null,
+      // P2b: set when a triage card is sent back because only a human can
+      // supply missing information. The engine MUST skip such cards.
+      needsHumanInfo: false,
       // P2a: the reviewer's session, distinct from the builder's sessionId.
       reviewSessionId: null,
       sessionTurn: 0,
@@ -824,8 +827,81 @@ export class FactoryStore {
     if (!isStatus(to)) throw new Error(`未知状态：${to}`)
     assertTransition(card.status, to, actor)
     const from = card.status
+
+    // P2b AC25-26: triage→inbox is a HARD boundary, not a UI convention.
+    // Both the human button and the agent route go through this method, so a
+    // reason is mandatory and all live traces are archived + cleared here.
+    // Without this a returned card stays "already-dispatched" forever and the
+    // engine would re-dispatch it with the stale session/worktree.
+    if (from === STATUS.TRIAGE && to === STATUS.INBOX) {
+      const reason = typeof note === 'string' ? note.trim() : ''
+      if (reason === '') throw new Error('退回 Inbox 必须填写原因；请说明缺少什么信息')
+      const at = new Date().toISOString()
+      card.history.push({
+        type: 'session-archived', sessionId: card.sessionId, worktreePath: card.worktreePath,
+        branch: card.branch, baseBranch: card.baseBranch, reason, at,
+      })
+      card.sessionId = null
+      card.worktreePath = null
+      card.branch = null
+      card.baseBranch = null
+      card.pendingDispatch = null
+      card.dispatchFailures = 0
+      card.stalled = false
+      card.needsHumanInfo = true
+      card.history.push({ type: 'triage-return', actor, reason, at })
+    }
+
+    if (from === STATUS.REVIEW && to === STATUS.BUILD && actor === 'human' && note !== undefined) {
+      // P2b bug fix: a human review→build WITH feedback is a structured return,
+      // not just a status change. An explicitly empty note is refused here so
+      // the generic transition route cannot bypass the mandatory opinion. A
+      // missing note is the legacy bare approval used by existing callers.
+      const text = typeof note === 'string' ? note.trim() : ''
+      if (text === '') throw new Error('退回构建必须填写修改意见；builder 需要据此修改')
+      card.history.push({
+        type: 'human-review', actor: 'human', decision: 'return-to-build', text,
+        head: card.reviewVerdict?.reviewedHead ?? null, prUrl: card.prUrl ?? null,
+        at: new Date().toISOString(),
+      })
+    }
+    if (from === STATUS.PLAN_REVIEW && to === STATUS.PLAN && actor === 'human') {
+      // Same hard rule for plan returns. The synthetic rollback edge is
+      // plan→plan-review with actor 'agent', so it is deliberately unaffected.
+      const text = typeof note === 'string' ? note.trim() : ''
+      if (text === '') throw new Error('退回修改计划必须填写修改意见；builder 需要据此重做')
+      card.history.push({
+        type: 'plan-feedback', actor: 'human', decision: 'return-to-plan', text, at: new Date().toISOString(),
+      })
+    }
+
     card.status = to
     card.history.push({ type: 'transition', from, to, actor, note: optionalString(note), ...auditFields(meta), at: new Date().toISOString() })
+    this._commit()
+    return clone(card)
+  }
+
+  /**
+   * P2b AC28-30: clear the human-info gate AFTER a successful fresh dispatch.
+   * The caller dispatches first with the resupply text in the first message; a
+   * failure therefore leaves `needsHumanInfo` true and the card in Inbox.
+   */
+  resupplyInbox(id, { text } = {}) {
+    const card = this._card(id)
+    // The standard dispatch advances Inbox→Triage before this is called, so
+    // both statuses are legal here; the flag itself proves it is a return.
+    if (!(card.status === STATUS.INBOX || card.status === STATUS.TRIAGE)) {
+      throw new Error(`补充信息仅用于退回后的卡片（当前 ${card.status}）`)
+    }
+    if (card.needsHumanInfo !== true) throw new Error('该卡不处于待补充信息状态')
+    const body = reqString(text, '补充信息')
+    const lastReturn = [...card.history].reverse().find((entry) => entry && entry.type === 'triage-return')
+    const at = new Date().toISOString()
+    card.history.push({
+      type: 'inbox-resupply', actor: 'human', text: body,
+      previousReason: typeof lastReturn?.reason === 'string' ? lastReturn.reason : null, at,
+    })
+    card.needsHumanInfo = false
     this._commit()
     return clone(card)
   }
@@ -836,7 +912,7 @@ export class FactoryStore {
    * status gate but still leaves an audit record. Returns the audit entry.
    */
   authorize(id, action) {
-    const allowed = { 'confirm-commit': true, 'create-pr': true, escalate: false }
+    const allowed = { 'confirm-commit': true, 'create-pr': true, 'push-existing': true, escalate: false }
     if (!Object.prototype.hasOwnProperty.call(allowed, action)) throw new Error(`未知授权动作：${action}`)
     const card = this._card(id)
     if (allowed[action] && card.status !== STATUS.REVIEW) {
@@ -889,6 +965,50 @@ export class FactoryStore {
     card.prUrl = reqString(prUrl, 'prUrl')
     card.pendingAuthorization = null
     card.history.push({ type: 'pr-created', prUrl: card.prUrl, staysAt: PR_SUCCESS_STAYS, at: new Date().toISOString() })
+    this._commit()
+    return clone(card)
+  }
+
+  /** P2b AC18: the mandatory human reason for a review→build return. */
+  recordHumanReview(id, { decision, text, actor = 'human' } = {}) {
+    const card = this._card(id)
+    if (card.status !== STATUS.REVIEW) throw new Error(`人工评审记录仅 Review 可写（当前 ${card.status}）`)
+    const body = reqString(text, '修改意见')
+    const entry = {
+      type: 'human-review', actor, decision: reqString(decision, 'decision'), text: body,
+      head: card.reviewVerdict?.reviewedHead ?? null, prUrl: card.prUrl ?? null, at: new Date().toISOString(),
+    }
+    card.history.push(entry)
+    this._commit()
+    return clone(entry)
+  }
+
+  /** P2b AC22: the mandatory human reason for a plan-review→plan return. */
+  recordPlanFeedback(id, { text, actor = 'human' } = {}) {
+    const card = this._card(id)
+    if (card.status !== STATUS.PLAN_REVIEW) throw new Error(`计划修改意见仅 Plan-review 可写（当前 ${card.status}）`)
+    const entry = {
+      type: 'plan-feedback', actor, decision: 'return-to-plan', text: reqString(text, '修改意见'), at: new Date().toISOString(),
+    }
+    card.history.push(entry)
+    this._commit()
+    return clone(entry)
+  }
+
+  /**
+   * Record a non-force push that UPDATED an existing draft PR. Deliberately
+   * separate from setPrUrl: it never creates a PR and never rewrites prUrl.
+   */
+  recordPushUpdate(id, { prUrl, sha } = {}) {
+    const card = this._card(id)
+    if (card.status !== STATUS.REVIEW) throw new Error(`仅 Review 状态可记录 PR 更新（当前 ${card.status}）`)
+    if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡没有已有 PR，不能记录 push-existing')
+    card.pendingAuthorization = null
+    card.history.push({
+      type: 'push-existing', actor: 'human', prUrl: card.prUrl,
+      sha: typeof sha === 'string' ? sha : card.commitSha,
+      at: new Date().toISOString(),
+    })
     this._commit()
     return clone(card)
   }

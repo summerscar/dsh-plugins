@@ -147,6 +147,11 @@ window.__ModuleLoader__.load({
       actConfirmCommit: "确认 commit",
       actCreatePr: "推送分支并创建 PR",
       actMarkDone: "标记完成",
+      actReturnToBuild: "退回构建", notePromptReturnBuild: "说明需要修改的内容，builder 会据此继续。",
+      actReturnToPlan: "退回修改计划", notePromptReturnPlan: "说明计划需要修改的地方，builder 会据此重做。",
+      actReturnToInbox: "退回 Inbox", notePromptReturnInbox: "说明缺少的信息，卡片会回到 Inbox 等你补充。",
+      actResupply: "补充信息并重新派发", notePromptResupply: "补充信息（必填）：",
+      actCommitExisting: "确认提交（回炉）", actPushExisting: "推送更新草稿 PR",
       setupTitle: "worktree 准备",
       setupPurpose: "每次派生新 worktree 时：从项目根复制指定本地文件，然后运行准备命令。",
       setupCopyLabel: "要复制的本地文件",
@@ -451,6 +456,11 @@ window.__ModuleLoader__.load({
       actConfirmCommit: "Confirm commit",
       actCreatePr: "Push branch & create PR",
       actMarkDone: "Mark done",
+      actReturnToBuild: "Return to build", notePromptReturnBuild: "Describe what needs changing; the builder will continue from it.",
+      actReturnToPlan: "Return to plan", notePromptReturnPlan: "Describe what the plan should change; the builder will redo it.",
+      actReturnToInbox: "Return to inbox", notePromptReturnInbox: "Describe the missing information; the card returns to Inbox for you to supply it.",
+      actResupply: "Add info and redispatch", notePromptResupply: "Additional information (required):",
+      actCommitExisting: "Confirm commit (rework)", actPushExisting: "Push update to draft PR",
       setupTitle: "Worktree setup",
       setupPurpose: "On each new worktree: copy selected local files from the project root, then run the setup command.",
       setupCopyLabel: "Local files to copy",
@@ -950,7 +960,28 @@ window.__ModuleLoader__.load({
         key: label, onClick: () => void run(fn),
         disabled: busy || extra.disabled === true, title: extra.title,
       }, label))
-      if (card.status === 'inbox') add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) })
+      const askNote = (message) => {
+        const value = typeof window?.prompt === 'function' ? window.prompt(message) : null
+        return typeof value === 'string' && value.trim() !== '' ? value.trim() : null
+      }
+      if (card.status === 'inbox') {
+        if (card.needsHumanInfo === true) {
+          add(t('actResupply'), async () => {
+            const note = askNote(t('notePromptResupply'))
+            if (note === null) return
+            await callApi('POST', `/cards/${card.id}/resupply`, { note })
+          })
+        } else {
+          add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) })
+        }
+      }
+      if (card.status === 'triage') {
+        add(t('actReturnToInbox'), async () => {
+          const note = askNote(t('notePromptReturnInbox'))
+          if (note === null) return
+          await callApi('POST', `/cards/${card.id}/transition`, { to: 'inbox', actor: 'human', note })
+        })
+      }
       // Approving IS the human gate: one click moves plan-review -> build AND
       // continues the live session, so build starts running instead of leaving a
       // card with no button. Both gates stay server-side — only a human may take
@@ -964,6 +995,11 @@ window.__ModuleLoader__.load({
           await callApi('POST', `/cards/${card.id}/transition`, { to: 'build', actor: 'human' })
           await callApi('POST', `/cards/${card.id}/continue`)
         }, (working || !hasReport) ? { disabled: true, title: working ? t('approvePlanWaiting') : t('approvePlanNoReport') } : {})
+        add(t('actReturnToPlan'), async () => {
+          const note = askNote(t('notePromptReturnPlan'))
+          if (note === null) return
+          await callApi('POST', `/cards/${card.id}/return-to-plan`, { note, takeOver: false })
+        }, working ? { disabled: true } : {})
       }
       // Take-over pulls one card out of the engine's control, persisted on the
       // card. Available on any live (non-terminal) card (P4-6, third entry).
@@ -990,13 +1026,22 @@ window.__ModuleLoader__.load({
         }, t('returnToEngine')))
       }
       if (card.status === 'review') {
-        if (!card.commitSha) add(t('actConfirmCommit'), async () => {
+        add(t('actReturnToBuild'), async () => {
+          const note = askNote(t('notePromptReturnBuild'))
+          if (note === null) return
+          await callApi('POST', `/cards/${card.id}/return-to-build`, { note })
+        })
+        if (!card.commitSha || !card.prUrl) add(t('actConfirmCommit'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'confirm-commit' })
-          await callApi('POST', `/cards/${card.id}/commit`)
+          await callApi('POST', card.prUrl ? `/cards/${card.id}/commit-existing` : `/cards/${card.id}/commit`)
         })
         if (card.commitSha && !card.prUrl) add(t('actCreatePr'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'create-pr' })
           await callApi('POST', `/cards/${card.id}/create-pr`)
+        })
+        if (card.commitSha && card.prUrl) add(t('actPushExisting'), async () => {
+          await callApi('POST', `/cards/${card.id}/authorize`, { action: 'push-existing' })
+          await callApi('POST', `/cards/${card.id}/push-existing`)
         })
         add(t('actMarkDone'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'done', actor: 'human' }) })
       }
