@@ -535,17 +535,20 @@ test('AE-9: an orphan is reported for a human, never cleaned up or rebuilt', asy
 })
 
 // ---------------------------------------------------------------------------
-// AE-10 — the permission level is never over-claimed
+// AE-10 — the permission level is read back, never over-claimed
 // ---------------------------------------------------------------------------
 
-test('AE-10: permissionEnforced stays false and is exposed as a config value only', async () => {
+test('AE-10: permissionEnforced follows live sandbox readback and fails closed offline', async () => {
   const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     await runTick({ store: f.store, status: f.status, deps: f.deps })
-    assert.equal(f.status.permissionEnforced, false, 'the engine never claims enforcement')
+    // The offline fake deps intentionally omit the host sandboxPolicy resolver.
+    // P0-2 derives the value instead of hard-coding false: no resolver → false.
+    const expected = typeof f.deps.resolveSandboxMode === 'function'
+    assert.equal(f.status.permissionEnforced, expected, 'permissionEnforced is derived from the live resolver')
 
     const res = f.get('/status')
-    assert.equal(res.body.engine.permissionEnforced, false)
+    assert.equal(res.body.engine.permissionEnforced, expected)
     // The project's permission is reported as a CONFIG value, not an enforcement claim.
     const project = res.body.counts && f.store.getProject(f.project.id)
     assert.equal(typeof project.defaultPermission, 'string')

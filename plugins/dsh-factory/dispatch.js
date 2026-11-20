@@ -36,6 +36,90 @@ import { createWorktree, removeWorktree, worktreePathFor } from './worktree.js'
 import { hasPreparation, prepareWorktree } from './worktree-setup.js'
 
 /**
+ * Work modes are a PROJECT setting orthogonal to the autonomy tier (PRD §5.12).
+ * The host's SandboxMode enum has exactly three values; `auto` is NOT one of
+ * them — it is a permission preset that must never be written into the
+ * `sandbox/mode` seed. Mapping an unknown mode returns null so dispatch fails
+ * closed instead of running an agent under the profile's implicit default.
+ */
+export const SANDBOX_MODES = new Set(['read-only', 'workspace-write', 'danger-full-access'])
+export const WORK_MODES = new Set(['workspace-write', 'full-access', 'auto-review'])
+export const DEFAULT_WORK_MODE = 'workspace-write'
+export const AUTO_REVIEW_PLUGIN_MODULE = '@deepseek-ai/dsh-experimental-auto-review'
+
+/**
+ * Project work mode → host SandboxMode. `auto-review` has no SandboxMode of its
+ * own: P2 selects `AUTO_PRESET='auto'` on the live session, which internally
+ * uses full access plus a per-tool model review. Until that preset wiring
+ * lands, dispatch refuses the mode rather than silently granting full access.
+ */
+export function sandboxModeForWorkMode(workMode) {
+  const mode = workMode === undefined || workMode === null || workMode === '' ? DEFAULT_WORK_MODE : workMode
+  if (mode === 'workspace-write') return 'workspace-write'
+  if (mode === 'full-access') return 'danger-full-access'
+  return null
+}
+
+/** Resolve the required mode or throw a readable, fail-closed error. */
+function requiredModeForWorkMode(workMode) {
+  const mode = sandboxModeForWorkMode(workMode)
+  if (mode !== null) return mode
+  const label = workMode === undefined || workMode === null || workMode === '' ? DEFAULT_WORK_MODE : String(workMode)
+  if (label === 'auto-review') {
+    throw new Error('无法派发会话：auto-review 档需要宿主 permission preset，本期尚未接入；拒绝在无审查边界的会话中运行')
+  }
+  throw new Error(`无法派发会话：未知工作模式 ${label}；拒绝在未知沙箱边界的会话中运行`)
+}
+
+/**
+ * P0-3: read the experimental auto-review plugin's enablement from the host.
+ * `listPlugins()` is async and may arrive after apply(); anything missing,
+ * failed, disabled or not-yet-active is reported as unavailable so P2's
+ * work-mode gate treats the option as disabled (fail closed). No UI wiring.
+ */
+export async function readAutoReviewPluginState(ctx) {
+  const unavailable = (reason, extra = {}) => ({
+    available: false, enabled: false, moduleName: null, fiberPhase: null, diagnostic: null, reason, ...extra,
+  })
+  let manager
+  try {
+    manager = typeof ctx?.get === 'function' ? ctx.get('pluginManager') : undefined
+  } catch (error) {
+    return unavailable(`pluginManager unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (manager === undefined || manager === null || typeof manager.listPlugins !== 'function') {
+    return unavailable('pluginManager unavailable; auto-review treated as disabled')
+  }
+  let rows
+  try {
+    rows = await manager.listPlugins()
+  } catch (error) {
+    return unavailable(`pluginManager.listPlugins failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (!Array.isArray(rows)) return unavailable('pluginManager.listPlugins returned no inventory')
+  const isAutoReview = (name) => typeof name === 'string'
+    && (name === AUTO_REVIEW_PLUGIN_MODULE || name.startsWith(`${AUTO_REVIEW_PLUGIN_MODULE}/`)
+      || name === 'dsh-experimental-auto-review' || name.startsWith('dsh-experimental-auto-review/'))
+  const entry = rows.find((row) => isAutoReview(row?.moduleName))
+  if (entry === undefined) return unavailable('experimental auto-review plugin not installed')
+  const enabled = entry.enabled === true
+  const fiberPhase = typeof entry.fiberPhase === 'string' ? entry.fiberPhase : null
+  const diagnostic = typeof entry.diagnostic === 'string' && entry.diagnostic !== '' ? entry.diagnostic : null
+  const available = enabled && fiberPhase === 'active' && diagnostic === null
+  return {
+    available,
+    enabled,
+    moduleName: typeof entry.moduleName === 'string' ? entry.moduleName : null,
+    fiberPhase,
+    diagnostic,
+    reason: available ? null
+      : !enabled ? 'plugin disabled'
+        : fiberPhase !== 'active' ? `plugin not active (fiberPhase=${fiberPhase ?? 'none'})`
+          : `plugin failed: ${diagnostic}`,
+  }
+}
+
+/**
  * Build the `setup(agentCtx)` a dispatched agent runs before its first turn.
  *
  * Mounts the deployment's CURRENT agent preset onto this agent's scope
@@ -157,6 +241,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
     created = await port.createSession({
       cwd: worktreePath,
       permission: project.defaultPermission,
+      workMode: project.workMode,
       model: project.defaultModel,
       // `setup(agentCtx)` runs before the first prompt assembly: mount the user's
       // preset (gives the agent its real tool set) and register the per-session
@@ -225,7 +310,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
     // Level 1 — the session is still live: cheapest, no rebuild.
     if (sessionActive === true && previousSessionId !== undefined) {
       try {
-        await port.followupSession({ sessionId: previousSessionId, message: text })
+        await port.followupSession({ sessionId: previousSessionId, message: text, workMode: project.workMode })
         store.releaseClaim(cardId, claim.token)
         store.clearDispatchFailures(cardId)
         store.recordContinuation(cardId, { sessionId: previousSessionId, mode: 'followup' })
@@ -245,6 +330,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
         created = await port.resumeSession({
           resumeSessionId: previousSessionId,
           cwd: worktreePath,
+          workMode: project.workMode,
           setup: makeAgentSetup({ store, cardId, locale }),
           firstMessage: text,
         })
@@ -265,6 +351,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
     created = await port.createSession({
       cwd: worktreePath,
       permission: project.defaultPermission,
+      workMode: project.workMode,
       model: project.defaultModel,
       setup: makeAgentSetup({ store, cardId, locale }),
       firstMessage: text,
@@ -317,8 +404,8 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
  * using live getters (the same pattern the UI entry uses), and a project-level
  * `defaultModel` overrides only the model id. Dispatch fails fast when neither
  * source can provide a route, so the failure is recorded on the card instead of
- * leaving a session that silently does nothing. `permission` is accepted for API
- * compatibility but is not wired into the live session yet.
+ * leaving a session that silently does nothing. `permission` is kept for API
+ * compatibility but is advisory: the live boundary comes from `workMode`.
  */
 let cachedCreateUserMessage = null
 async function resolveCreateUserMessage() {
@@ -343,20 +430,20 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
   // cannot pin or verify the session's file boundary. Read via ctx.get, never a
   // direct property (undeclared Cordis proxy properties throw).
   const sandboxPolicy = typeof ctx?.get === 'function' ? ctx.get('sandboxPolicy') : undefined
-  // The only mode a dispatched agent may run in. A profile defaulting to
-  // danger-full-access would otherwise give it the harness's full file access.
-  const REQUIRED_SANDBOX_MODE = 'workspace-write'
+  // Per-project work mode decides the SandboxMode. A profile defaulting to
+  // danger-full-access would otherwise give an agent the harness's full file
+  // access; the required mode is always seeded and read back on every path.
   // Read the resolved policy back from a live session and refuse anything but
   // the required boundary. Used by all three session paths (create, resume,
   // followup): a pre-fix session may lack the sandbox/mode event and fall back
   // to the profile default, which on some profiles is danger-full-access.
-  const assertSandboxMode = (session) => {
+  const assertSandboxMode = (session, expectedMode) => {
     if (sandboxPolicy === undefined || sandboxPolicy === null || typeof sandboxPolicy.resolve !== 'function') {
-      throw new Error('无法派发会话：宿主未提供 sandboxPolicy 服务，无法保证会话在 workspace-write 沙箱内运行')
+      throw new Error(`无法派发会话：宿主未提供 sandboxPolicy 服务，无法保证会话在 ${expectedMode} 沙箱内运行`)
     }
     const resolved = sandboxPolicy.resolve({ session })
-    if (resolved?.mode !== REQUIRED_SANDBOX_MODE) {
-      throw new Error(`无法派发会话：沙箱模式实际为 ${resolved?.mode ?? '未知'}，所需为 ${REQUIRED_SANDBOX_MODE}；拒绝在无 workspace-write 边界的会话中运行`)
+    if (resolved?.mode !== expectedMode) {
+      throw new Error(`无法派发会话：沙箱模式实际为 ${resolved?.mode ?? '未知'}，所需为 ${expectedMode}；拒绝在无 ${expectedMode} 边界的会话中运行`)
     }
   }
   // User-configured default route. Read via ctx.get, never ctx.agentDefaultModel:
@@ -392,30 +479,29 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
     },
 
     /** Level 1: push a message into the session that is still alive. */
-    async followupSession({ sessionId, message }) {
+    async followupSession({ sessionId, message, workMode }) {
+      const expectedMode = requiredModeForWorkMode(workMode)
       const agent = agents.get(sessionId)
       if (agent === undefined || agent === null || typeof agent.followup !== 'function') {
         throw new Error(`会话 ${sessionId} 已不可用，无法直接接续`)
       }
-      // A session created before the sandbox fix may still be live in a
-      // non-workspace-write mode. Refuse to continue it; do not dispose a live
-      // session we do not own — the error lets continueCard fall back safely.
-      assertSandboxMode(agent.session)
+      // A session pinned to another work mode (e.g. an old workspace-write
+      // session after upgrading to full-access) is refused here. Do not dispose
+      // a live session we do not own — the error lets continueCard fall back.
+      assertSandboxMode(agent.session, expectedMode)
       await send({ agent }, message)
       return { sessionId }
     },
 
-    async createSession({ cwd, setup, firstMessage, model: projectModel, permission: requestedPermission }) {
+    async createSession({ cwd, setup, firstMessage, model: projectModel, permission, workMode }) {
+      // The work mode is authoritative; `permission` (project.defaultPermission)
+      // is kept for API compatibility only and no longer gates dispatch.
+      const expectedMode = requiredModeForWorkMode(workMode)
       // Safety gate: dispatch must run inside a real file boundary. If the host
       // cannot report a sandbox policy, refuse before creating anything — an
       // unverified session is an agent with the harness's full filesystem access.
       if (sandboxPolicy === undefined || sandboxPolicy === null || typeof sandboxPolicy.resolve !== 'function') {
-        throw new Error('无法派发会话：宿主未提供 sandboxPolicy 服务，无法保证会话在 workspace-write 沙箱内运行')
-      }
-      // project.defaultPermission is advisory only: anything other than the
-      // required mode is refused, never silently downgraded to full access.
-      if (requestedPermission !== undefined && requestedPermission !== REQUIRED_SANDBOX_MODE) {
-        throw new Error(`无法派发会话：请求的权限档 ${requestedPermission} 不等于 ${REQUIRED_SANDBOX_MODE}；派发会话只允许在 workspace-write 沙箱中运行`)
+        throw new Error(`无法派发会话：宿主未提供 sandboxPolicy 服务，无法保证会话在 ${expectedMode} 沙箱内运行`)
       }
       // Fail fast instead of leaning on the loop's silent catch: with no route a
       // session would start, do nothing, and never report why. AgentModel.current()
@@ -440,14 +526,14 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
       // timing race — unlike appending from setup. seed events need a full
       // envelope with seq contiguous from 0; sandbox/mode is a non-turn event
       // so it does not affect turn accounting.
-      const seed = [{ type: 'sandbox/mode', seq: 0, time: Date.now(), data: { mode: REQUIRED_SANDBOX_MODE } }]
+      const seed = [{ type: 'sandbox/mode', seq: 0, time: Date.now(), data: { mode: expectedMode } }]
       const sessionId = randomUUID()
       const handle = await agents.create({ sessionId, meta: { cwd }, seed, agentOptions, setup })
       // Verify what actually took effect, not what we asked for. Read the resolved
       // policy back from the live session; a mismatch means the profile overrode
       // us, so dispose and refuse rather than run with an unknown boundary.
       try {
-        assertSandboxMode(handle.agent?.session)
+        assertSandboxMode(handle.agent?.session, expectedMode)
         await send(handle, firstMessage)
       } catch (error) {
         try { await handle.dispose() } catch { /* best effort */ }
@@ -461,7 +547,8 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
      * deliberately absent — the host rejects it alongside `resumeSessionId`.
      * A missing or corrupt history rejects, which is what drives level 3.
      */
-    async resumeSession({ resumeSessionId, cwd, setup, firstMessage }) {
+    async resumeSession({ resumeSessionId, cwd, setup, firstMessage, workMode }) {
+      const expectedMode = requiredModeForWorkMode(workMode)
       if (typeof agents.resume !== 'function') throw new Error('host has no agents.resume; cannot rebuild the session')
       const handle = await agents.resume({
         resumeSessionId,
@@ -473,7 +560,7 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
         // event, so it resumes in the profile default (possibly full-access).
         // Refuse it here; the error lets continueCard fall to level 3, which
         // goes through createSession's seed gate.
-        assertSandboxMode(handle.agent?.session)
+        assertSandboxMode(handle.agent?.session, expectedMode)
         await send(handle, firstMessage)
       } catch (error) {
         try { await handle.dispose() } catch { /* best effort */ }

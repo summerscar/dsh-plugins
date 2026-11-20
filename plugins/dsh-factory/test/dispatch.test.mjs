@@ -266,21 +266,22 @@ test('createSession refuses when resolved sandbox mode is NOT workspace-write an
   assert.equal(seen.disposed, 1, 'the unverified session must be disposed')
 })
 
-test('createSession never allows a danger-full-access project permission (capped at workspace-write)', async () => {
-  const { ctx, seen } = makeHostCtx()
-  const port = createHostPort({ ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
-  await assert.rejects(
-    () => port.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', permission: 'danger-full-access' }),
-    /workspace-write/,
-    'auto-dispatch must refuse a full-access permission request',
-  )
-  assert.equal(seen.create, null, 'no session created for a disallowed permission')
-  // And the legitimate workspace-write permission is accepted.
-  const ok = makeHostCtx()
-  const okPort = createHostPort({ ctx: ok.ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
-  await okPort.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', permission: 'workspace-write' })
-  assert.ok(ok.seen.create, 'workspace-write permission is allowed')
-  const pin = ok.seen.create.seed.find((e) => e.type === 'sandbox/mode')
-  assert.equal(pin.data.mode, 'workspace-write')
+test('createSession: workMode is authoritative, permission is advisory (P0-1)', async () => {
+  // A dangerous legacy `permission` alone must NOT grant full access: with no
+  // workMode the mode falls back to the fail-closed default workspace-write.
+  const legacy = makeHostCtx()
+  const legacyPort = createHostPort({ ctx: legacy.ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await legacyPort.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', permission: 'danger-full-access' })
+  assert.ok(legacy.seen.create, 'an advisory permission does not block creation')
+  const legacyPin = legacy.seen.create.seed.find((e) => e.type === 'sandbox/mode')
+  assert.equal(legacyPin.data.mode, 'workspace-write', 'permission=danger-full-access never raises the boundary by itself')
+
+  // An explicit full-access workMode is the only way to request that boundary.
+  const full = makeHostCtx({ resolvedMode: 'danger-full-access' })
+  const fullPort = createHostPort({ ctx: full.ctx, createUserMessage: ({ content }) => ({ id: 'm', role: 'user', content }) })
+  await fullPort.createSession({ cwd: '/workspace/repo', setup: () => {}, firstMessage: 'go', permission: 'workspace-write', workMode: 'full-access' })
+  const fullPin = full.seen.create.seed.find((e) => e.type === 'sandbox/mode')
+  assert.equal(fullPin.data.mode, 'danger-full-access', 'workMode wins over permission')
+  assert.equal(full.seen.disposed, 0)
 })
 

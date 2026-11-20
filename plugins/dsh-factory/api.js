@@ -104,8 +104,9 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           // again look like "the command worked but the agent has no tools".
           toolsRegistered: runtime.toolsRegistered === true,
           // Autonomy engine state, readable at any time: why nothing is happening is
-          // never hidden. `permissionEnforced` stays false until the host really
-          // wires the permission level into sessions (PRD §9.2, no false claim).
+          // never hidden. `permissionEnforced` is derived each tick from live
+          // session sandbox reads (P0-2); `autoReviewPluginState` is the host
+          // plugin inventory read-back (P0-3). Both fail closed when unavailable.
           // The effective global cap and its source are computed from the same
           // helper the engine uses, so the UI cannot show a number that differs
           // from what the scheduler enforces (P4 §3.3.3/§3.3.4).
@@ -339,6 +340,21 @@ function engineStatus(engine, globalCap) {
     projects: Array.isArray(engine.projects) ? engine.projects.map((entry) => ({ ...entry })) : [],
     orphans: Array.isArray(engine.orphans) ? engine.orphans.map((entry) => ({ ...entry })) : [],
     permissionEnforced: engine.permissionEnforced === true,
+    permissionEnforcedReason: typeof engine.permissionEnforcedReason === 'string' ? engine.permissionEnforcedReason : null,
+    // The host plugin inventory is async; only the latest tick's snapshot is
+    // exposed here, so a route can never block on pluginManager. Missing state
+    // is rendered as disabled, never as available.
+    autoReviewPluginState: (() => {
+      const plugin = engine.autoReviewPluginState ?? {}
+      return {
+        available: plugin.available === true,
+        enabled: plugin.enabled === true,
+        moduleName: typeof plugin.moduleName === 'string' ? plugin.moduleName : null,
+        fiberPhase: typeof plugin.fiberPhase === 'string' ? plugin.fiberPhase : null,
+        diagnostic: typeof plugin.diagnostic === 'string' ? plugin.diagnostic : null,
+        reason: typeof plugin.reason === 'string' ? plugin.reason : null,
+      }
+    })(),
     // Effective global concurrency cap + where it came from (settings / config
     // / default), so the UI can render the read-back value and its source (P4 §3.3.4).
     globalMaxActive: globalCap?.value ?? null,

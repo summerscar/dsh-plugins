@@ -38,6 +38,7 @@ export { FactoryStore } from './store.js'
 export { createApi } from './api.js'
 export * as autonomy from './autonomy.js'
 export { dispatchCard, continueCard, createHostPort } from './dispatch.js'
+export { sandboxModeForWorkMode, readAutoReviewPluginState } from './dispatch.js'
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
 export { buildSessionContext, attachSessionContext } from './session-context.js'
@@ -53,7 +54,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-18.9'
+export const BUILD = 'factory-2026-11-20.1'
 
 export const name = 'dsh-factory'
 

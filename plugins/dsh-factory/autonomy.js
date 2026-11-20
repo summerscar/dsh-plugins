@@ -26,7 +26,7 @@
  * `deps` port, so the whole chain is exercised offline with a fake store and
  * fake host — no real timer, no real `gh`, no real sessions.
  */
-import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
+import { continueCard, createHostPort, dispatchCard, readAutoReviewPluginState, SANDBOX_MODES } from './dispatch.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { localeFromContext } from './session-context.js'
 import { precheckReceipt } from './receipt.js'
@@ -112,9 +112,9 @@ export function effectiveGlobalMaxActive(store, config = {}) {
  * The engine's observable state, read fresh by `GET /status` on every request.
  * `timerReason` answers "why is nothing happening" instead of failing silently
  * (P1 lesson): a missing host timer service, or missing project config, is always
- * visible here. `permissionEnforced` is deliberately false and must stay that
- * way until the host actually wires the permission level into sessions (PRD §9.2
- * — do not claim write-restriction is enforced when it is only a config value).
+ * visible here. `permissionEnforced` is derived once per tick from the real
+ * sandbox policy of live sessions (P0-2): the host has no global "is enforced"
+ * read, so an unavailable resolver or an unreadable session fails closed.
  */
 export function createEngineStatus() {
   return {
@@ -135,6 +135,68 @@ export function createEngineStatus() {
     projects: [],
     orphans: [],
     permissionEnforced: false,
+    permissionEnforcedReason: 'no tick has resolved a live sandbox policy yet',
+    autoReviewPluginState: {
+      available: false, enabled: false, moduleName: null, fiberPhase: null, diagnostic: null,
+      reason: 'not checked yet',
+    },
+  }
+}
+
+/**
+ * P0-2: derive the enforcement signal from LIVE session policy reads. A fake
+ * deps without the resolver, an empty session set, or any unreadable mode all
+ * fail closed to `false` with a reason a human can act on.
+ */
+export async function resolvePermissionEnforcement({ deps, activeSessionIds } = {}) {
+  const resolveMode = typeof deps?.resolveSandboxMode === 'function' ? deps.resolveSandboxMode : undefined
+  if (resolveMode === undefined) {
+    return { enforced: false, reason: 'sandboxPolicy resolver unavailable (fail-closed)' }
+  }
+  const ids = activeSessionIds instanceof Set ? [...activeSessionIds] : Array.isArray(activeSessionIds) ? activeSessionIds : []
+  if (ids.length === 0) return { enforced: false, reason: 'no active session to verify' }
+  const modes = new Set()
+  for (const sessionId of ids) {
+    let mode = null
+    try { mode = await resolveMode(sessionId) } catch { mode = null }
+    if (typeof mode !== 'string' || !SANDBOX_MODES.has(mode)) {
+      return { enforced: false, reason: `session ${sessionId} has no readable SandboxMode (fail-closed)` }
+    }
+    modes.add(mode)
+  }
+  return { enforced: true, reason: `verified ${ids.length} active session(s): ${[...modes].join(', ')}` }
+}
+
+/** P0-3: a missing/failed reader is reported as a disabled option, never as ready. */
+export async function readAutoReviewStateForStatus(deps) {
+  const read = typeof deps?.readAutoReviewPluginState === 'function' ? deps.readAutoReviewPluginState : undefined
+  if (read === undefined) {
+    return {
+      available: false, enabled: false, moduleName: null, fiberPhase: null, diagnostic: null,
+      reason: 'plugin state reader unavailable (auto-review disabled)',
+    }
+  }
+  try {
+    const state = await read()
+    if (state === undefined || state === null || typeof state !== 'object') {
+      return {
+        available: false, enabled: false, moduleName: null, fiberPhase: null, diagnostic: null,
+        reason: 'plugin state unreadable (auto-review disabled)',
+      }
+    }
+    return {
+      available: state.available === true,
+      enabled: state.enabled === true,
+      moduleName: typeof state.moduleName === 'string' ? state.moduleName : null,
+      fiberPhase: typeof state.fiberPhase === 'string' ? state.fiberPhase : null,
+      diagnostic: typeof state.diagnostic === 'string' ? state.diagnostic : null,
+      reason: typeof state.reason === 'string' ? state.reason : null,
+    }
+  } catch (error) {
+    return {
+      available: false, enabled: false, moduleName: null, fiberPhase: null, diagnostic: null,
+      reason: `plugin state read failed: ${error instanceof Error ? error.message : String(error)}`,
+    }
   }
 }
 
@@ -205,6 +267,14 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
       activeByProject.set(card.projectId, (activeByProject.get(card.projectId) ?? 0) + 1)
     }
     let activeCount = activeSessionIds.size
+
+    // P0-2/P0-3: both signals are read from the LIVE host once per tick, never
+    // from config. Fail-closed helpers keep the status honest on offline fakes,
+    // during startup, and while the plugin manager is not ready yet.
+    const enforcement = await resolvePermissionEnforcement({ deps, activeSessionIds })
+    status.permissionEnforced = enforcement.enforced
+    status.permissionEnforcedReason = enforcement.reason
+    status.autoReviewPluginState = await readAutoReviewStateForStatus(deps)
 
     for (const project of store.listProjects()) {
       const report = {
@@ -476,6 +546,22 @@ export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortF
       if (agents === undefined || agents === null || typeof agents.get !== 'function') return false
       return agents.get(sessionId) !== undefined && agents.get(sessionId) !== null
     },
+    // P0-2: the only real per-session read the host offers. Resolve against the
+    // live agent's session so profile defaults and per-session overrides agree.
+    resolveSandboxMode: (sessionId) => {
+      try {
+        const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
+        const policy = typeof ctx?.get === 'function' ? ctx.get('sandboxPolicy') : undefined
+        if (agents === undefined || agents === null || typeof agents.get !== 'function') return null
+        if (policy === undefined || policy === null || typeof policy.resolve !== 'function') return null
+        const session = agents.get(sessionId)?.session
+        if (session === undefined || session === null) return null
+        const mode = policy.resolve({ session })?.mode
+        return typeof mode === 'string' && SANDBOX_MODES.has(mode) ? mode : null
+      } catch { return null }
+    },
+    // P0-3: inventory read on demand; P2 gates the work-mode option on this.
+    readAutoReviewPluginState: () => readAutoReviewPluginState(ctx),
     ghPort,
   }
 }
