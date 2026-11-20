@@ -336,7 +336,7 @@
 | **真机未覆盖：60 秒 tick 的完整自动交付；`push-existing` 端到端；`return-to-plan` 续会话失败回滚** | 交付是 Dev/QA 直接调 `runAutoDelivery` + 真实 git port 验的；引擎接线由单测与 P3 修 bug 时的 tick 证据覆盖，但没在真机上等过一次完整 tick 交付。 | 一次真机 tick 交付、一次真机 push-existing、一次真机回滚。 |
 | **P1/P2a 残留：没有打包好的 review preset；状态接口里 auto-review 可用性最多一分钟陈旧** | 记为分期限制，不是缺陷。 | 包内 review preset、实时插件状态读。 |
 | **「自动交付」已授权但未设定时与最终安全评审** | 常驻授权止于 draft PR；何时跑、以及最终安全评审都未设定。 | 调度与安全评审的决定。 |
-| **`/factory` 帮助文本：「commit / push / PR 仍需人工批准」** | `plugins/dsh-factory/commands.js:89` 的产品可见文案在「自动交付」档下已不准确——该档机器会 commit、push、开 draft PR。本轮未改：这句文案被两条正则断言锁定——`plugins/dsh-factory/test/dev-factory-command.test.mjs:77` 与 `plugins/dsh-factory/test/qa-factory-command.test.mjs:70`——测试归 QA。 | 文案修改需与两条测试更新一起落（测试由 QA 负责）。 |
+| ~~**`/factory` 帮助文本：「commit / push / PR 仍需人工批准」**~~ | `plugins/dsh-factory/commands.js` 的产品可见文案在「自动交付」档下已不准确——该档机器会 commit、push、开 draft PR，而 merge 与标完成仍留给人。 | **已完成**：文案改为写明 L4 会自己 commit / push / 开 draft PR，merge 与标完成始终需要人；锁旧文案的两条正则断言（Dev 与 QA 各一条）已同步更新为锁新文案的关键片段，旧措辞在代码与测试里已无残留。 |
 
 ### 5.2 本轮 UI/UX 明确不做的
 

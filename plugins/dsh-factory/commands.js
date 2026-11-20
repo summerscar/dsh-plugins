@@ -86,7 +86,7 @@ export function factoryHelp() {
     `/factory add [absolute-repo-path] [project name] — hand a git repo to the agent, which inspects it and creates the project`,
     `/factory inspect <absolute-repo-path> — show objective signals only`,
     `add without a path uses this session's working directory.`,
-    `Creating a project is local and reversible; commit / push / PR still need human approval.`,
+    `Creating a project is local and reversible; auto-delivery (L4) may commit, push and open a draft PR by itself, but merging and marking done always need you.`,
   ].join('\n')
 }
 

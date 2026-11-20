@@ -67,7 +67,8 @@ test('K3: bare /factory and unknown subcommands give help and write nothing', ()
   }
   assert.match(parseFactoryLine('frobnicate /workspace/x').error, /未知子命令/)
   assert.match(factoryHelp(), /\/factory add/)
-  assert.match(factoryHelp(), /commit \/ push \/ PR still need human approval/)
+  assert.match(factoryHelp(), /auto-delivery \(L4\) may commit, push and open a draft PR/, 'help states what L4 does by itself')
+  assert.match(factoryHelp(), /merging and marking done always need you/, 'help states what still needs a human')
 })
 
 test('K2: /factory add with no path is VALID and means the session cwd (not an error)', () => {
