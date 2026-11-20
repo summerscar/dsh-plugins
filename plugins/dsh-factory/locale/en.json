@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Project Factory",
-    "description": "A multi-project development factory for DSH: manage projects on kanban boards, dispatch each card into its own session and git worktree, ship six phase skills plus a skill that adds a repository as a project, and require human approval before any commit, push or PR."
+    "description": "A multi-project development factory for DSH: manage projects on kanban boards, dispatch each card into its own session and git worktree, ship six phase skills plus a skill that adds a repository as a project, and gate delivery by autonomy tier — human approval at every tier but an explicit auto-delivery tier that stops at a draft PR."
   },
   "settings": "Project Factory",
   "navLabel": "Project Factory",

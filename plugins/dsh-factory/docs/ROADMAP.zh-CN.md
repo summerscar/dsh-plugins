@@ -10,10 +10,10 @@
 三个不可让渡的点：
 
 1. **一张卡 = 一个独立会话 + 一个独立工作区**。卡与卡之间不共享工作目录，也不共享依赖。
-2. **commit / push / 开 PR 永远由人批准**。插件可以自动准备一切，但不会自己把改动推出去。
+2. **交付止于 draft PR，合并永远是人的动作。** 默认档位下，commit / push / 开 PR 由人批准；只有显式选定的「自动交付」档让机器把一个已评审的 head 交付到 draft PR 为止（§2.5）。
 3. **多项目是一等公民**。每个项目有自己的根路径、一块看板、卡和配置，互不干扰。
 
-长期目标是「定时发现 issue → 分析 → 自动开发 → 交付出 draft PR」，但**合并永远留给人**。
+长期目标——「定时发现 issue → 分析 → 自动开发 → 交付出 draft PR」——在「自动交付」档上已有一条机器路径（§2.5）；但**合并永远留给人**。
 
 ## 2. 现在能做什么
 
@@ -56,8 +56,10 @@
 
 ### 2.5 授权闸门
 
-- 「确认提交」与「推送分支并创建 PR」是两个独立的人工动作，没有批准就没有任何 git 写。
-- 开 PR **一律是 draft**（所有自治档位，含「手动」档）；自动模式下可以自动走到 draft PR，但**不自动合并**、不自动标记完成、不自动提权。
+- 「确认提交」与「推送分支并创建 PR」在 `manual`、`you-approve`、`machine-approve` 三档下是两个独立的人工动作，没有批准就没有任何 git 写。
+- 「自动交付」档下，这两个人工动作被一道**机器闸门**取代，每个引擎 tick 在同一处求值一次：项目档位为 `auto-delivery`；项目未暂停、卡未被接管、卡不待人工信息；卡在 `review`；其 verdict 为 `approved` 且 `blocking` 为空；verdict 的 `reviewerSessionId` 等于该卡登记的 `reviewSessionId`；verdict 的 `reviewedHead` 仍等于从 git 重读的 worktree 当前 HEAD。受保护或 base 分支一律拒绝，凭证或仓库绑定缺失时 fail-closed。闸门按 head 幂等：已交付的 head 永不重复交付，失败的 head 可重试、已完成的步骤跳过。
+- **verdict 认证的树就是交付的树。** 若被评审的 head 已是该卡的 `commitSha`、或 worktree 在该 head 上是干净的，则跳过提交；若工作树有未提交改动，拒绝交付且零 git 写——那些改动从未经评审。（提交后比对漂移的检查只保留在注入的旧式测试端口上，真实 git 路径不走它。）
+- 开 PR **一律是 draft**（所有档位，含「手动」）；「自动交付」档的机器可以开出并更新 draft PR，但**不自动合并**、不自动标记完成、不自动提权——授权止于 draft PR。
 - 拒绝向受保护分支推送、拒绝空 diff、不 force push。
 
 ### 2.6 项目创建助手
@@ -75,15 +77,16 @@
 
 ### 2.8 自治档位
 
-语义三档，存储与界面都写作 `manual` / `you-approve` / `machine-approve`；新项目默认 `manual`。旧的 `L0` / `L1` / `L2` 与 `autoStart` / `autoApprove` 两开关已不在界面、存储、引擎与测试里出现；唯一的开关是 `autoDispatch`，只属于「你批准」档。不设仓库或卡片白名单。
+存储的是四个语义档：`manual` / `you-approve` / `machine-approve` / `auto-delivery`；新项目默认 `manual`。界面把它们呈现为**单滑杆上的五个显示档 L0–L4**：L0 `manual`、L1 `you-approve`（关自动派发）、L2 `you-approve`（开自动派发）、L3 `machine-approve`、L4 `auto-delivery`。唯一的开关是 `autoDispatch`，只属于「你批准」档；`machine-approve` 不读任何开关，`auto-delivery` 显式忽略 `autoDispatch`——它继承「机器批准」的全部能力，并多加一项独立设闸的权力：交付已评审的 head。不设仓库或卡片白名单。
 
 - `manual`（手动）：严格零动作——不发现、不派发、不批准。
 - `you-approve`（你批准）：发现 issue，其唯一开关 `autoDispatch` 决定其余。开：引擎走 `inbox -> triage` 一条边，卡片停在 `plan-review` 等人；关：引擎只建 inbox 卡。
 - `machine-approve`（机器批准）：多走一条自动边 `plan-review -> build`，且**不读任何开关**——档位即唯一真相源。机器代卡片批准计划，并接着该卡的会话让 `build` 真跑起来——只批准不续会话会把卡晾在 `build`、没有 agent。它与其他转移一样走同一个 `autoRule` actor、过同一道 `assertTransition` 状态闸，所以到不了闸门不允许的状态。边界是有意收窄的：机器**只批准计划并续原会话**；武装交付授权（commit、push、开 PR）仍留给人，机器绝不碰 git、不创建 PR。这比「全自动到 draft PR」更窄——机器不武装、不交付。
+- `auto-delivery`（L4，自动交付）：「机器批准」的全部能力，外加交付权力——每个引擎 tick，一张 verdict 满足 §2.5 闸门的 `review` 卡会被提交（仅在被评审的树仍是 HEAD 时）、推送并开出 draft PR。滑杆行为：单一原生 0–4 控件；拖动只置 pending 值，松手（`pointerup` / `keyup`）才提交，保存是独立一步；升到 L3 / L4 先二次确认（取消则滑杆回滚），降档不弹；状态徽标只读已保存的档位。界面上没有独立的 `autoDispatch` 开关。
 
 **旧存档迁移。** 存储 schemaVersion 由 1 升到 2，旧档在 store 加载时一次性改写（加载永不拒绝旧档或脏档）：`L0` → `manual`；`L1` 开/关 `autoStart` → `you-approve` 对应开/关 `autoDispatch`；`L2` 两开关都开 → `machine-approve`；`L2` 开 `autoStart` 关 `autoApprove` → `you-approve` + 开；`L2` 关 `autoStart` → `you-approve` + 关；缺失或非法 → `manual`。旧字段名从落盘状态删除。
 
-**审计 tier 按档位取。** 建卡、派发、批准的每条记录都带项目档位作 tier——`machine-approve` 档事件 `tier=machine-approve`、`you-approve` 档事件 `tier=you-approve`——同一档的记录永远滤在同一 tier 下。
+**审计 tier 按档位取。** 建卡、派发、批准的每条记录都带项目档位作 tier——`machine-approve` 档事件 `tier=machine-approve`、`you-approve` 档事件 `tier=you-approve`——同一档的记录永远滤在同一 tier 下。自动交付闸门的每个决定（armed / commit-skipped / pushed / draft-pr / delivered / failed）都记在 `tier=auto-delivery` 下。
 
 审批与派发共用同一份并发预算：项目级与全局上限约束活跃会话数，只有有名额时才批准计划。复用仍活着会话的接续（followup）不开新会话、不占名额；只有 `resume`/新建这种真会起会话的降级才扣预算。没有名额时**连审批一起扣住**，不只是扣接续：卡片留在 `plan-review`（记为因容量暂缓），由后续 tick 重试，绝不会把卡批进一个没有 agent 的 `build`。活跃判定在 tick 起点与决策点各做一次，会话若在 tick 中途死掉，不会趁快照判活绕过名额、多开一个超限会话。
 
@@ -91,8 +94,8 @@
 
 ### 2.9 整页视图、配置抽屉、文案与窄屏看板
 
-- **视图按整页设计。** 插件顶部是一条页内吸顶头栏（高 56px）；项目侧栏与顶栏标签是同一份项目选择的两种呈现，由「视图」控件（侧栏 / 标签）切换。默认侧栏，选择存本地、刷新后保持——没有后端字段、不改 schema。两种导航都显示每个项目的档位徽标（`manual` / `you-approve` / `machine-approve`）、卡片数与暂停标记，数据都来自看板已加载的内容。宽屏时侧栏固定在看板旁；窄屏时侧栏变为带遮罩的抽屉，标签仍是横向条。看板本身保留真实高度（min-height 440px），全局页把 GitHub 连接组置顶。
-- **操作给居中、页根的反馈。** 从他档切到 `machine-approve` 先弹二次确认：确认即保存，取消则已存档位与开关不变；切离它不弹。删项目用输入名称的居中确认。为避免 fixed 遮罩被变形的抽屉困住，这些弹窗都挂在页面根节点；保存结果与卡片操作（如接管）用自动消失的 toast，成功与失败可区分。
+- **视图按整页设计。** 插件顶部是一条页内吸顶头栏（高 56px）；项目侧栏与顶栏标签是同一份项目选择的两种呈现，由「视图」控件（侧栏 / 标签）切换。默认侧栏，选择存本地、刷新后保持——没有后端字段、不改 schema。两种导航都显示每个项目的档位徽标（L0–L4）、卡片数与暂停标记，数据都来自看板已加载的内容。宽屏时侧栏固定在看板旁；窄屏时侧栏变为带遮罩的抽屉，标签仍是横向条。看板本身保留真实高度（min-height 440px），全局页把 GitHub 连接组置顶。
+- **操作给居中、页根的反馈。** 滑杆升到 L3（`machine-approve`）或 L4（`auto-delivery`）先弹二次确认：取消则滑杆回滚，已存档位不变、保存是独立一步；降档不弹。删项目用输入名称的居中确认。为避免 fixed 遮罩被变形的抽屉困住，这些弹窗都挂在页面根节点；保存结果与卡片操作（如接管）用自动消失的 toast，成功与失败可区分。
 - **配置抽屉项目优先。** scope 初值是 `auto`：有项目选中时解析为项目页，否则为全局页；点页签会在本次页面会话内固定作用域，刷新后重新回到 `auto`。项目页有「全局设置 ›」入口，抽屉标题跟随当前页。项目页的暂停/恢复走项目级接口，引擎暂停/恢复只在全局页出现。项目页保留身份卡常驻，把自治与暂停合成一个区块，周围是 worktree 准备、并发上限、危险区；全局页按「GitHub 连接」「路径与并发」「引擎」分组。
 - **运行时文案只有一个来源。** 所有 `t()` 字符串来自向 locale 服务注册的 zh/en 内联字典。包内 locale JSON 保留宿主需要的 `meta` 并镜像同一套 UI key：四处（内联 zh/en 与 locale zh/en）重叠 key 逐字一致、每个 key 的占位符 token 集合相同（8 个 key 带占位符），只有 locale 多一个 `meta`，`meta` 不进 UI 字典。UI key 总数随迭代增长，文档不写死，由自足断言在运行时核对。GitHub Token、gh CLI、GitHub OAuth App、Client ID、worktree、commit、PR 等专有名词两种语言都原样保留。旧的「无法识别账号」通用说法不再用于已连接的身份：账号解析不到时退回来源表述。
 - **窄屏看板。** 在 760px 断点下看板变成横向 scroll-snap 条：列宽为视口的 84%，列头 sticky，看板高度上限 56vh，阶段指示按真实渲染列宽算出「当前列 / 5」。QA 在 390px 真机复测确认每屏一列、吸附正常、页面无横向溢出；列的外宽约 348px，因为列是 `content-box` 且带 padding，这是已记录的非阻塞差异。宽视口（包括主内容列很窄的宿主容器）仍是普通横向滚动，各列可达。
@@ -124,6 +127,7 @@
 - 报告编号固定按这张卡的时间正序（最早 = 1）；排序开关只改显示顺序。Markdown 用宿主自带 `MarkdownText`，原始 HTML 不执行，插件不额外引入运行时依赖。
 - 客户端把最终生效的显示语言（例如 DSH 跟随浏览器解析出的 `fr`）回传并存在宿主侧；派发会话优先用它，其次用宿主显式的 `locale.preference`，再回退中文。指令按语言 id 动态生成，要求回复和 `factory_report` 正文使用该语言；代码、命令、路径和专有名词保留原文。
 - 「批准计划」要求 `plan-review` + 会话已跑完 + 卡片至少有一份报告，否则按钮禁用并说明原因。「标记完成」在 `review` 阶段一直可用，何时算完成由人判断。
+- **评审在独立的只读会话里进行，产出结构化 verdict。** 评理会话记在 `card.reviewSessionId`（永不覆盖 builder 的 `sessionId`）；其 verdict——结论值、阻断项与 follow-up 分列、实际跑过的检查——经 `factory_report` 写入，head 由后端从 git 计算，绝不取自评审者。`review -> build` 回退后的复评复用仍活着的评理会话并重读上一轮 verdict。`review -> build` 与标记完成仍是人的决定；「自动交付」档下，卡片还带着机器闸门的审计记录（`auto-delivery` 历史条目：armed / commit-skipped / pushed / draft-pr / delivered / failed），交付失败时卡片留在 `review`，下一 tick 可重试。
 
 ## 3. 已经定死、不必再争的设计
 
@@ -149,6 +153,10 @@
 | 交还原地幂等、不弹确认 | 重复交还是无意义的写；操作可逆且比接管更轻，二次确认只会打断 |
 | 取消卡片走软删（转 `canceled`）而非物理删除，`source` 占位防复活 | intake 按现有卡的 `source` 去重且不看状态；硬删自动卡会让它的 source 消失、下一轮被当新 issue 重建，还断掉 history / 审计链。留卡改状态既退出管线又不复活，后端与渲染都已支持 |
 | 会话入口走宿主 `uiWorkspace.openSession`，不猜 URL | DSH 会话选择是客户端状态，URL 始终是根路径、`?session=` 不生效；宿主服务是唯一真实导航口。`ctx.sessions.list` 是标题的唯一来源，卡片自己不存标题 |
+| verdict 认证的树就是交付的树 | 未提交的改动从未经评审；为了让交付“走得通”而把改动提交进去，交付的就不是 verdict 签认的那棵树。被评审 head 上工作树干净则跳过提交，脏树拒绝且零 git 写 |
+| arm 令牌是一次性的，权威是代码闸门而非令牌 | 执行前对活卡片与活 head 重评整套闸门再动手，令牌永远不能当作常驻授权；skill、报告与 HTTP 调用方都武装不了交付，只有引擎 tick 能 |
+| 「自动交付」止于 draft PR：不合并、不自动标完成、不延伸到其他档位或工作模式 | 用户的常驻授权恰好以此为界：机器把被评审的 head 交付到 draft PR，之后的所有事留给人 |
+| 存储四个语义档，L0–L4 是呈现层映射 | 「你批准」档加它的开关覆盖两个显示档；`auto-delivery` 是独立的存储档、不读任何开关，五个滑杆档位不需要新的存储值，也没有开关泄漏能力 |
 
 ## 4. 后续计划（按优先级）
 
@@ -247,6 +255,18 @@
 
 **增量（已取消折叠列表 + 任务卡统计修正）：** 用户反馈看不到「已取消列表」、且全取消后右上角仍显示 3 任务卡。核对发现页尾原本只有纯文本计数、toast 却说「保留在已取消列表」名不副实，统计遍历也未排除 canceled。快车道改 client.js 三处、零字典零后端：页尾纯文本改为 `details/summary` 折叠条（`summary` 显示 `${t('canceled')} · N`，展开 `canceledCards.map(renderCard)`，只读）；右上角统计减去 canceled；`cardCounts` 跳过 canceled，侧栏与标签页一起修正；`done` 仍计入、数量守恒成立。QA 新增独立用例文件，报告取消相关用例全绿、全取消归零与守恒验实、业务 bug 0，未跑全量；数字以实际运行为准。
 
+### P8 — 评审与自动交付迭代（**已完成**；迭代自有的 P0–P3 子阶段）
+
+这一轮把「机器建造」与「人可以放心放手交付」之间的缺口补上了：结构化评审 verdict、独立只读评理会话、以及一个可选的、止于 draft PR 的机器交付。子阶段按迭代自己的编号：
+
+- **P0 — 沙箱与权限状态真实化。** 解除了固定沙箱闸：所需沙箱档位改为 create / followup / resume 三条链共用，`permissionEnforced` 按 tick 读真实沙箱投影而不是宣称上限，实验性 auto-review 插件的状态可从状态接口读到。
+- **P1 — 结构化 verdict。** `factory_report` 接受封闭的 verdict 形状（`source` / `verdict` / `blocking` / `followUps` / `checks` / `reviewerSessionId`）；`reviewedHead` 由后端从 git 计算，模型自报的 head 一律忽略；同一 head 幂等（不产生第二条 verdict，报告仍追加）；残缺 verdict 拒收而非半写；评理会话上下文隔离——无推进/移卡措辞、注入评审字段、attach 失败即 fail-closed。
+- **P2a — 独立评理会话与工作模式。** 每卡一个只读评理会话，记在 `card.reviewSessionId`；复评复用活会话并重读上一轮 verdict；`reviewMode` 接入真实派发链并回读宿主沙箱；三种工作模式（`workspace-write` 默认 / `full-access` / `auto-review`）持久化并有 API 写入口——`auto` 是权限预设、绝不写进沙箱 mode；评理会话无论工作模式如何都保持只读。
+- **P2b — 三条人工退回。** `return-to-build` / `return-to-plan` / `return-to-inbox`，Inbox 补料开新会话重派，以及 `push-existing`：已有 PR 的卡只在原分支上推、更新同一个 PR 并保持 draft。
+- **P3 — 五档与 L4 闸门。** 四个存储档在单个滑杆上呈现为 L0–L4（§2.8）；`auto-delivery` 继承 `machine-approve` 并加上代码闸控的交付：§2.5 的条件、按 head 幂等、认证树规则、止于 draft PR。
+
+**这一轮改变了验收做法**（因为改的是本项目的验证方式，特记）：离线套件全程绿灯，四个 bug 全部只有真机才暴露——引擎依赖工厂漏传一个端口（被静默丢弃）、一个公开导出被新导出顶掉、一个拿提交前 HEAD 去校验提交后 sha 的检查（真实 git 下永不成立）、以及漏掉的 push 加容器里 git 没有 credential helper。注入的假端口证明的是分支逻辑，证明不了接线与环境。长期规则：凡跨层端口透传、公开导出面、或真实 git/gh 命令链的改动，都要跑一次真实命令链并在验收里记下来。通用版规则沉淀在 `.agents/skills/dsh-plugin-live-verification`（§十）。
+
 ### TODO — 候选下一轮（**仅记录，未排期**）
 
 以下为用户提出、尚未授权开工的想法；先记在这里，由 PM/Design 出 PRD 与验收标准、Chief 排优先级。本节任何一条都不是开发指令。
@@ -256,7 +276,7 @@
 | T1 | 全局设置参考单仓设置的 UI 风格优化 | 全局设置面板改用与单仓设置一致的视觉语言：带编号的分栏、标题 + 一行用途说明 + 语气色，卡片容器与间距对齐单仓面板，替换目前较松散的分组标题。 | 只动表现层；任何设置不跨作用域、不跨作用域写入；四份字典逐字节一致；两栏都要真机核对。 |
 | T2 | 单仓支持自定义注入 skill，替换默认加载的那几个 skill | 项目可填自己的 skill 正文，**替换**默认加载的技能，不是与默认技能并存。放在单仓设置新开的 **自定义 prompt 与 skill** 栏，位置 **04**；危险区顺延 **05**。每个自定义 skill 输入框上方给出对应默认 skill 的参考 GitHub 地址。 | 已定（用户拍板）：范围＝6 篇阶段技能（triage/plan/build/self-review/review/rereview，add-project 不进框）；留空＝未配置＝回退内置默认、触发点照常生效；一技能一框、整栏一次保存，每技能 8000 字符、系统指令 1000 字符；四份字典同步。注入正文按不可信数据处理：不得绕过阶段流转、授权闸门与沙箱。待定：self-review/rereview 的激活以 T4 会话级版为准；宿主技能注册/source 冲突处理不作为方案依赖（宿主语义仍待真机复核）。 |
 | T3 | 单仓注入自定义系统指令 | 同一个 04 栏允许填项目级系统指令，例如「使用中文生成阶段报告」。 | 已定：不作用于 `/factory add` 会话（该时项目尚未创建，add-project 不进框）。待定：与阶段技能、卡片正文注入的先后合并顺序；怎么验收。不得覆盖状态机、授权闸门、沙箱与「数据非指令」防御。 |
-| T4 | 独立评审会话（code review / pr review） | 看板仍是一个 `review` 阶段；阶段内分两个会话 + 人做 commit/PR：commit/PR 前由独立新会话审分支 diff（code review，读 `factory-self-review`）；PR 开后人审或另起独立会话审 PR（pr review，读 `factory-review`，回炉追加 `factory-rereview`）。不新增看板列、不加 verdict 硬闸、不自动 commit/自动开 PR；commit/push/开 PR/标完成全由人经现有 authorize 闸门完成。会话字段 `codeReviewSessionId` / `prReviewSessionId` 不得覆盖 `card.sessionId`；两类评审会话每次注入阻断项纪律（Blocking vs follow-up）。 | 已定（用户拍板）：会话级独立，不做阶段级（不加 self-review 列、不加 `selfReviewApprovedHead` 硬闸；上游 mastra 已把该阶段从默认 Work 看板移除）；自动 + 手动触发都要，若真机成本/噪音过大可收窄为手动。待定：pr review 由人审还是第二个独立会话；Dev 可行性复核未做，PRD 草稿 `.scratch/prd-t4-independent-review-session.md`，未排期。T2/T3 中 review 技能的激活以本条为准。 |
+| T4 | 独立评审会话（code review / pr review） | 看板仍是一个 `review` 阶段；阶段内分两个会话 + 人做 commit/PR：commit/PR 前由独立新会话审分支 diff（code review，读 `factory-self-review`）；PR 开后人审或另起独立会话审 PR（pr review，读 `factory-review`，回炉追加 `factory-rereview`）。不新增看板列、不加 verdict 硬闸、不自动 commit/自动开 PR；commit/push/开 PR/标完成全由人经现有 authorize 闸门完成。会话字段 `codeReviewSessionId` / `prReviewSessionId` 不得覆盖 `card.sessionId`；两类评审会话每次注入阻断项纪律（Blocking vs follow-up）。 | **本轮已实现（P2a–P3，见 §4 P8）：** 会话级独立在 `card.reviewSessionId` 上落地，结构化 verdict、人工 `review -> build` 回退续原 builder 会话、重读上一轮 verdict 的复评、`push-existing` 路径。T2/T3 中「review 技能激活以 T4 为准」的交叉引用仍然适用。 |
 
 自定义 skill 输入框上方要展示的参考地址（已在 `summerscar/dsh-plugins` 的 `main` 上核对；只读提示、不是可编辑值；内置技能变动时同步更新）：
 
@@ -305,12 +325,18 @@
 
 ### 5.1 待办与未验事项
 
-这两条不是行为缺口：一条是文案待拍板，一条是修复已有、但证据只在代码层。都不影响使用，记在这里免得下一轮重新发现。
+这些都不是引擎行为缺口：一条文案待拍板、一条证据只在代码层的修复，加上下面的未验项。都不影响使用，记在这里免得下一轮重新发现。
 
 | 事项 | 当前状态 | 还差什么 |
 |---|---|---|
 | **「批准计划」按钮文案** | 控件仍写 **批准计划 / Approve plan**。现在一次点击同时会把卡转到 `build` 并续原会话，文案低估了它实际做的事（设计稿里的名字是「批准计划，开始实现」）。 | 文案属 UX/措辞决定，归设计，不归引擎。这里没有改任何文案。 |
 | **卡片操作按钮的双击禁用** | 操作在执行中会把 `busy` 传给按钮的 `disabled`，快速二击不会并行起第二个 run；即使漏过，第二次转移也会被状态机拒绝。 | 这道禁用只在代码层核过，没做真浏览器双击验证。要称得上已证明，还欠一次真机点击。 |
+| **退回/接管的风险提示（AC43）前端未实现** | 后端默认值已按档位派生，前端提示没做。 | 只差 UI 提示；后端默认值已就位。 |
+| **更早的 UI 缺口：退回动作仍用 `window.prompt`；Inbox 的 `needsHumanInfo` 徽标未渲染** | 两处的后端强制校验都在，只是表现层没跟上。 | 确认弹窗与徽标。 |
+| **真机未覆盖：60 秒 tick 的完整自动交付；`push-existing` 端到端；`return-to-plan` 续会话失败回滚** | 交付是 Dev/QA 直接调 `runAutoDelivery` + 真实 git port 验的；引擎接线由单测与 P3 修 bug 时的 tick 证据覆盖，但没在真机上等过一次完整 tick 交付。 | 一次真机 tick 交付、一次真机 push-existing、一次真机回滚。 |
+| **P1/P2a 残留：没有打包好的 review preset；状态接口里 auto-review 可用性最多一分钟陈旧；工作模式无 UI 入口** | 记为分期限制，不是缺陷。 | 包内 review preset、实时插件状态读、工作模式控件。 |
+| **「自动交付」已授权但未设定时与最终安全评审** | 常驻授权止于 draft PR；何时跑、以及最终安全评审都未设定。 | 调度与安全评审的决定。 |
+| **`/factory` 帮助文本：「commit / push / PR 仍需人工批准」** | `plugins/dsh-factory/commands.js:89` 的产品可见文案在「自动交付」档下已不准确——该档机器会 commit、push、开 draft PR。本轮未改：这句文案被两条正则断言锁定——`plugins/dsh-factory/test/dev-factory-command.test.mjs:77` 与 `plugins/dsh-factory/test/qa-factory-command.test.mjs:70`——测试归 QA。 | 文案修改需与两条测试更新一起落（测试由 QA 负责）。 |
 
 ### 5.2 本轮 UI/UX 明确不做的
 
@@ -339,7 +365,7 @@
 ## 7. 怎么参与
 
 - 先读仓库根与插件目录下的约定文件，再动代码。
-- 改动前先确认它属于哪个优先级。§4 里的 P1–P7 均已完成；按 §4 当前状态重新排期，不要依据更旧的状态。
+- 改动前先确认它属于哪个优先级。§4 里的 P1–P8 均已完成；按 §4 当前状态重新排期，不要依据更旧的状态。
 - **验收断言写自足的**：断言本轮新增内容、跨副本逐字一致、占位符集合与真实 API 读回，不写死总数，也不拿提交前的文件内容当基线——测试一提交基线就翻转，提交闸门必红。
 - 任何涉及 git 写的改动都必须经过人工授权闸门，测试不得绕过。
 - 测试由专人维护，不通过自证；数字以实际运行结果为准，不接受「看起来能跑」。
