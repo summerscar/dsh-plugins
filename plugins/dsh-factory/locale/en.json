@@ -36,6 +36,8 @@
   "notePromptReturnBuild": "Describe what needs changing; the builder will continue from it.",
   "actReturnToPlan": "Return to plan",
   "notePromptReturnPlan": "Describe what the plan should change; the builder will redo it.",
+  "notePromptReturnPlanRisk": "This tier takes over the card automatically, so the revised plan won't be auto-approved; release it when approving.",
+  "returnWithAutoApproveNotice": "This plan-review card will be auto-approved on the next tick.",
   "actReturnToInbox": "Return to inbox",
   "notePromptReturnInbox": "Describe the missing information; the card returns to Inbox for you to supply it.",
   "actResupply": "Add info and redispatch",

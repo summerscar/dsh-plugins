@@ -121,7 +121,7 @@ test('client mirrors the resolved display language to the host', () => {
 
 test('approve-plan waits for the session to finish', () => {
   const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
-  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal \}\)/)
+  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal, tier \}\)/)
   assert.match(code, /disabled: busy \|\| extra\.disabled === true/)
   assert.match(code, /card\.history\.some\(\(entry\) => entry && entry\.type === 'report'\)/, 'requires a plan report')
   assert.match(code, /\(working \|\| !hasReport\) \? \{ disabled: true, title: working \? t\('approvePlanWaiting'\) : t\('approvePlanNoReport'\) \}/)

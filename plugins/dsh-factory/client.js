@@ -149,6 +149,8 @@ window.__ModuleLoader__.load({
       actMarkDone: "标记完成",
       actReturnToBuild: "退回构建", notePromptReturnBuild: "说明需要修改的内容，builder 会据此继续。",
       actReturnToPlan: "退回修改计划", notePromptReturnPlan: "说明计划需要修改的地方，builder 会据此重做。",
+      notePromptReturnPlanRisk: "当前档位会自动接管此卡，修订后的计划不会被自动批准；批准时可交还引擎。",
+      returnWithAutoApproveNotice: "这张计划评审卡会在下一 tick 被自动批准。",
       actReturnToInbox: "退回 Inbox", notePromptReturnInbox: "说明缺少的信息，卡片会回到 Inbox 等你补充。",
       actResupply: "补充信息并重新派发", notePromptResupply: "补充信息（必填）：",
       actCommitExisting: "确认提交（回炉）", actPushExisting: "推送更新草稿 PR",
@@ -483,6 +485,8 @@ window.__ModuleLoader__.load({
       actMarkDone: "Mark done",
       actReturnToBuild: "Return to build", notePromptReturnBuild: "Describe what needs changing; the builder will continue from it.",
       actReturnToPlan: "Return to plan", notePromptReturnPlan: "Describe what the plan should change; the builder will redo it.",
+      notePromptReturnPlanRisk: "This tier takes over the card automatically, so the revised plan won't be auto-approved; release it when approving.",
+      returnWithAutoApproveNotice: "This plan-review card will be auto-approved on the next tick.",
       actReturnToInbox: "Return to inbox", notePromptReturnInbox: "Describe the missing information; the card returns to Inbox for you to supply it.",
       actResupply: "Add info and redispatch", notePromptResupply: "Additional information (required):",
       actCommitExisting: "Confirm commit (rework)", actPushExisting: "Push update to draft PR",
@@ -1011,7 +1015,12 @@ window.__ModuleLoader__.load({
     // Per-card action buttons. Each drives the gated backend (authorize, then the
     // git action, or a human transition); the backend refuses anything not armed,
     // so the UI can never bypass the approval gate even if a button is mis-clicked.
-    function CardActions({ card, run, t, busy, working, onToast, onModal }) {
+    // AC43: in these two tiers a human return defaults to takeover, so a
+    // revised plan would not be auto-approved — and a plan-review card handed
+    // back would be auto-approved next tick. Only these tiers carry that risk.
+    const needsAutoApproveNotice = (tier) => tier === 'machine-approve' || tier === 'auto-delivery'
+
+    function CardActions({ card, run, t, busy, working, onToast, onModal, tier }) {
       const buttons = []
       // Disable while a board action is in flight: a second click cannot start
       // a parallel run, and the backend gates still guard the write regardless.
@@ -1022,10 +1031,10 @@ window.__ModuleLoader__.load({
       // Ask for a note through an in-page modal, never a native browser prompt.
       // Resolves with the trimmed note, or null on cancel/empty — the caller's
       // `if (note === null) return` still aborts the request exactly as before.
-      const askNote = (message) => new Promise((resolve) => {
+      const askNote = (message, notice) => new Promise((resolve) => {
         if (typeof onModal !== 'function') { resolve(null); return }
         onModal(h(NoteModal, {
-          message, t,
+          message, notice, t,
           onSubmit: (value) => { onModal(null); resolve(value) },
           onCancel: () => { onModal(null); resolve(null) },
         }))
@@ -1062,7 +1071,8 @@ window.__ModuleLoader__.load({
           await callApi('POST', `/cards/${card.id}/continue`)
         }, (working || !hasReport) ? { disabled: true, title: working ? t('approvePlanWaiting') : t('approvePlanNoReport') } : {})
         add(t('actReturnToPlan'), async () => {
-          const note = await askNote(t('notePromptReturnPlan'))
+          const risk = needsAutoApproveNotice(tier) ? t('notePromptReturnPlanRisk') : undefined
+          const note = await askNote(t('notePromptReturnPlan'), risk)
           if (note === null) return
           await callApi('POST', `/cards/${card.id}/return-to-plan`, { note })
         }, working ? { disabled: true } : {})
@@ -1083,7 +1093,9 @@ window.__ModuleLoader__.load({
           key: 'returnToEngine',
           onClick: () => void run(async () => {
             await callApi('POST', `/cards/${card.id}/release`)
-            if (onToast) onToast(live ? `${t('toastReturned')}\n${t('returnWithSessionNotice')}` : t('toastReturned'), 'ok')
+            const notice = needsAutoApproveNotice(tier) && card.status === 'plan-review'
+              ? `\n${t('returnWithAutoApproveNotice')}` : ''
+            if (onToast) onToast(`${live ? `${t('toastReturned')}\n${t('returnWithSessionNotice')}` : t('toastReturned')}${notice}`, 'ok')
           }),
           disabled: busy,
           title: t('returnToEngineTitle'),
@@ -1433,7 +1445,7 @@ window.__ModuleLoader__.load({
      * note, or nothing at all when cancelled — callers keep the old
      * `note === null` abort semantics. Empty/whitespace input cannot confirm.
      */
-    function NoteModal({ message, t, onSubmit, onCancel }) {
+    function NoteModal({ message, t, onSubmit, onCancel, notice }) {
       const [note, setNote] = useState('')
       return h(Modal, {
         title: t('notePromptTitle'),
@@ -1445,6 +1457,12 @@ window.__ModuleLoader__.load({
         t,
       }, [
         h('div', { key: 'hint', style: { fontSize: 12, color: T.mutedInk, lineHeight: 1.6, marginBottom: 8 } }, message),
+        // Optional risk line (AC43). Kept separate from `message` so the
+        // textarea placeholder stays short; warning tokens, never hardcoded.
+        notice ? h('div', {
+          key: 'notice',
+          style: { boxSizing: 'border-box', border: `1px solid ${T.warning}`, borderRadius: T.radiusSm, background: T.warningWash, color: T.warningInk, fontSize: 12, lineHeight: 1.6, padding: '8px 10px', marginBottom: 10 },
+        }, notice) : null,
         h('textarea', {
           key: 'note', value: note, rows: 4, autoFocus: true, placeholder: message,
           onChange: (event) => setNote(event.target.value),
@@ -2671,7 +2689,7 @@ window.__ModuleLoader__.load({
             key: 'card', card, t, sessionRows, uiWorkspace, working,
             onOpenReports: (item) => setPageModal(h(ReportsModal, { card: item, t, onClose: () => setPageModal(null) })),
           }),
-          h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast, onModal: setPageModal }),
+          h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast, onModal: setPageModal, tier: project?.autonomy }),
         ])
       }
 

@@ -18,7 +18,7 @@ const en = JSON.parse(readFileSync(join(root, 'locale', 'en.json'), 'utf8'))
 
 test('Dev-Note: no native window.prompt; all four note actions await the in-page modal', () => {
   assert.doesNotMatch(client, /window\.prompt/, 'native browser prompt removed')
-  assert.match(client, /const askNote = \(message\) => new Promise/, 'askNote is now promise-based')
+  assert.match(client, /const askNote = \(message, notice\) => new Promise/, 'askNote is promise-based and accepts an optional notice')
   // The four actions that need a note: resupply, return-inbox, return-plan, return-build.
   assert.equal((client.match(/await askNote\(/g) || []).length, 4, 'all four actions await the note modal')
   const noteModal = client.slice(client.indexOf('function NoteModal('), client.indexOf('function AutonomySection('))

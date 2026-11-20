@@ -36,6 +36,8 @@
   "notePromptReturnBuild": "说明需要修改的内容，builder 会据此继续。",
   "actReturnToPlan": "退回修改计划",
   "notePromptReturnPlan": "说明计划需要修改的地方，builder 会据此重做。",
+  "notePromptReturnPlanRisk": "当前档位会自动接管此卡，修订后的计划不会被自动批准；批准时可交还引擎。",
+  "returnWithAutoApproveNotice": "这张计划评审卡会在下一 tick 被自动批准。",
   "actReturnToInbox": "退回 Inbox",
   "notePromptReturnInbox": "说明缺少的信息，卡片会回到 Inbox 等你补充。",
   "actResupply": "补充信息并重新派发",
