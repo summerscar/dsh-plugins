@@ -2,7 +2,7 @@
  * QA — "已绑定 → 完整权限验证" regression (fast lane).
  *
  * Covers: four-read-only checks + no-false-green, persistence + repo-change
- * invalidation, /identity/:id/check checkedAt, four UI trigger points, repoBound
+ * invalidation, /identity/:id/check checkedAt, three UI trigger points + no client-side create, repoBound
  * tightening, five dictionary keys self-contained, engine dispatch independent
  * of the UI permission state. All offline against the real modules with injected
  * seams; client-only judgements use source guards. No git show HEAD baseline.
@@ -204,15 +204,16 @@ test('P-3 POST /identity/:id/check saves result and returns checkedAt', async ()
 // ==============================================================================
 // 4. UI trigger points (source guards — no real-device deploy)
 // ==============================================================================
-test('P-4 four UI triggers present: open auto-check, recheck button, save-binding recheck, create-project recheck', () => {
+test('P-4 three UI triggers present (open auto-check, recheck button, save-binding recheck); client never POSTs /projects directly', () => {
   // Open: effect auto-runs when bound+connected and no fresh result for this repo.
   assert.match(clientSrc, /card\?\.binding\?\.bound && card\?\.identity\?\.connected && !checking[\s\S]{0,160}p\.repo !== card\.binding\.issueRepo \|\| !p\.status\) void checkPermission\(\)/, 'auto-check on open')
   // Recheck button: explicit, uses ghRecheckPerm key, calls checkPermission.
   assert.match(clientSrc, /onClick: \(\) => void checkPermission\(\)[\s\S]{0,120}t\('ghRecheckPerm'\)/, 'recheck button')
   // Save binding: PATCH then checkPermission when value non-empty.
   assert.match(clientSrc, /if \(value !== ''\) await checkPermission\(\)/, 'save-binding recheck')
-  // Create project: auto-detected issueRepo triggers /check immediately.
-  assert.match(clientSrc, /if \(created\?\.project\?\.issueRepo\) \{[\s\S]{0,160}\/identity\/\$\{encodeURIComponent\(created\.project\.id\)\}\/check/, 'create-project recheck')
+  // Create project: the client no longer creates projects (form removed);
+  // creation goes through the factory-add-project skill → factory_create_project.
+  assert.doesNotMatch(clientSrc, /callApi\('POST', '\/projects'/, 'client never creates a project directly')
 })
 
 test('P-4 four check chips render per-item with reason title, failure shows backend reason', () => {

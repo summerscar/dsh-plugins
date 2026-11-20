@@ -22,7 +22,7 @@ test('parseSkillMarkdown splits frontmatter and body', () => {
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'factory-skills-'))
   mkdirSync(join(dir, 'factory-plan'))
-  writeFileSync(join(dir, 'factory-plan', 'SKILL.md'), '---\nname: factory-plan\ndescription: Plan a card\nwhenToUse: when planning\n---\n# Plan body\n')
+  writeFileSync(join(dir, 'factory-plan', 'SKILL.md'), '---\nname: factory-plan\ndescription: Plan a card\nwhenToUse: when planning\nuser-invocable: true\n---\n# Plan body\n')
   mkdirSync(join(dir, 'no-description'))
   writeFileSync(join(dir, 'no-description', 'SKILL.md'), '---\nname: no-description\n---\nbody without description\n')
   return dir

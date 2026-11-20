@@ -1,4 +1,5 @@
 ---
+user-invocable: false
 name: factory-rereview
 description: Re-review a factory card after it returns to review following requested changes — reconcile the previous findings against what changed, look for defects the new commits introduced, then take one fresh pass over the whole change and record an updated verdict with factory_report.
 whenToUse: A previously-reviewed card returns to the review phase after a new round of work.

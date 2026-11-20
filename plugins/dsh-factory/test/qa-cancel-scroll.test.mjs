@@ -82,7 +82,15 @@ test('NARROW: root rule inside media query keeps scroll declarations and padding
 
 test('NARROW: five-column horizontal scroll and fold-bar style have no regression', () => {
   assert.match(narrowCss, /\[data-dsh-factory-p4\] \.df-board\{[^}]*display:flex[^}]*overflow-y:auto[^}]*scroll-snap-type:x mandatory/, 'narrow board stays a horizontal scroller')
-  assert.match(narrowCss, /\[data-dsh-factory-p4\] \.df-col\{flex:0 0 84vw;min-width:0;scroll-snap-align:start\}/, 'narrow columns keep 84vw snap')
+  // Check declarations individually so inserting box-sizing:border-box (padding
+  // must stay inside 84vw) does not break the guard, while a real width/snap
+  // regression still fails.
+  const colRule = narrowCss.match(/\[data-dsh-factory-p4\] \.df-col\{([^}]*)\}/)?.[1]
+  assert.ok(colRule, 'narrow column rule found')
+  assert.match(colRule, /flex:0 0 84vw/, 'narrow columns keep 84vw snap width')
+  assert.match(colRule, /min-width:0/, 'narrow columns can shrink')
+  assert.match(colRule, /scroll-snap-align:start/, 'narrow columns keep snap alignment')
+  assert.match(colRule, /box-sizing:border-box/, 'narrow columns use border-box so padding stays inside 84vw')
   assert.match(narrowCss, /\[data-dsh-factory-p4\] \.df-card-actions button\{min-height:44px!important\}/, 'narrow 44px tap targets intact')
   // Fold bar itself is unchanged by this fix (same details/summary render path).
   assert.match(clientSrc, /key: 'ch',[\s\S]{0,140}\$\{t\('canceled'\)\} · \$\{canceledCards\.length\}/, 'fold summary 已取消 · N intact')

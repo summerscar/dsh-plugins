@@ -67,6 +67,10 @@ export function loadSkillDirectory(dir) {
       name,
       description,
       whenToUse: typeof meta.whenToUse === 'string' && meta.whenToUse !== '' ? meta.whenToUse : undefined,
+      // Only skills that explicitly opt in are user-invocable. The packaged
+      // phase flows are model-invocable and injected into sessions by the
+      // engine; exposing them as /commands would let a human bypass their gate.
+      userInvocable: /^true$/i.test((meta['user-invocable'] ?? '').trim()),
       content,
     })
   }
@@ -93,7 +97,7 @@ export function registerFactorySkills({ ctx, skillsDir } = {}) {
       source: skillSourceOf(skill.name),
       content: skill.content,
       ...(skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse }),
-      invocation: { modelInvocable: true, userInvocable: true },
+      invocation: { modelInvocable: true, userInvocable: skill.userInvocable === true },
     }), `dsh-factory: skill ${skill.name}`)
     registered += 1
   }

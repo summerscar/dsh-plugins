@@ -14,6 +14,7 @@
  * Done or approving a plan, so the same check that guards the UI guards the model.
  */
 import { STATUSES } from './state.js'
+import { AUTONOMY_LEVELS, WORK_MODES } from './store.js'
 import { assertRepoRoot, inspectRepo } from './project-proposal.js'
 import { defaultLsFilesPort, dropTrackedCopyFiles } from './worktree-setup.js'
 import { precheckReceipt } from './receipt.js'
@@ -21,6 +22,41 @@ import { normalizeVerdict, reviewedHeadFor, VERDICT_SOURCES, VERDICT_VALUES } fr
 
 const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review', 'canceled']
 const ATTENTION_STATUSES = ['inbox', 'plan-review', 'review']
+// The two per-project settings the add-project skill asks about. L0–L4 is the
+// human-facing wording; L1/L2 share `you-approve` and differ only in the
+// autoDispatch switch, exactly as the UI slider maps them.
+const AUTONOMY_LEVEL_CODES = ['L0', 'L1', 'L2', 'L3', 'L4']
+const LEVEL_TO_AUTONOMY = {
+  L0: { autonomy: 'manual', autoDispatch: false },
+  L1: { autonomy: 'you-approve', autoDispatch: false },
+  L2: { autonomy: 'you-approve', autoDispatch: true },
+  L3: { autonomy: 'machine-approve', autoDispatch: false },
+  L4: { autonomy: 'auto-delivery', autoDispatch: false },
+}
+
+/**
+ * Resolve the answers from ask_user_question into persisted project settings.
+ * Only the five exact L-codes are accepted; a bad answer fails closed before
+ * any project is written. Store createProject still starts every project manual
+ * — the autonomy answer is applied as a separate, explicit follow-up write.
+ */
+export function resolveAddProjectSettings({ workMode, autonomy, autoDispatch } = {}) {
+  const mode = workMode === undefined || workMode === null || workMode === '' ? 'workspace-write' : workMode
+  if (!WORK_MODES.includes(mode)) throw new Error(`未知工作模式：${mode}（可选 ${WORK_MODES.join(' / ')}）`)
+  if (autonomy === undefined || autonomy === null || autonomy === '' || autonomy === 'L0') {
+    return { workMode: mode, autonomy: null, autoDispatch: autoDispatch === true }
+  }
+  if (!AUTONOMY_LEVEL_CODES.includes(autonomy)) {
+    throw new Error(`未知自动化程度：${autonomy}（可选 ${AUTONOMY_LEVEL_CODES.join(' / ')}）`)
+  }
+  const level = LEVEL_TO_AUTONOMY[autonomy]
+  // A semantic level from the model/API is accepted too, but L1 vs L2 then
+  // needs the explicit switch; bare `you-approve` stays L1 (no auto dispatch).
+  const stored = AUTONOMY_LEVELS.has(autonomy)
+    ? { autonomy, autoDispatch: autoDispatch === true }
+    : level
+  return { workMode: mode, ...stored }
+}
 
 const stringArray = () => ({ type: 'array', items: { type: 'string' } })
 
@@ -306,12 +342,15 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
     },
     {
       name: 'factory_create_project',
-      description: 'Create a factory project directly in this session: register an absolute repository root with optional copyFiles (relative local file paths) and postCreate (a setup command you author). Creating a project is local and reversible — it does not commit, push, or open a PR; those still require the human approval gates. Validate rootPath is an absolute path to an existing git repository before calling. Show the name, rootPath, copyFiles and postCreate to the user before creating.',
+      description: 'Create a factory project directly in this session: register an absolute repository root with optional copyFiles (relative local file paths) and postCreate (a setup command you author). workMode and autonomy are the answers from the add-project skill\'s ask_user_question step; pass them to persist the session mode and autonomy level at creation. Creating a project is local and reversible — it does not commit, push, or open a PR; those still require the human approval gates. Validate rootPath is an absolute path to an existing git repository before calling. Show the name, rootPath, copyFiles, postCreate, workMode and autonomy to the user before creating.',
       parameters: {
         name: { type: 'string', required: true, description: 'Project name.' },
         rootPath: { type: 'string', required: true, description: 'Absolute repository root; must exist and be a git repository.' },
         copyFiles: { ...stringArray(), description: 'Relative local file paths to copy into each new worktree.' },
         postCreate: { type: 'string', description: 'Setup command run inside each new worktree; provided by the user, never a plugin default.' },
+        workMode: { type: 'string', enum: [...WORK_MODES], description: 'Session mode answer: workspace-write / full-access / auto-review. Defaults to workspace-write.' },
+        autonomy: { type: 'string', enum: [...AUTONOMY_LEVEL_CODES, ...AUTONOMY_LEVELS], description: 'Autonomy answer from the question: L0–L4 (L1/L2 differ by autoDispatch). Defaults to L0 manual.' },
+        autoDispatch: { type: 'boolean', description: 'Only used with you-approve; true is L2, false is L1.' },
       },
       output: CREATE_OUTPUT,
       execute: async (args = {}) => {
@@ -335,12 +374,23 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         precheck('factory_create_project', CREATE_OUTPUT, args, {
           id: 'probe', name: args.name, warning: 'probe', droppedCopyFiles: droppedPaths.length ? droppedPaths : ['probe'],
         })
+        // Resolve/interrogate BEFORE the write so a bad answer persists nothing.
+        const settings = resolveAddProjectSettings(args)
         const project = store.createProject({
           name: args.name,
           rootPath,
           copyFiles: cleaned.files,
           postCreate: args.postCreate ?? '',
+          workMode: settings.workMode,
         })
+        // createProject always starts manual; apply the asked level as a
+        // separate explicit write instead of changing the store's default.
+        if (settings.autonomy !== null && settings.autonomy !== 'manual') {
+          store.updateAutonomy(project.id, {
+            autonomy: settings.autonomy,
+            autoDispatch: settings.autoDispatch,
+          })
+        }
         return {
           id: project.id,
           name: project.name,

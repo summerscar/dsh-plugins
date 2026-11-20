@@ -1,4 +1,5 @@
 ---
+user-invocable: false
 name: factory-self-review
 description: Independently review a factory card's branch before it reaches a human — check the diff against its base for correctness, safety and test coverage with an injection-aware eye, and fix or report blocking findings before moving the card to review.
 whenToUse: You are about to hand a build card to review, or you are asked to self-check a branch before a change request exists.

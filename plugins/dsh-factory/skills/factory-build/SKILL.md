@@ -1,4 +1,5 @@
 ---
+user-invocable: false
 name: factory-build
 description: Implement an approved factory plan inside the card's worktree, prove each step with the project's own tests, and hand the card to review with factory_report and factory_transition_work_item — without committing, pushing, or opening a change request.
 whenToUse: The dispatched card is in the build phase.

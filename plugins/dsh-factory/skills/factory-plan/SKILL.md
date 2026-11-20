@@ -1,4 +1,5 @@
 ---
+user-invocable: false
 name: factory-plan
 description: Turn a triaged factory card into a phased, verifiable implementation plan, submit it for approval by moving the card to plan-review, and leave the plan as the builder's handoff.
 whenToUse: The dispatched card is in the plan phase.

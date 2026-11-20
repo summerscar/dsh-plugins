@@ -1,4 +1,5 @@
 ---
+user-invocable: false
 name: factory-triage
 description: Triage a factory card's source issue — verify it is real, diagnose the root cause, classify it, and hand the card to planning (or send it back to the inbox, or close it) with factory_transition_work_item.
 whenToUse: The dispatched card is in the triage phase.
