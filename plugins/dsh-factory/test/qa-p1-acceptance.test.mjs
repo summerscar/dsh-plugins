@@ -42,6 +42,11 @@ function setup({ cardStatus = 'inbox', repo = makeRepo(), receiptPorts = {}, rea
   const board = store.createBoard({ projectId: project.id, name: 'b' })
   const card = store.createCard({ boardId: board.id, title: 'review me', repo: 'owner/repo' })
   store.setWorktree(card.id, { worktreePath: repo.dir, branch: 'factory/test', baseBranch: 'main' })
+  // P2a hole-A closure: a structured verdict requires a registered reviewer.
+  // These P1 capability tests exercise the verdict shape/idempotency, so give
+  // the card a reviewer and let calls without an explicit exec act as it.
+  const REVIEWER = 'p1-reviewer'
+  store.setReviewSession(card.id, REVIEWER, 'created')
   if (cardStatus !== 'inbox') {
     store.transitionCard(card.id, 'triage', 'human')
     store.transitionCard(card.id, 'plan', 'agent')
@@ -49,7 +54,11 @@ function setup({ cardStatus = 'inbox', repo = makeRepo(), receiptPorts = {}, rea
     store.transitionCard(card.id, 'build', 'human')
     store.transitionCard(card.id, 'review', 'agent')
   }
-  const specs = new Map(factoryToolSpecs({ store, receiptPorts, readHead }).map((s) => [s.name, s]))
+  const allSpecs = factoryToolSpecs({ store, receiptPorts, readHead })
+  const reportSpec = allSpecs.find((s) => s.name === 'factory_report')
+  const baseExecute = reportSpec.execute
+  reportSpec.execute = (args, exec) => baseExecute(args, exec ?? { agent: { id: REVIEWER, session: { id: REVIEWER } } })
+  const specs = new Map(allSpecs.map((s) => [s.name, s]))
   return {
     store, project, card, repo, specs,
     cleanup: () => { rmSync(tmp, { recursive: true, force: true }); rmSync(repo.dir, { recursive: true, force: true }) },
@@ -110,7 +119,7 @@ test('P1-AC1 eight fields land in history + mirror; head equals git rev-parse HE
     assert.deepEqual(v.blocking, [{ file: 'src/x.js', line: 12, reason: 'off-by-one' }])
     assert.deepEqual(v.followUps, [{ text: 'rename the helper' }])
     assert.deepEqual(v.checks, [{ name: 'tests', result: 'pass', tests: 'pnpm test' }])
-    assert.equal(v.reviewerSessionId, 'sess-arg')
+    assert.equal(v.reviewerSessionId, 'p1-reviewer', 'host exec identity wins over the argument')
     assert.equal(card.reviewVerdict.reviewedHead, gitHead, 'mirror matches too')
     assert.equal(card.reviewVerdict.recordedBy, 'agent')
   } finally { f.cleanup() }
@@ -128,14 +137,15 @@ test('P1-AC1 dirty worktree still reports the committed HEAD, not uncommitted ed
   } finally { f.cleanup() }
 })
 
-test('P1-AC1 reviewerSessionId prefers host exec context, then falls back to the argument', async () => {
+test('P1-AC1 reviewerSessionId comes from host exec context; the argument cannot impersonate it', async () => {
   for (const [label, exec, expected] of [
     ['session id wins', { agent: { id: 'agent-id', session: { id: 'exec-session-id' } } }, 'exec-session-id'],
     ['agent id fallback', { agent: { id: 'exec-agent-id' } }, 'exec-agent-id'],
-    ['argument fallback', {}, 'sess-arg'],
+    ['argument ignored', { agent: { id: 'sess-arg' } }, 'sess-arg'],
   ]) {
     const f = setup()
     try {
+      f.store.setReviewSession(f.card.id, expected, 'created')
       await f.specs.get('factory_report').execute(verdictArgs(f.card.id), exec)
       assert.equal(verdictsOf(f.store, f.card.id).at(-1).reviewerSessionId, expected, label)
     } finally { f.cleanup() }

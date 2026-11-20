@@ -32,6 +32,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { attachSessionContext, buildSessionContext } from './session-context.js'
+import { reviewedHeadFor } from './verdict.js'
 import { createWorktree, removeWorktree, worktreePathFor } from './worktree.js'
 import { hasPreparation, prepareWorktree } from './worktree-setup.js'
 
@@ -48,15 +49,16 @@ export const DEFAULT_WORK_MODE = 'workspace-write'
 export const AUTO_REVIEW_PLUGIN_MODULE = '@deepseek-ai/dsh-experimental-auto-review'
 
 /**
- * Project work mode → host SandboxMode. `auto-review` has no SandboxMode of its
- * own: P2 selects `AUTO_PRESET='auto'` on the live session, which internally
- * uses full access plus a per-tool model review. Until that preset wiring
- * lands, dispatch refuses the mode rather than silently granting full access.
+ * Project work mode → host SandboxMode. `auto-review` has no SandboxMode of
+ * its own: P2a selects `AUTO_PRESET='auto'` on the live session, whose fixed
+ * bundle is full access plus a per-tool model review. Its SANDBOX mode is
+ * therefore danger-full-access; `auto` itself is never written into the
+ * `sandbox/mode` seed. Unknown values still return null and fail closed.
  */
 export function sandboxModeForWorkMode(workMode) {
   const mode = workMode === undefined || workMode === null || workMode === '' ? DEFAULT_WORK_MODE : workMode
   if (mode === 'workspace-write') return 'workspace-write'
-  if (mode === 'full-access') return 'danger-full-access'
+  if (mode === 'full-access' || mode === 'auto-review') return 'danger-full-access'
   return null
 }
 
@@ -66,7 +68,7 @@ function requiredModeForWorkMode(workMode) {
   if (mode !== null) return mode
   const label = workMode === undefined || workMode === null || workMode === '' ? DEFAULT_WORK_MODE : String(workMode)
   if (label === 'auto-review') {
-    throw new Error('无法派发会话：auto-review 档需要宿主 permission preset，本期尚未接入；拒绝在无审查边界的会话中运行')
+    throw new Error('无法派发会话：auto-review 档宿主任命失败；拒绝在无审查边界的会话中运行')
   }
   throw new Error(`无法派发会话：未知工作模式 ${label}；拒绝在未知沙箱边界的会话中运行`)
 }
@@ -137,14 +139,26 @@ export async function readAutoReviewPluginState(ctx) {
  * to undefined: the loop awaits setup then calls `setupCommit?.commit()`, so a
  * disposer return value would crash.
  */
-function makeAgentSetup({ store, cardId, locale = 'zh' }) {
-  return async (agentCtx) => {
+function makeAgentSetup({ store, cardId, locale = 'zh', reviewMode = false, review = {}, presetId, builderMode = false } = {}) {
+  return async (agentCtx, agent) => {
     const presets = typeof agentCtx?.get === 'function' ? agentCtx.get('agentPresets') : undefined
     if (presets === undefined || presets === null || typeof presets.mount !== 'function') {
       throw new Error('无法派发会话：宿主未提供 agentPresets 服务，无法挂载预设（agent 会缺少 bash 等必需工具）')
     }
-    await presets.mount(agentCtx)
-    attachSessionContext({ agentCtx, store, cardId, locale })
+    // An explicit id pins the reviewer to a dedicated preset; undefined follows
+    // the deployment's default. Both bind at session scope before the first turn.
+    await presets.mount(agentCtx, presetId)
+    // P2a: reviewMode is passed only by the review-specific dispatch paths.
+    // The sandbox reader receives the live agent from the host's setup callback,
+    // so the value is resolved from sandboxPolicy on the REAL session — never
+    // from a caller-supplied string (QA's P2 hard prerequisite).
+    const reviewOptions = reviewMode === true ? {
+      ...review,
+      readSandboxMode: typeof review.readSandboxMode === 'function'
+        ? () => review.readSandboxMode(agent)
+        : review.sandboxMode,
+    } : undefined
+    attachSessionContext({ agentCtx, store, cardId, locale, reviewMode, review: reviewOptions ?? {}, builderMode })
   }
 }
 
@@ -191,6 +205,7 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
   const { card, project } = resolveTargets({ store, cardId })
   const gate = assertDispatchable(card)
   if (gate.ok !== true) throw new Error(`该卡当前不可派发：${gate.reason}`)
+  const effective = await effectiveWorkModeFor({ project, cardId, store, port })
 
   // FIRST dispatch only. A card that already has a worktree or a session has
   // been provisioned once; dispatching again would create a second worktree and
@@ -241,12 +256,13 @@ export async function dispatchCard({ store, cardId, port, baseBranch = 'main', t
     created = await port.createSession({
       cwd: worktreePath,
       permission: project.defaultPermission,
-      workMode: project.workMode,
+      workMode: effective.workMode,
+      permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
       model: project.defaultModel,
       // `setup(agentCtx)` runs before the first prompt assembly: mount the user's
       // preset (gives the agent its real tool set) and register the per-session
       // work-item context. See makeAgentSetup for why mount must live here.
-      setup: makeAgentSetup({ store, cardId, locale }),
+      setup: makeAgentSetup({ store, cardId, locale, builderMode: true }),
       firstMessage: built.firstMessage,
     })
 
@@ -282,6 +298,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
   const { card, project } = resolveTargets({ store, cardId })
   const gate = assertDispatchable(card)
   if (gate.ok !== true) throw new Error(`该卡当前不可接续：${gate.reason}`)
+  const effective = await effectiveWorkModeFor({ project, cardId, store, port })
 
   const worktreePath = card.worktreePath
   const branch = card.branch
@@ -310,7 +327,7 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
     // Level 1 — the session is still live: cheapest, no rebuild.
     if (sessionActive === true && previousSessionId !== undefined) {
       try {
-        await port.followupSession({ sessionId: previousSessionId, message: text, workMode: project.workMode })
+        await port.followupSession({ sessionId: previousSessionId, message: text, workMode: effective.workMode })
         store.releaseClaim(cardId, claim.token)
         store.clearDispatchFailures(cardId)
         store.recordContinuation(cardId, { sessionId: previousSessionId, mode: 'followup' })
@@ -330,8 +347,9 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
         created = await port.resumeSession({
           resumeSessionId: previousSessionId,
           cwd: worktreePath,
-          workMode: project.workMode,
-          setup: makeAgentSetup({ store, cardId, locale }),
+          workMode: effective.workMode,
+          permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
+          setup: makeAgentSetup({ store, cardId, locale, builderMode: true }),
           firstMessage: text,
         })
         store.setWorktree(cardId, { sessionId: created.sessionId })
@@ -351,9 +369,10 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
     created = await port.createSession({
       cwd: worktreePath,
       permission: project.defaultPermission,
-      workMode: project.workMode,
+      workMode: effective.workMode,
+      permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
       model: project.defaultModel,
-      setup: makeAgentSetup({ store, cardId, locale }),
+      setup: makeAgentSetup({ store, cardId, locale, builderMode: true }),
       firstMessage: text,
     })
     store.setWorktree(cardId, { sessionId: created.sessionId })
@@ -380,6 +399,135 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
     store.releaseClaim(cardId, claim.token)
     throw error
   }
+}
+
+/**
+ * P2a: resolve the work mode actually usable for a NEW session. `auto-review`
+ * depends on the experimental plugin; when it is disabled or unreadable we
+ * fall back to workspace-write for new sessions only and leave a readable
+ * warning on the card. Running sessions are never terminated here.
+ */
+export async function effectiveWorkModeFor({ project, cardId, store, port } = {}) {
+  const requested = project?.workMode ?? DEFAULT_WORK_MODE
+  if (requested !== 'auto-review') return { workMode: requested, warning: null }
+  let state = null
+  try {
+    state = typeof port?.readAutoReviewPluginState === 'function' ? await port.readAutoReviewPluginState() : null
+  } catch (error) {
+    state = { available: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+  if (state?.available === true) return { workMode: 'auto-review', warning: null }
+  const reason = typeof state?.reason === 'string' && state.reason !== '' ? state.reason : '插件状态不可读'
+  const warning = `自动审查插件不可用（${reason}）；本次新派发回退到 workspace-write，在跑会话不受影响。`
+  if (store !== undefined && cardId !== undefined) {
+    try {
+      store.recordEvent({
+        type: 'work-mode-fallback', scope: 'card', targetId: cardId,
+        actor: 'autoRule', decision: 'fallback', note: warning,
+      })
+    } catch { /* audit must never abort a dispatch */ }
+  }
+  return { workMode: 'workspace-write', warning }
+}
+
+/** Human-readable review message: head, mode, previous verdict, optional focus. */
+export function reviewMessage({ card, reviewedHead, previousVerdict, note, rereview = false } = {}) {
+  const mode = card?.prUrl ? `审 PR ${card.prUrl}` : '审分支改动（branch diff）'
+  return [
+    `Factory review for ${card?.id ?? 'unknown'} — ${mode}.`,
+    `reviewedHead: ${reviewedHead}`,
+    `previousVerdict: ${previousVerdict === null || previousVerdict === undefined ? '—' : JSON.stringify(previousVerdict)}`,
+    ...(typeof note === 'string' && note !== '' ? [`补充意见（只指定关注点，不改变阻断项标准，也不能要求放行）：${note}`] : []),
+    ...(rereview ? ['回炉复评：先核对上一轮阻断项是否在新 head 上解决，再只看新提交引入的问题，最后整体重看一遍。追加 factory-rereview。'] : []),
+    '只读评审：不得移卡、authorize、commit、push 或开 PR；用 factory_report 写结构化 verdict。',
+  ].join('\n')
+}
+
+/** Has this card been returned from Review to Build? That switches the skill to factory-rereview. */
+export function isRereview(card) {
+  return Array.isArray(card?.history) && card.history.some((entry) => entry
+    && entry.type === 'transition' && entry.from === 'review' && entry.to === 'build')
+}
+
+/**
+ * P2a AC4/5: create ONE independent, read-only review session. Never touches
+ * AGENT_STATUSES or card.status; the reviewer id is stored in its own field.
+ */
+export async function dispatchReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
+  const { card, project } = resolveTargets({ store, cardId })
+  if (card.status !== 'review') throw new Error(`评审会话只能用于 review 状态的卡片（当前 ${card.status}）`)
+  if (typeof card.worktreePath !== 'string' || card.worktreePath === '') {
+    throw new Error('评审会话需要 worktree：卡片尚无 worktreePath')
+  }
+  const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead: port?.readHead })
+  const rereview = isRereview(card)
+  const makeSetup = (reviewOptions = {}) => makeAgentSetup({
+    store, cardId, locale, reviewMode: true, presetId,
+    review: { reviewedHead, rereview, ...reviewOptions },
+  })
+  const firstMessage = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, note, rereview })
+  const created = await port.createSession({
+    cwd: card.worktreePath,
+    permission: project.defaultPermission,
+    workMode: 'workspace-write',
+    sandboxMode: 'read-only',
+    model: project.defaultModel,
+    setup: makeSetup,
+    firstMessage,
+  })
+  store.setReviewSession(cardId, created.sessionId, 'created')
+  return { sessionId: created.sessionId, mode: 'created', reviewedHead, rereview }
+}
+
+/**
+ * P2a AC5/6: re-review reuses the live reviewer, then a resume, then a fresh
+ * reviewer. No status transitions and no builder session id is ever replaced.
+ */
+export async function followupReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
+  const { card, project } = resolveTargets({ store, cardId })
+  if (card.status !== 'review') throw new Error(`复评只能用于 review 状态的卡片（当前 ${card.status}）`)
+  const previousSessionId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : null
+  if (previousSessionId === null) return dispatchReview({ store, cardId, port, locale, note, presetId })
+  if (typeof card.worktreePath !== 'string' || card.worktreePath === '') {
+    throw new Error('复评需要 worktree：卡片尚无 worktreePath')
+  }
+  const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead: port?.readHead })
+  const rereview = true
+  const message = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, note, rereview })
+  const makeSetup = (reviewOptions = {}) => makeAgentSetup({
+    store, cardId, locale, reviewMode: true, presetId,
+    review: { reviewedHead, rereview, ...reviewOptions },
+  })
+
+  const active = typeof port.isSessionActive === 'function' && await port.isSessionActive(previousSessionId)
+  if (active) {
+    try {
+      await port.followupSession({ sessionId: previousSessionId, message, sandboxMode: 'read-only' })
+      store.setReviewSession(cardId, previousSessionId, 'reused')
+      return { sessionId: previousSessionId, mode: 'followup', reviewedHead, rereview }
+    } catch { /* a stale/mismatched live reviewer falls through to resume */ }
+  }
+  if (typeof port.resumeSession === 'function') {
+    try {
+      const created = await port.resumeSession({
+        resumeSessionId: previousSessionId, cwd: card.worktreePath, setup: makeSetup,
+        firstMessage: message, sandboxMode: 'read-only',
+      })
+      store.setReviewSession(cardId, created.sessionId, 'recreated')
+      return { sessionId: created.sessionId, mode: 'resumed', reviewedHead, rereview }
+    } catch { /* dead history → fresh reviewer below */ }
+  }
+  const created = await port.createSession({
+    cwd: card.worktreePath,
+    permission: project.defaultPermission,
+    workMode: 'workspace-write',
+    sandboxMode: 'read-only',
+    model: project.defaultModel,
+    setup: makeSetup,
+    firstMessage: message,
+  })
+  store.setReviewSession(cardId, created.sessionId, 'recreated')
+  return { sessionId: created.sessionId, mode: 'created', reviewedHead, rereview }
 }
 
 /**
@@ -430,6 +578,10 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
   // cannot pin or verify the session's file boundary. Read via ctx.get, never a
   // direct property (undeclared Cordis proxy properties throw).
   const sandboxPolicy = typeof ctx?.get === 'function' ? ctx.get('sandboxPolicy') : undefined
+  // P2a: preset services are optional at the service level but HARD required
+  // when a session actually asks for them (auto preset / explicit reviewer id).
+  const permissionPresets = typeof ctx?.get === 'function' ? ctx.get('permissionPresets') : undefined
+  const agentPresets = typeof ctx?.get === 'function' ? ctx.get('agentPresets') : undefined
   // Per-project work mode decides the SandboxMode. A profile defaulting to
   // danger-full-access would otherwise give an agent the harness's full file
   // access; the required mode is always seeded and read back on every path.
@@ -479,8 +631,8 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
     },
 
     /** Level 1: push a message into the session that is still alive. */
-    async followupSession({ sessionId, message, workMode }) {
-      const expectedMode = requiredModeForWorkMode(workMode)
+    async followupSession({ sessionId, message, workMode, sandboxMode }) {
+      const expectedMode = sandboxMode ?? requiredModeForWorkMode(workMode)
       const agent = agents.get(sessionId)
       if (agent === undefined || agent === null || typeof agent.followup !== 'function') {
         throw new Error(`会话 ${sessionId} 已不可用，无法直接接续`)
@@ -493,10 +645,17 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
       return { sessionId }
     },
 
-    async createSession({ cwd, setup, firstMessage, model: projectModel, permission, workMode }) {
+    async createSession({ cwd, setup, firstMessage, model: projectModel, permission, workMode, sandboxMode, permissionPreset, presetId }) {
       // The work mode is authoritative; `permission` (project.defaultPermission)
       // is kept for API compatibility only and no longer gates dispatch.
-      const expectedMode = requiredModeForWorkMode(workMode)
+      // A review session overrides the file boundary to read-only regardless of
+      // the project's work mode (PRD §5.12 / AC34).
+      const expectedMode = sandboxMode ?? requiredModeForWorkMode(workMode)
+      // A caller on the auto-review tier must explicitly ask for the preset;
+      // otherwise the port would grant full access with no per-tool review.
+      if (workMode === 'auto-review' && permissionPreset !== 'auto') {
+        throw new Error('无法派发会话：auto-review 档必须显式选择 auto 权限预设；拒绝无审查的完全权限会话')
+      }
       // Safety gate: dispatch must run inside a real file boundary. If the host
       // cannot report a sandbox policy, refuse before creating anything — an
       // unverified session is an agent with the harness's full filesystem access.
@@ -528,12 +687,37 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
       // so it does not affect turn accounting.
       const seed = [{ type: 'sandbox/mode', seq: 0, time: Date.now(), data: { mode: expectedMode } }]
       const sessionId = randomUUID()
-      const handle = await agents.create({ sessionId, meta: { cwd }, seed, agentOptions, setup })
+      // Review paths pass a setup FACTORY so the host can inject the live
+      // sandbox reader (agent.session) into the review context. Plain paths
+      // still pass a plain function and are unchanged.
+      const resolvedSetup = typeof setup === 'function' && sandboxMode === 'read-only'
+        ? setup({ readSandboxMode: (agent) => sandboxPolicy.resolve({ session: agent?.session }).mode })
+        : setup
+      const handle = await agents.create({ sessionId, meta: { cwd }, seed, agentOptions, setup: resolvedSetup })
       // Verify what actually took effect, not what we asked for. Read the resolved
       // policy back from the live session; a mismatch means the profile overrode
       // us, so dispose and refuse rather than run with an unknown boundary.
       try {
         assertSandboxMode(handle.agent?.session, expectedMode)
+        // AC33: auto-review is a permission PRESET, never a SandboxMode. Select
+        // it on the live session AFTER creation and BEFORE the first message.
+        // A missing live preset / failed verification fails closed.
+        if (permissionPreset === 'auto') {
+          if (permissionPresets === undefined || permissionPresets === null || typeof permissionPresets.set !== 'function') {
+            throw new Error('无法派发会话：宿主未提供 permissionPresets 服务；自动审查预设不可用')
+          }
+          permissionPresets.set(handle.agent?.session, 'auto')
+          if (permissionPresets.current(handle.agent?.session) !== 'auto') {
+            throw new Error('无法派发会话：宿主未能选中 auto 权限预设；拒绝以未审查权限运行')
+          }
+          assertSandboxMode(handle.agent?.session, 'danger-full-access')
+        }
+        if (presetId !== undefined && agentPresets !== undefined && agentPresets !== null
+          && typeof agentPresets.presetForSession === 'function') {
+          if (agentPresets.presetForSession(handle.agent?.session) !== presetId) {
+            throw new Error(`无法派发会话：评审会话未挂载指定预设 ${presetId}`)
+          }
+        }
         await send(handle, firstMessage)
       } catch (error) {
         try { await handle.dispose() } catch { /* best effort */ }
@@ -547,13 +731,16 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
      * deliberately absent — the host rejects it alongside `resumeSessionId`.
      * A missing or corrupt history rejects, which is what drives level 3.
      */
-    async resumeSession({ resumeSessionId, cwd, setup, firstMessage, workMode }) {
-      const expectedMode = requiredModeForWorkMode(workMode)
+    async resumeSession({ resumeSessionId, cwd, setup, firstMessage, workMode, sandboxMode, permissionPreset }) {
+      const expectedMode = sandboxMode ?? requiredModeForWorkMode(workMode)
       if (typeof agents.resume !== 'function') throw new Error('host has no agents.resume; cannot rebuild the session')
+      const resolvedSetup = typeof setup === 'function' && sandboxMode === 'read-only'
+        ? setup({ readSandboxMode: (agent) => sandboxPolicy.resolve({ session: agent?.session }).mode })
+        : setup
       const handle = await agents.resume({
         resumeSessionId,
         ...(cwd === undefined ? {} : { agentOptions: { cwd } }),
-        setup,
+        setup: resolvedSetup,
       })
       try {
         // A persisted session from before the sandbox fix has no sandbox/mode
@@ -561,6 +748,15 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
         // Refuse it here; the error lets continueCard fall to level 3, which
         // goes through createSession's seed gate.
         assertSandboxMode(handle.agent?.session, expectedMode)
+        if (permissionPreset === 'auto') {
+          if (permissionPresets === undefined || permissionPresets === null || typeof permissionPresets.set !== 'function') {
+            throw new Error('无法派发会话：宿主未提供 permissionPresets 服务；自动审查预设不可用')
+          }
+          permissionPresets.set(handle.agent?.session, 'auto')
+          if (permissionPresets.current(handle.agent?.session) !== 'auto') {
+            throw new Error('无法派发会话：宿主未能选中 auto 权限预设；拒绝以未审查权限运行')
+          }
+        }
         await send(handle, firstMessage)
       } catch (error) {
         try { await handle.dispose() } catch { /* best effort */ }
@@ -574,5 +770,8 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
         await created.handle.dispose()
       }
     },
+
+    // P0-3 reader, reused by P2a to gate auto-review and to warn on fallback.
+    readAutoReviewPluginState: () => readAutoReviewPluginState(ctx),
   }
 }

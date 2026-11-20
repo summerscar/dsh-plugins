@@ -44,6 +44,15 @@ export function isCredentialKeySegment(value) {
 
 export const DEFAULT_PERMISSION = 'workspace-write'
 export const DEFAULT_AUTONOMY = 'manual'
+export const WORK_MODES = Object.freeze(['workspace-write', 'full-access', 'auto-review'])
+export const DEFAULT_WORK_MODE = 'workspace-write'
+
+/** Work mode is orthogonal to the autonomy tier; unknown values are refused. */
+export function normalizeWorkMode(value, fallback = DEFAULT_WORK_MODE) {
+  if (value === undefined || value === null || value === '') return fallback
+  if (!WORK_MODES.includes(value)) throw new Error(`未知工作模式：${value}（可选 ${WORK_MODES.join(' / ')}）`)
+  return value
+}
 
 /** Consecutive failed dispatches before a card stops being re-dispatched. */
 export const DEFAULT_DISPATCH_FAILURE_LIMIT = 3
@@ -503,6 +512,9 @@ export class FactoryStore {
       repos: normalizeRepos(input.repos),
       defaultModel: optionalString(input.defaultModel),
       defaultPermission: optionalString(input.defaultPermission) || DEFAULT_PERMISSION,
+      // P2a: work mode is a separate, persisted project setting. It does NOT
+      // read or write `autonomy` / `autoDispatch` (L0–L4 remain orthogonal).
+      workMode: normalizeWorkMode(input.workMode),
       worktreeRoot,
       ...normalizePreparation(input),
       // New projects always start manual; autonomy is an explicit later edit.
@@ -526,6 +538,47 @@ export class FactoryStore {
     this.state.boards.push(board)
     this._commit()
     return clone(project)
+  }
+
+  /**
+   * Update a project's work mode. A separate write from autonomy/preparation:
+   * these settings are orthogonal, so a form change can never move a tier.
+   * `allowAutoReview=false` is what the HTTP layer passes while the
+   * experimental plugin is unavailable (PRD §5.12 / AC33).
+   */
+  updateWorkMode(id, input = {}, { allowAutoReview = true } = {}) {
+    const project = this._project(id)
+    const next = normalizeWorkMode(input.workMode ?? input, project.workMode ?? DEFAULT_WORK_MODE)
+    if (next === 'auto-review' && allowAutoReview !== true) {
+      throw new Error('自动审查不可选：实验性插件未开启或不可用；本插件不代为开启')
+    }
+    if (next === project.workMode) return clone(project)
+    const previous = project.workMode ?? DEFAULT_WORK_MODE
+    project.workMode = next
+    this.recordEvent({
+      type: 'work-mode', scope: 'project', targetId: id, actor: 'human',
+      decision: next, note: `workMode ${previous} → ${next}`,
+    })
+    this._commit()
+    return clone(project)
+  }
+
+  /**
+   * Record the reviewer's session WITHOUT touching `sessionId` — the builder
+   * session must survive a review and remain the target of review→build.
+   * `mode` is 'created' / 'reused' / 'recreated' and is kept in history.
+   */
+  setReviewSession(id, sessionId, mode = 'created') {
+    if (typeof sessionId !== 'string' || sessionId === '') throw new Error('评审会话 ID 不能为空')
+    const card = this._card(id)
+    const previous = card.reviewSessionId ?? null
+    card.reviewSessionId = sessionId
+    card.history.push({
+      type: 'review-session', from: previous, sessionId, mode,
+      actor: 'autoRule', at: new Date().toISOString(),
+    })
+    this._commit()
+    return clone(card)
   }
 
   /**
@@ -728,6 +781,8 @@ export class FactoryStore {
       source: optionalString(input.source) || 'manual',
       status: STATUS.INBOX,
       sessionId: null,
+      // P2a: the reviewer's session, distinct from the builder's sessionId.
+      reviewSessionId: null,
       sessionTurn: 0,
       worktreePath: null,
       branch: null,
@@ -854,12 +909,12 @@ export class FactoryStore {
   /**
    * P1: write a free-text report AND the structured verdict in one commit.
    *
-   * Idempotency is by the backend-computed `reviewedHead`: the first verdict for
-   * a head becomes the card's machine-readable mirror (`card.reviewVerdict`)
-   * and a structured history entry. A repeated submission for the SAME head
-   * appends the human-readable report but creates NO new verdict — the mirror
-   * and the verdict history stay unchanged. A later head overwrites the mirror
-   * while every earlier history entry is kept for re-review and audit (§5.3).
+   * Idempotency is keyed by (reviewedHead, reviewerSessionId): the SAME reviewer
+   * re-submitting the SAME head adds no second verdict, but a DIFFERENT session
+   * (e.g. the independent reviewer following a builder that wrote early) is a
+   * genuine new conclusion and must land — otherwise the builder's self-review
+   * would silently win by arrival order. Every verdict stays in history; the
+   * mirror holds the latest accepted one.
    *
    * A dirty worktree does not change reviewedHead: it names the committed tree
    * that was reviewed, so unsaved edits cannot be laundered into an approval.
@@ -870,7 +925,9 @@ export class FactoryStore {
     const canonical = normalizeVerdict(verdict, { reviewedHead: verdict?.reviewedHead })
     const at = new Date().toISOString()
     const previous = card.reviewVerdict ?? null
-    const idempotent = previous !== null && previous.reviewedHead === canonical.reviewedHead
+    const idempotent = previous !== null
+      && previous.reviewedHead === canonical.reviewedHead
+      && previous.reviewerSessionId === canonical.reviewerSessionId
 
     card.history.push({ type: 'report', actor, body, at })
     if (!idempotent) {

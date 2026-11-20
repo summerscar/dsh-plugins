@@ -119,14 +119,14 @@ test('P0-1 map: workMode→SandboxMode table is exact and unknown modes fail clo
   assert.deepEqual([...WORK_MODES].sort(), ['auto-review', 'full-access', 'workspace-write'])
   assert.equal(sandboxModeForWorkMode('workspace-write'), 'workspace-write')
   assert.equal(sandboxModeForWorkMode('full-access'), 'danger-full-access')
-  assert.equal(sandboxModeForWorkMode('auto-review'), null, 'auto is a preset, never a SandboxMode')
+  assert.equal(sandboxModeForWorkMode('auto-review'), 'danger-full-access', 'auto is a preset; its SANDBOX mode is full access, never the literal "auto"')
   for (const empty of [undefined, null, '']) {
     assert.equal(sandboxModeForWorkMode(empty), DEFAULT_WORK_MODE, 'empty workMode defaults to workspace-write')
   }
   for (const bad of ['auto', 'danger-full-access', 'Write', 'workspace']) {
     assert.equal(sandboxModeForWorkMode(bad), null, `unknown workMode ${bad} must fail closed`)
   }
-  const mapped = ['workspace-write', 'full-access'].map(sandboxModeForWorkMode)
+  const mapped = ['workspace-write', 'full-access', 'auto-review'].map(sandboxModeForWorkMode)
   assert.ok(mapped.every((m) => SANDBOX_MODES.has(m)), 'every dispatchable mode is a host SandboxMode')
 })
 

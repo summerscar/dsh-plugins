@@ -85,7 +85,7 @@ function concurrencyView(store, engineConfig) {
   }
 }
 
-export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {} }) {
+export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {}, workModeAvailability } = {}) {
   return function handle(input = {}) {
     const method = String(input.method ?? 'GET').toUpperCase()
     const rawRoute = String(input.route ?? '/')
@@ -200,9 +200,19 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           const wantsAutonomy = ['autonomy', 'autoDispatch'].some((key) => key in body)
           const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
           const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions', 'intakeLimit', 'githubCredentialId'].some((key) => key in body)
-          const kinds = [wantsAutonomy, wantsPreparation, wantsIntake].filter(Boolean).length
+          const wantsWorkMode = 'workMode' in body
+          const kinds = [wantsAutonomy, wantsPreparation, wantsIntake, wantsWorkMode].filter(Boolean).length
           if (kinds > 1) {
-            return { status: 400, body: { error: 'autonomy / preparation / intake 字段不能在同一次 PATCH 里混改' } }
+            return { status: 400, body: { error: 'autonomy / preparation / intake / workMode 字段不能在同一次 PATCH 里混改' } }
+          }
+          if (wantsWorkMode) {
+            const available = typeof workModeAvailability === 'function' ? workModeAvailability() : undefined
+            const allowAutoReview = available === undefined || available.available === true
+            try {
+              return ok({ project: store.updateWorkMode(seg[1], body, { allowAutoReview }) })
+            } catch (error) {
+              return { status: 400, body: { error: error instanceof Error ? error.message : String(error), reason: available?.reason ?? null } }
+            }
           }
           if (wantsAutonomy) return ok({ project: store.updateAutonomy(seg[1], body) })
           if (wantsIntake) return ok({ project: store.updateIntake(seg[1], body) })

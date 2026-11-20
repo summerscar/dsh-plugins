@@ -120,6 +120,11 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       output: TRANSITION_OUTPUT,
       execute: async (args, exec) => {
         const card = store.getCard(args.cardId)
+        const liveSessionId = exec?.agent?.session?.id ?? exec?.agent?.id
+        if (card !== undefined && card !== null && typeof liveSessionId === 'string'
+          && card.reviewSessionId === liveSessionId) {
+          throw new Error('评审会话不能移卡：review 阶段的放行与退回只能由人操作')
+        }
         if (card !== undefined && card !== null && card.status === args.to) {
           // Idempotent no-op: never throw the "illegal transition" error that an
           // agent reads as "I did it wrong, retry". After two repeats, say so
@@ -187,8 +192,24 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
           // ignored here even if an old caller passes it as an extra key.
           const card = store.getCard(args.cardId)
           if (card === undefined || card === null) throw new Error(`卡片不存在：${args.cardId}`)
-          const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead })
           const fromExec = exec?.agent?.session?.id ?? exec?.agent?.id
+          // P2a bug fix + hole-A closure: a verdict is the REVIEWER's
+          // conclusion, NEVER a builder self-certification. This is a
+          // STAGE-INDEPENDENT rule: only the session recorded on
+          // card.reviewSessionId may write structured fields, in any phase.
+          // Without a reviewer session there is no review conclusion at all.
+          // Plain free-text reports are unaffected (no verdict keys).
+          const reviewerId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : null
+          if (reviewerId === null) {
+            throw new Error('本卡尚未派出评审会话，不能提交结构化 verdict；请先发起评审')
+          }
+          if (typeof card.sessionId === 'string' && card.sessionId !== '' && fromExec === card.sessionId) {
+            throw new Error('只有评审会话可以提交结构化 verdict；builder 会话在任何阶段都不能自评')
+          }
+          if (typeof fromExec !== 'string' || fromExec === '' || fromExec !== reviewerId) {
+            throw new Error('只有评审会话可以提交结构化 verdict；当前会话不是本卡的评审会话')
+          }
+          const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead })
           canonical = normalizeVerdict({
             cardId: args.cardId,
             source: args.source,

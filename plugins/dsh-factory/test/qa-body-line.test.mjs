@@ -325,8 +325,8 @@ test('B2 dispatch.js / index.js / autonomy.js pass locale from host ctx', () => 
   const dispatchSrc = readFileSync(join(packageRoot, 'dispatch.js'), 'utf8')
   const indexSrc = readFileSync(join(packageRoot, 'index.js'), 'utf8')
   const autonomySrc = readFileSync(join(packageRoot, 'autonomy.js'), 'utf8')
-  assert.match(dispatchSrc, /function makeAgentSetup\(\{ store, cardId, locale = 'zh' \}\)/)
-  assert.match(dispatchSrc, /attachSessionContext\(\{ agentCtx, store, cardId, locale \}\)/)
+  assert.match(dispatchSrc, /function makeAgentSetup\(\{ store, cardId, locale = 'zh', reviewMode = false, review = \{\}, presetId, builderMode = false \}/)
+  assert.match(dispatchSrc, /attachSessionContext\(\{ agentCtx, store, cardId, locale, reviewMode, review: reviewOptions \?\? \{\}, builderMode \}/)
   assert.match(indexSrc, /locale: localeFromContext\(ctx, store\)/)
   assert.match(autonomySrc, /locale: localeFromContext\(ctx, store\)/)
   const idxMatches = indexSrc.match(/locale: localeFromContext\(ctx, store\)/g) || []

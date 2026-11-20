@@ -208,7 +208,7 @@ function repoOf(card, project) {
  * (cardId / title / phase / nextPhases / repo / branch / worktreePath /
  * planStatus / prUrl), plus the rendered `sectionText` and `firstMessage`.
  */
-export function buildSessionContext({ card, project, locale = 'zh', reviewMode = false, review = {} } = {}) {
+export function buildSessionContext({ card, project, locale = 'zh', reviewMode = false, review = {}, builderMode = false } = {}) {
   if (card === undefined || card === null) throw new Error('buildSessionContext needs a card')
   const fields = {
     cardId: card.id,
@@ -237,6 +237,32 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
   const bodyLines = bodyBlock(card, locale)
   const languageLine = languageDirective(locale)
 
+  // P2a bug fix: a BUILDER session stays a builder for its whole life. When
+  // the card enters Review its context must NOT become a reviewer's — that
+  // directly caused builder self-verdicts. It is told to wait for the human and
+  // will become a builder again if the card is sent back to build (AC8).
+  if (builderMode === true && card.status === 'review' && reviewMode !== true) {
+    fields.skill = null
+    fields.nextPhases = []
+    const waitingText = [
+      ...bodyLines,
+      ...(bodyLines.length === 0 ? [] : ['']),
+      ...(languageLine === '' ? [] : [languageLine, '']),
+      'You are the BUILDER session for this card. The card has entered Review. Do NOT review it, do NOT submit a structured verdict, and do NOT move the card. Wait for the human decision; if the card is returned to Build, continue building in this same session.',
+      `- cardId: ${fields.cardId}`,
+      `- phase: ${fields.phase}`,
+      `- repo: ${show(fields.repo)}`,
+      `- branch: ${show(fields.branch)}`,
+      `- worktreePath: ${show(fields.worktreePath)}`,
+      `- prUrl: ${show(fields.prUrl)}`,
+    ].join('\n')
+    const waitingFirst = [
+      `Factory card ${fields.cardId} is now in Review.`,
+      'Builder session standing by: do not review, do not write a verdict, do not move the card. Wait for the human.',
+    ].join('\n')
+    return { ...fields, sectionText: waitingText, firstMessage: waitingFirst }
+  }
+
   // PRD §5.2: a REVIEW session is a different role. It receives the review
   // fields and NEVER the phase-advance / move-card instructions that drive a
   // builder session — those directly contradict factory-review's "You cannot
@@ -261,8 +287,10 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
     fields.previousVerdict = card.reviewVerdict ?? null
     fields.commitSha = card.commitSha ?? null
     fields.nextPhases = []
-    fields.skill = skillForPhase('review')
+    // AC5: a card with a review→build return gets the rereview skill instead.
+    fields.skill = review.rereview === true ? 'factory-rereview' : skillForPhase('review')
     const previous = fields.previousVerdict === null ? '—' : JSON.stringify(fields.previousVerdict)
+    const skillLine = `Read the \`${fields.skill}\` skill below first. Report with \`factory_report\` using its structured verdict fields (source, verdict, blocking, followUps, checks, reviewerSessionId); reviewedHead is computed by the factory from git and must NOT be supplied by you.`
     const sectionText = [
       ...bodyLines,
       ...(bodyLines.length === 0 ? [] : ['']),
@@ -278,7 +306,7 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `- reviewedHead: ${fields.reviewedHead}`,
       `- previousVerdict: ${previous}`,
       `- commitSha: ${show(fields.commitSha)}`,
-      `Read the \`factory-review\` skill below first. Report with \`factory_report\` using its structured verdict fields (source, verdict, blocking, followUps, checks, reviewerSessionId); reviewedHead is computed by the factory from git and must NOT be supplied by you.`,
+      skillLine,
     ].join('\n')
     const firstMessage = [
       `Factory review ${fields.cardId}: ${fields.title}`,
@@ -289,7 +317,7 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `reviewedHead: ${fields.reviewedHead}`,
       `previousVerdict: ${previous}`,
       `commitSha: ${show(fields.commitSha)}`,
-      'This is a read-only review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the factory-review skill and record a structured verdict with factory_report.',
+      `This is a read-only review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the ${fields.skill} skill and record a structured verdict with factory_report.`,
     ].join('\n')
     return { ...fields, sectionText, firstMessage }
   }
@@ -362,7 +390,7 @@ const DEFAULT_ORDER = 60
  *
  * @param {{ agentCtx: object, store: import('./store.js').FactoryStore, cardId: string }} args
  */
-export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill, locale = 'zh', reviewMode = false, review = {} } = {}) {
+export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readSkill, locale = 'zh', reviewMode = false, review = {}, builderMode = false } = {}) {
   const systemPrompt = agentCtx?.systemPrompt
   if (systemPrompt === undefined || systemPrompt === null) {
     throw new Error('attachSessionContext needs an agent context exposing systemPrompt')
@@ -380,7 +408,7 @@ export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readS
   const current = () => {
     const card = store.getCard(cardId)
     if (card === undefined || card === null) return null
-    return buildSessionContext({ card, project: store.getProject(card.projectId), locale, reviewMode, review })
+    return buildSessionContext({ card, project: store.getProject(card.projectId), locale, reviewMode, review, builderMode })
   }
 
   // Review mode fails CLOSED at attach time: a missing head or a writable

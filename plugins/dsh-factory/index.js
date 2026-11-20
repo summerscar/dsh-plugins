@@ -20,7 +20,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { createEngineStatus, defaultEngineDeps, startEngine } from './autonomy.js'
 import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
-import { continueCard, createHostPort, dispatchCard } from './dispatch.js'
+import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview } from './dispatch.js'
 import { commitCard, createGitPort, createPrForCard } from './git-exec.js'
 import { localeFromContext } from './session-context.js'
 import { createGhPort, intakeIssues } from './intake.js'
@@ -38,6 +38,7 @@ export { FactoryStore } from './store.js'
 export { createApi } from './api.js'
 export * as autonomy from './autonomy.js'
 export { dispatchCard, continueCard, createHostPort } from './dispatch.js'
+export { dispatchReview, followupReview } from './dispatch.js'
 export { sandboxModeForWorkMode, readAutoReviewPluginState } from './dispatch.js'
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
 export { intakeIssues, createGhPort } from './intake.js'
@@ -55,7 +56,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.2'
+export const BUILD = 'factory-2026-11-20.5'
 
 export const name = 'dsh-factory'
 
@@ -114,7 +115,7 @@ export function apply(ctx, config = {}) {
   // `config.engine` is the launch-config fallback for the global concurrency cap;
   // the HTTP-written value in store.settings takes priority (P4 §3.3). The API
   // needs it to report the effective value + source back to the UI.
-  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {} })
+  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {}, workModeAvailability: () => runtime.engine?.autoReviewPluginState })
 
   // The HTTP-written githubClientId (NON-secret) lives in store.settings; the
   // actual GitHub identities live in the host credential service, never here.
@@ -328,6 +329,76 @@ export function apply(ctx, config = {}) {
         sendJson(res, 400, { error: message || 'continuation failed' })
       }
       return
+    }
+
+    // P2a: independent review session (read-only, reviewMode wired to the
+    // real host sandbox reader) and re-review reuse. Neither touches the
+    // builder's sessionId nor the card status.
+    const reviewDispatch = /^\/cards\/([^/?]+)\/review-dispatch(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && reviewDispatch !== null) {
+      try {
+        const port = createHostPort({ ctx })
+        const result = await dispatchReview({
+          store, cardId: decodeURIComponent(reviewDispatch[1]), port,
+          locale: localeFromContext(ctx, store),
+          note: typeof body.note === 'string' ? body.note : undefined,
+          presetId: typeof config.reviewPresetId === 'string' ? config.reviewPresetId : undefined,
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[dsh-factory] review dispatch failed:', message)
+        sendJson(res, 400, { error: message || 'review dispatch failed' })
+      }
+      return
+    }
+    const reviewContinue = /^\/cards\/([^/?]+)\/review-continue(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && reviewContinue !== null) {
+      try {
+        const port = createHostPort({ ctx })
+        const result = await followupReview({
+          store, cardId: decodeURIComponent(reviewContinue[1]), port,
+          locale: localeFromContext(ctx, store),
+          note: typeof body.note === 'string' ? body.note : undefined,
+          presetId: typeof config.reviewPresetId === 'string' ? config.reviewPresetId : undefined,
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[dsh-factory] review continuation failed:', message)
+        sendJson(res, 400, { error: message || 'review continuation failed' })
+      }
+      return
+    }
+
+    // AC8: a human's review→build decision must immediately continue the ORIGINAL
+    // builder session. `continueCard` reads card.sessionId only, never the
+    // reviewer id, so the two sessions stay separate.
+    const reviewToBuild = /^\/cards\/([^/?]+)\/transition(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && reviewToBuild !== null && body.to === 'build') {
+      const cardId = decodeURIComponent(reviewToBuild[1])
+      const current = store.getCard(cardId)
+      if (current?.status === 'review') {
+        try {
+          const card = store.transitionCard(cardId, 'build', 'human', body.note)
+          let continued = null
+          try {
+            continued = await continueCard({ store, cardId, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) })
+          } catch (continueError) {
+            // The human decision is already valid; make the stranded build visible.
+            store.recordEvent({
+              type: 'review-build-continue-failed', scope: 'card', targetId: cardId,
+              actor: 'human', decision: 'failed',
+              note: continueError instanceof Error ? continueError.message : String(continueError),
+            })
+          }
+          sendJson(res, 200, { card, continued })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          sendJson(res, 400, { error: message || 'transition failed' })
+        }
+        return
+      }
     }
 
     // Authorized git execution. The gate is enforced inside commitCard /
