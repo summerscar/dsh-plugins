@@ -245,8 +245,8 @@ test('Dev-Stale: factory_report schema never accepts previousReviewedHead / revi
 test('Dev-Stale: canRedispatch relaxed to stale verdict; reviewStaleNotice priority + four dicts', () => {
   assert.match(client, /card\.reviewVerdict == null \|\| card\.reviewStale === true/, 'stale verdict also shows redispatch')
   const block = client.slice(client.indexOf('const noticeText ='), client.indexOf('}, noticeText'))
-  assert.ok(block.indexOf("t('reviewStaleNotice')") < block.indexOf("t('autoDeliveryFailedNotice')"), 'stale notice outranks generic failure')
-  assert.ok(block.indexOf("t('autoDeliveryFailedNotice')") < block.indexOf("t('reviewStalledNotice')"), 'generic failure outranks no-verdict')
+  assert.ok(block.indexOf("t('reviewStaleNotice')") < block.indexOf("t('autoDeliveryFailedNotice'"), 'stale notice outranks generic failure')
+  assert.ok(block.indexOf("t('autoDeliveryFailedNotice'") < block.indexOf("t('reviewStalledNotice')"), 'generic failure outranks no-verdict')
   for (const [d, key] of [[zh, '自动'], [en, 'The code']]) {
     assert.equal(typeof d.reviewStaleNotice, 'string')
     assert.match(d.reviewStaleNotice, new RegExp(key))

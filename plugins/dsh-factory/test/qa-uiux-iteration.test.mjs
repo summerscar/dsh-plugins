@@ -134,6 +134,7 @@ test('AC-1.5: every key keeps an explicit placeholder contract, mirrored byte-fo
     wtRootResolved: ['{path}'],
     currentLevel: ['{level}'],
     ariaLevel: ['{n}', '{ordinal}'],
+    autoDeliveryFailedNotice: ['{reason}'],
   }
   const keys = Object.keys(current.zh).sort()
   assert.deepEqual(keys, Object.keys(current.en).sort(), 'zh/en templates share one key set')

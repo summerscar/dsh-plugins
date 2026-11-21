@@ -21,7 +21,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus } from './state.js'
+import { assertTransition, PR_SUCCESS_STAYS, STATUS, isStatus, isTerminal } from './state.js'
 import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot, expandHome } from './worktree.js'
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 import { detectGithubRepo, normalizeGithubRepo } from './git-exec.js'
@@ -736,6 +736,31 @@ export class FactoryStore {
   }
 
   /** Delete a project and everything under it, leaving other projects untouched. */
+  /**
+   * Permanently delete a TERMINAL card (canceled / done). Deletion is
+   * irreversible, so only terminal cards are eligible: a live card still has
+   * a worktree / session / authorization trail and must go through cancel first.
+   * The card body IS the board reference (cards are keyed by boardId), so
+   * removing it from state.cards removes it from the board list with no separate
+   * reference to clean. pendingAuthorization lives on the card and is cleared
+   * before removal. Audit history is intentionally KEPT (targetId remains a
+   * readable trace) — deleting audit events would erase evidence.
+   */
+  deleteCard(id, { actor = 'human' } = {}) {
+    const card = this._card(id)
+    if (!isTerminal(card.status)) {
+      throw new Error(`仅终态卡可删除，当前 ${card.status}`)
+    }
+    this.recordEvent({
+      type: 'card-deleted', scope: 'card', targetId: id, actor,
+      decision: 'deleted', note: `deleted terminal card (${card.status})`,
+    })
+    card.pendingAuthorization = null
+    this.state.cards = this.state.cards.filter((entry) => entry.id !== id)
+    this._commit()
+    return { deleted: true, id, status: card.status }
+  }
+
   deleteProject(id) {
     this._project(id)
     const boardIds = new Set(this.state.boards.filter((b) => b.projectId === id).map((b) => b.id))
@@ -854,6 +879,12 @@ export class FactoryStore {
       // Consecutive dispatch failures. Reset on a successful dispatch; a card
       // that reaches the limit is not re-dispatched automatically any more.
       dispatchFailures: 0,
+      // Commit-stage failures at the L4 review entry, tracked SEPARATELY from
+      // dispatchFailures so an inbox failure streak cannot stall the commit
+      // stage (and vice versa). Own stalled flag; assertDispatchable only reads
+      // the dispatch-stage `stalled`.
+      commitFailures: 0,
+      commitStalled: false,
       // L4: engine-initiated re-reviews used so far (lifetime cap AUTO_REREVIEW_LIMIT).
       // Manual redispatch never increments this.
       autoRereviewCount: 0,
@@ -1230,6 +1261,32 @@ export class FactoryStore {
       reason: optionalString(reason),
       at: new Date().toISOString(),
     })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Record one L4 review-entry commit failure with its own bounded budget. */
+  recordCommitFailure(id, { reason = '', limit = DEFAULT_DISPATCH_FAILURE_LIMIT } = {}) {
+    const card = this._card(id)
+    card.commitFailures = (card.commitFailures ?? 0) + 1
+    const tripped = card.commitFailures >= limit
+    if (tripped) card.commitStalled = true
+    card.history.push({
+      type: 'commit-failed',
+      attempt: card.commitFailures,
+      reason: optionalString(reason),
+      tripped,
+      at: new Date().toISOString(),
+    })
+    this._commit()
+    return { failures: card.commitFailures, tripped }
+  }
+
+  /** Clear only the commit-stage failure streak (dispatch streak untouched). */
+  clearCommitFailures(id) {
+    const card = this._card(id)
+    card.commitFailures = 0
+    card.commitStalled = false
     this._commit()
     return clone(card)
   }

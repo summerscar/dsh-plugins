@@ -232,9 +232,10 @@ export async function ensureCommittedForAutoDelivery({
   if (typeof port?.isWorktreeClean !== 'function') {
     return { ok: false, reason: 'git 端口未提供 isWorktreeClean，无法安全判断脏树' }
   }
-  // Bounded retry: a previously stalled card is not retried every tick. Same
-  // dispatchFailures/stalled budget that first-dispatch failures use.
-  if (card.stalled === true) return { ok: false, reason: '卡片已停滞，需人工处理', stalled: true }
+  // Bounded retry on the COMMIT stage only. Separate from the dispatch-stage
+  // stalled flag that assertDispatchable reads, so failures in one stage never
+  // block the other.
+  if (card.commitStalled === true) return { ok: false, reason: '自动提交已停滞，需人工处理', stalled: true }
 
   let head
   try {
@@ -253,7 +254,7 @@ export async function ensureCommittedForAutoDelivery({
     // Tree is already clean but the recorded sha drifted — align it without a
     // (no-op) commit. The delivery gate still re-checks verdict head on this.
     store.recordCommit(cardId, { sha: head, message: 'factory: auto-delivery (head sync)', actor: AUTO_DELIVERY_TIER })
-    store.clearDispatchFailures(cardId)
+    store.clearCommitFailures(cardId)
     audit(store, cardId, 'head-synced', `reviewed tree ${head} is already HEAD`, { head })
     markStaleIfVerdictOld(store, cardId, card, head)
     return { ok: true, synced: true, head }
@@ -267,14 +268,14 @@ export async function ensureCommittedForAutoDelivery({
     const sha = port.commit(card.worktreePath, message)
     if (!isFullSha(sha)) throw new Error(`提交返回的 sha 不是完整 SHA：${sha}`)
     store.recordCommit(cardId, { sha, message, actor: AUTO_DELIVERY_TIER })
-    store.clearDispatchFailures(cardId)
+    store.clearCommitFailures(cardId)
     audit(store, cardId, 'committed', `head ${sha}`, { head: sha })
     markStaleIfVerdictOld(store, cardId, card, sha)
     return { ok: true, committed: true, sha, head: sha }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     try { store.setAutoDelivery(cardId, { head, state: 'failed', error: reason, actor: AUTO_DELIVERY_TIER }) } catch { /* audit is primary */ }
-    store.recordDispatchFailure(cardId, { reason })
+    store.recordCommitFailure(cardId, { reason })
     audit(store, cardId, 'commit-failed', reason, { head })
     return { ok: false, reason, retryable: true }
   }

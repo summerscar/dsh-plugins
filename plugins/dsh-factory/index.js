@@ -59,7 +59,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.28'
+export const BUILD = 'factory-2026-11-20.30'
 
 export const name = 'dsh-factory'
 
@@ -314,6 +314,29 @@ export function apply(ctx, config = {}) {
     const route = (url.pathname.slice('/api/dsh-factory'.length) || '/') + url.search
     const method = req.method ?? 'GET'
     const body = method === 'GET' || method === 'HEAD' ? {} : await readJsonBody(req)
+
+    // DELETE /cards/:id — permanent deletion of a TERMINAL card only.
+    // Deletion is irreversible, so it requires BOTH a terminal status (enforced
+    // in store.deleteCard) and an explicit `{ confirm: true }` in the body. The
+    // UI already gates it behind a confirm modal; the body flag is a second,
+    // server-side guard so a stray/cached script or a mis-typed API call cannot
+    // erase a card by accident. There is no standing delete permission here.
+    const cardDelete = /^\/cards\/([^/?]+)(?:\?.*)?$/.exec(route)
+    if (method === 'DELETE' && cardDelete !== null) {
+      if (body.confirm !== true) {
+        sendJson(res, 400, { error: '删除卡片需要请求体 { confirm: true } 明确确认' })
+        return
+      }
+      try {
+        const result = store.deleteCard(decodeURIComponent(cardDelete[1]), { actor: 'human' })
+        sendJson(res, 200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const status = /仅终态卡可删除|卡片不存在/.test(message) ? 400 : 500
+        sendJson(res, status, { error: message || 'delete card failed' })
+      }
+      return
+    }
 
     // Dispatch is the one async, side-effecting route (it creates a session); it
     // runs outside the sync domain handler. A profile without the `agents`

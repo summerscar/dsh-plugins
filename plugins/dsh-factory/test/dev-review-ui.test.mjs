@@ -106,3 +106,25 @@ test('Dev-ReviewUI: review-dispatch backend route already exists (UI does not ch
   const index = readFileSync(join(root, 'index.js'), 'utf8')
   assert.match(index, /\/review-dispatch/, 'route present in index.js')
 })
+
+test('Dev-ReviewUI: autoDeliveryFailedNotice restored to {reason} template + render substitution', () => {
+  // Four dictionaries carry the same template, no other placeholder text.
+  const inlineZh = client.slice(client.indexOf('const zh = {'), client.indexOf('const en = {'))
+  const inlineEn = client.slice(client.indexOf('const en = {'))
+  const zhLine = inlineZh.match(/autoDeliveryFailedNotice: "([^"]*)"/)?.[1]
+  const enLine = inlineEn.match(/autoDeliveryFailedNotice: "([^"]*)"/)?.[1]
+  assert.equal(zhLine, zh.autoDeliveryFailedNotice, 'zh inline == locale byte-identical')
+  assert.equal(enLine, en.autoDeliveryFailedNotice, 'en inline == locale byte-identical')
+  assert.equal(zh.autoDeliveryFailedNotice, '自动交付失败：{reason}。需人工处理。')
+  assert.equal(en.autoDeliveryFailedNotice, 'Auto-delivery failed: {reason}. Manual action is needed.')
+  // Render uses the template call with a matching `reason` arg (host t() substitutes).
+  assert.match(client, /t\('autoDeliveryFailedNotice', \{ reason: deliveryError \}\)/, 'render passes reason to t()')
+  assert.doesNotMatch(client, /\$\{t\('autoDeliveryFailedNotice'\)\}\\n\$\{deliveryError\}/, 'old string-concat render removed')
+  // Simulate host t() substitution using the real dictionary template: reason is
+  // inserted and the placeholder does not leak.
+  const reason = '工作树存在未提交改动'
+  const rendered = zh.autoDeliveryFailedNotice.replace(/\{reason\}/g, reason)
+  assert.equal(rendered, `自动交付失败：${reason}。需人工处理。`)
+  assert.ok(rendered.includes(reason), 'reason really substituted')
+  assert.doesNotMatch(rendered, /\{reason\}/, 'placeholder does not leak')
+})

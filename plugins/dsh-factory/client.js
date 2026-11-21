@@ -433,6 +433,10 @@ window.__ModuleLoader__.load({
       returnWithSessionNotice: "会话继续，引擎不会重复派发",
       cancelCard: "取消卡片",
       toastCardCanceled: "卡片已取消，保留在「已取消」列表",
+      actDeleteCard: "删除卡片",
+      confirmDeleteCardTitle: "删除卡片？",
+      confirmDeleteCardBody: "此操作不可撤销，将永久删除这张终态卡及其本地记录。",
+      toastCardDeleted: "卡片已删除",
       working: "工作中…",
       sessionLabel: "会话",
       openSession: "打开构建会话",
@@ -443,7 +447,7 @@ window.__ModuleLoader__.load({
       autoRereviewExhaustedNotice: "自动重评审次数已用完，需人工处理。",
       actRedispatchReview: "重新派发评审",
       toastReviewRedispatched: "已重新派发评审",
-      autoDeliveryFailedNotice: "自动交付失败，需人工处理。原因：",
+      autoDeliveryFailedNotice: "自动交付失败：{reason}。需人工处理。",
       sessionUnavailable: "会话已不可用",
       viewReports: "查看报告",
       reportsTitle: "阶段报告",
@@ -782,6 +786,10 @@ window.__ModuleLoader__.load({
       returnWithSessionNotice: "The session continues; the engine will not dispatch again.",
       cancelCard: "Cancel card",
       toastCardCanceled: "Card canceled; kept in the canceled list",
+      actDeleteCard: "Delete card",
+      confirmDeleteCardTitle: "Delete card?",
+      confirmDeleteCardBody: "This is irreversible. The terminal card and its local record will be permanently deleted.",
+      toastCardDeleted: "Card deleted",
       working: "Working…",
       sessionLabel: "Session",
       openSession: "Open build session",
@@ -792,7 +800,7 @@ window.__ModuleLoader__.load({
       autoRereviewExhaustedNotice: "Automatic re-review limit reached. Manual action is needed.",
       actRedispatchReview: "Redispatch reviewer",
       toastReviewRedispatched: "Reviewer redispatched",
-      autoDeliveryFailedNotice: "Auto-delivery failed; manual action is needed. Reason:",
+      autoDeliveryFailedNotice: "Auto-delivery failed: {reason}. Manual action is needed.",
       sessionUnavailable: "Session unavailable",
       viewReports: "View reports",
       reportsTitle: "Stage reports",
@@ -951,7 +959,7 @@ window.__ModuleLoader__.load({
         : reviewStale
           ? t('reviewStaleNotice')
           : deliveryError !== ''
-            ? `${t('autoDeliveryFailedNotice')}\n${deliveryError}`
+            ? t('autoDeliveryFailedNotice', { reason: deliveryError })
             : noVerdict ? t('reviewStalledNotice') : ''
       return h('div', {
         className: busyClass,
@@ -1260,11 +1268,41 @@ window.__ModuleLoader__.load({
         }, t('cancelCard'))
       }
 
+      // Permanent delete for terminal cards, behind a confirm modal. Deletion
+      // cannot be undone, so a one-click button is never enough: the modal is
+      // the human gate, and the server additionally requires { confirm: true }.
+      function makeDeleteButton() {
+        return h(Button, {
+          key: 'deleteCard', type: 'button',
+          onClick: () => {
+            if (typeof onModal !== 'function') return
+            onModal(h(Modal, {
+              key: 'delcard', title: t('confirmDeleteCardTitle'), tone: 'danger',
+              confirmLabel: t('actDeleteCard'), confirmTone: 'danger', busy, t,
+              onCancel: () => onModal(null),
+              onConfirm: () => {
+                onModal(null)
+                void run(async () => {
+                  await callApi('DELETE', `/cards/${card.id}`, { confirm: true })
+                  if (onToast) onToast(t('toastCardDeleted'), 'ok')
+                })
+              },
+            }, t('confirmDeleteCardBody')))
+          },
+          disabled: busy,
+          style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28, color: T.dangerInk },
+        }, t('actDeleteCard'))
+      }
+
       return finish()
 
       // Single exit so an early guard (e.g. terminal taken-over card) still
       // respects the "no buttons -> no action bar" rule.
       function finish() {
+        // Terminal cards always get a permanent-delete action behind a modal.
+        // Putting it here (the single exit) covers every early-return path
+        // (orphan / taken-over) without changing those branches' structure.
+        if (['done', 'canceled'].includes(card.status)) buttons.push(makeDeleteButton())
         if (buttons.length === 0) return null
         return h('div', { className: 'df-card-actions', style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 } }, buttons)
       }

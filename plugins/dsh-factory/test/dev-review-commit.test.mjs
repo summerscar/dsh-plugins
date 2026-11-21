@@ -142,8 +142,8 @@ test('Dev-ReviewCommit: commit failure records failure reason + bounded retry, n
       assert.equal(f.store.getCard(f.card.id).commitSha, null, 'no commitSha on failure')
     }
     const card = f.store.getCard(f.card.id)
-    assert.equal(card.dispatchFailures, 3, 'failures counted')
-    assert.equal(card.stalled, true, 'stalled after limit')
+    assert.equal(card.commitFailures, 3, 'commit failures counted (separate from dispatch)')
+    assert.equal(card.commitStalled, true, 'commit stalled after limit')
     const errEv = f.store.state.events.filter((e) => e.type === 'auto-delivery' && e.decision === 'commit-failed')
     assert.equal(errEv.length, 3)
     assert.match(errEv[0].note, /add exploded/)
