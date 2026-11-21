@@ -60,8 +60,8 @@ test('Dev-ReviewUI: card renders result-based notices between meta and delivery,
   const posNotice = cardFn.indexOf("key: 'reviewNotice'")
   const posDelivery = cardFn.indexOf("key: 'deliveryStatus'")
   assert.ok(posMeta < posNotice && posNotice < posDelivery, 'notice sits between meta and DeliveryStatus')
-  // mutual exclusion: the no-verdict notice is gated on !autoDelivery.error
-  assert.match(cardFn, /const noVerdict = l4Review && !reviewStale && deliveryError === ''[\s\S]{0,260}reviewVerdict == null/, 'no-verdict branch excludes stale + autoDelivery error')
+  // mutual exclusion: the no-verdict notice is gated on !reviewWorking, !stale and !autoDelivery.error
+  assert.match(cardFn, /const noVerdict = l4Review && !reviewWorking && !reviewStale && deliveryError === ''[\s\S]{0,260}reviewVerdict == null/, 'no-verdict branch excludes working + stale + autoDelivery error')
   assert.match(cardFn, /card\.status === 'review'[\s\S]{0,260}auto-delivery/, 'L4-only gating')
 })
 

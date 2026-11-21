@@ -947,7 +947,10 @@ window.__ModuleLoader__.load({
       const reviewStale = l4Review && card.reviewStale === true
       const deliveryError = l4Review && card.autoDelivery && typeof card.autoDelivery.error === 'string' && card.autoDelivery.error.trim() !== ''
         ? card.autoDelivery.error.trim() : ''
-      const noVerdict = l4Review && !reviewStale && deliveryError === '' && typeof card.reviewSessionId === 'string' && card.reviewSessionId !== ''
+      // A running review session is NOT stalled: show the working animation,
+      // never the "no verdict / manual action" red notice. Only a review that
+      // stopped without a verdict deserves the red explanation.
+      const noVerdict = l4Review && !reviewWorking && !reviewStale && deliveryError === '' && typeof card.reviewSessionId === 'string' && card.reviewSessionId !== ''
         && card.reviewVerdict == null
       // 3 matches autonomy.js AUTO_REREVIEW_LIMIT. client.js is an injected
       // browser script (no module import), so the number is mirrored here and
@@ -1134,8 +1137,12 @@ window.__ModuleLoader__.load({
       // An orphan's session is gone and the engine will not rebuild it. Collapse
       // its actions to a single cancel; the badge/modal explain the situation.
       // Reports history stays reachable in CardExtras.
+      // A TERMINAL orphan (e.g. canceled + dead session) has nothing left to
+      // cancel — a cancel button there would re-cancel it. Skip the cancel push
+      // and let finish() supply the delete button it already adds for every
+      // terminal card (single exit), so the orphan ends up with delete only.
       if (orphan) {
-        buttons.push(makeCancelButton())
+        if (!['done', 'canceled'].includes(card.status)) buttons.push(makeCancelButton())
         return finish()
       }
       if (card.status === 'inbox') {

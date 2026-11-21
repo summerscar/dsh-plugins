@@ -85,15 +85,21 @@ export function localeFromContext(ctx, store) {
   return 'zh'
 }
 
-/** One dynamic directive for every language — no per-language dictionary copy. */
-function languageDirective(locale) {
+/**
+ * One dynamic directive for every language — no per-language dictionary copy.
+ * Exported so the review session's first message reuses the SAME text as the
+ * build session (single source of truth). The HIGH PRIORITY marker is deliberate:
+ * reviewers treated it as optional and replied in the wrong language, so the
+ * directive is promoted to the top of the first message and explicitly marked.
+ */
+export function languageDirective(locale) {
   const id = normalizeLocale(locale) || 'en'
   let name = id
   try {
     const resolved = LANGUAGE_NAMES?.of(id)
     if (typeof resolved === 'string' && resolved !== '') name = resolved
   } catch { name = id }
-  return `Reply in ${name} (${id}) and write every factory_report body in ${name}; keep code, commands, file paths and proper nouns as-is.`
+  return `[HIGH PRIORITY — applies to ALL your output] Reply in ${name} (${id}) and write every factory_report body in ${name}; keep code, commands, file paths and proper nouns as-is.`
 }
 
 /** Plain text only: never render a card body as Markdown or HTML in a prompt. */

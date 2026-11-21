@@ -22,7 +22,7 @@
 - **一项目一板：项目 → 看板 → 卡。** 建项目时在同一事务里写好它唯一的看板；再为该项目建板只会返回已有那块，因此 boards 列表里每个项目最多一块活跃板。历史多看板状态在加载时收敛，不升 schema 版本：保留第一块**活跃**板，把其它板上的卡并进去，重指每个项目的 `intakeBoardId`（包括已经指向归档板的），多余板标记为 `archived` 并留在 state 里。不删卡、不删板，重复加载是 no-op。用旧归档板 id 手动 intake 会被 400 拒绝。
 - schema 版本仍是 `1`；加载时版本不符会抛错。因此这次的数据修复靠就地归档，而不是升版迁移。
 - 卡的生命周期是 8 个状态：`inbox` / `triage` / `plan` / `plan-review` / `build` / `review` / `done` / `canceled`。
-- **卡片可取消（软删）。** 所有非终态卡（除 `done`/`canceled`）在操作区末尾有「取消卡片」按钮，一键调 `POST /cards/:id/transition {to:'canceled',actor:'human'}`，复用现有状态机与审计、后端零改动；无二次确认，成功后出 toast、失败显后端原文。取消是改状态不是删数据：卡留在库里、`source` 继续占位，所以自动卡取消后不会被下一轮 intake 重建；正文、history 与审计都保留，退出自动派发与批准，worktree / 分支不碰。界面在页尾「已取消 · N」折叠条里体现：点开可读被取消卡的标题与正文摘要（复用 `renderCard`，取消终态没有操作按钮，天然只读），不占看板第六列；没有按卡硬删。
+- **卡片可取消（软删）。** 所有非终态卡（除 `done`/`canceled`）在操作区末尾有「取消卡片」按钮，一键调 `POST /cards/:id/transition {to:'canceled',actor:'human'}`，复用现有状态机与审计、后端零改动；无二次确认，成功后出 toast、失败显后端原文。取消是改状态不是删数据：卡留在库里、`source` 继续占位，所以自动卡取消后不会被下一轮 intake 重建；正文、history 与审计都保留，退出自动派发与批准，worktree / 分支不碰。界面在页尾「已取消 · N」折叠条里体现：点开可读被取消卡的标题与正文摘要（复用 `renderCard`，取消终态没有操作按钮，天然只读），不占看板第六列。非终态卡只做软删；终态卡（`done` / `canceled`）另有**永久删除**入口：`DELETE /cards/:id` 需界面确认弹窗与请求体 `{ confirm: true }` 两道闸，删前记 `card-deleted` 审计，审计与 history 故意保留，删的只是卡本体。终态孤儿卡不再渲染无意义的「取消卡片」按钮，只剩删除按钮。
 - **任务卡统计排除 canceled、保留 done。** 右上角「任务卡」用 `boardCards.length - canceledCards.length`，侧栏与标签页共用的 `cardCounts` 遍历跳过 `status==='canceled'`，两处显示同步；`done` 仍计入、仍在「完成」列。数量守恒：任务卡（非取消）+ 页尾已取消 = 总卡数。「活跃会话」「有效名额」不受影响。
 - 每次状态转移都记录是谁做的（人 / agent / 自动规则），可全局审计。
 - 收件箱是数据状态，在界面上单独呈现，不占看板列。
@@ -52,13 +52,13 @@
 
 ### 2.4 熔断
 
-同一张卡连续派发失败达到阈值（当前为 3 次）即标记为 stalled、停止自动重试，等人工处理。
+同一张卡连续以**同一种阶段**失败达到阈值（当前为 3 次）即标记该阶段停滞、停止自动重试，等人工处理。派发失败（`dispatchFailures` / `stalled`）与 L4 在 review 入口的自动提交失败（`commitFailures` / `commitStalled`）各有独立预算，一个阶段停滞不连累另一个。
 
 ### 2.5 授权闸门
 
 - 「确认提交」与「推送分支并创建 PR」在 `manual`、`you-approve`、`machine-approve` 三档下是两个独立的人工动作，没有批准就没有任何 git 写。
 - 「自动交付」档下，这两个人工动作被一道**机器闸门**取代，每个引擎 tick 在同一处求值一次：项目档位为 `auto-delivery`；项目未暂停、卡未被接管、卡不待人工信息；卡在 `review`；其 verdict 为 `approved` 且 `blocking` 为空；verdict 的 `reviewerSessionId` 等于该卡登记的 `reviewSessionId`；verdict 的 `reviewedHead` 仍等于从 git 重读的 worktree 当前 HEAD。受保护或 base 分支一律拒绝，凭证或仓库绑定缺失时 fail-closed。闸门按 head 幂等：已交付的 head 永不重复交付，失败的 head 可重试、已完成的步骤跳过。
-- **verdict 认证的树就是交付的树。** 若被评审的 head 已是该卡的 `commitSha`、或 worktree 在该 head 上是干净的，则跳过提交；若工作树有未提交改动，拒绝交付且零 git 写——那些改动从未经评审。（提交后比对漂移的检查只保留在注入的旧式测试端口上，真实 git 路径不走它。）
+- **verdict 认证的树就是交付的树。** `build` 会故意留下脏树供人查看，而交付要求干净树；L4 在**进入 review 时**先把这棵脏树自动提交成新 head（`ensureCommittedForAutoDelivery`，用户预授权的 L4 写边界——不伪造人工确认、不动人工 commit 闸），让评审看到的就是这个 head，交付推的也是它。非 L4 档位不变：工作树有未提交改动仍拒绝交付且零 git 写——那些改动从未经评审。自动提交按 head 幂等，条件是「树干净 **且** `commitSha === HEAD`」双条件（打回 build 重建不会清 `commitSha`，只看 sha 会误判已提交）；提交失败写审计与卡片、只停在提交阶段、不派评审也不交付，下一 tick 可重试但按独立预算限流。交付评估前先查 worktree 是否仍存在（`worktreeExists`），已失效则报「卡片工作树已失效……需重新派发」而不是底层 `ENOENT`。
 - 开 PR **一律是 draft**（所有档位，含「手动」）；「自动交付」档的机器可以开出并更新 draft PR，但**不自动合并**、不自动标记完成、不自动提权——授权止于 draft PR。
 - 拒绝向受保护分支推送、拒绝空 diff、不 force push。
 
@@ -129,6 +129,8 @@
 - 「批准计划」要求 `plan-review` + 会话已跑完 + 卡片至少有一份报告，否则按钮禁用并说明原因。「标记完成」在 `review` 阶段一直可用，何时算完成由人判断。
 - **评审在独立的只读会话里进行，产出结构化 verdict。** 评理会话记在 `card.reviewSessionId`（永不覆盖 builder 的 `sessionId`）；其 verdict——结论值、阻断项与 follow-up 分列、实际跑过的检查——经 `factory_report` 写入，head 由后端从 git 计算，绝不取自评审者。`review -> build` 回退后的复评复用仍活着的评理会话并重读上一轮 verdict。`review -> build` 与标记完成仍是人的决定；「自动交付」档下，卡片还带着机器闸门的审计记录（`auto-delivery` 历史条目：armed / commit-skipped / pushed / draft-pr / delivered / failed），交付失败时卡片留在 `review`，下一 tick 可重试。
 
+上一轮认证的 head 作为一等字段 `previousReviewedHead` 显式注入评审上下文（唯一来源是上一轮 verdict 的 `reviewedHead`，不接受模型传参；无上轮结论时为 `—`），后端据此生成两种范围行：上轮有阻断项则逐项在新 head 上核对是否解决、只看差量找回归；上轮 approved 则只看差量找新问题——两者最后都整体重看一遍。`—` 或与当前 head 相等时不走增量，按全量评审；skill 判据为「有回退转移或有 head 差量」即挂 `factory-rereview`。引擎对「review 内自动提交导致 verdict 过期（`reviewStale`）」的 L4 卡自动复评（走 `followupReview` 三级回退，旧 verdict 留作上下文、不清），每卡一生最多 3 次（`AUTO_REREVIEW_LIMIT`），只在引擎自动发起时计数、人手动重派不计数、不重置；用尽后转全人工，但过期提示与重派按钮仍在。卡片提示优先级：复评额度用尽 > 评审过期 > 通用交付失败 > 无结论。
+
 ## 3. 已经定死、不必再争的设计
 
 | 决定 | 理由 |
@@ -153,7 +155,7 @@
 | 交还原地幂等、不弹确认 | 重复交还是无意义的写；操作可逆且比接管更轻，二次确认只会打断 |
 | 取消卡片走软删（转 `canceled`）而非物理删除，`source` 占位防复活 | intake 按现有卡的 `source` 去重且不看状态；硬删自动卡会让它的 source 消失、下一轮被当新 issue 重建，还断掉 history / 审计链。留卡改状态既退出管线又不复活，后端与渲染都已支持 |
 | 会话入口走宿主 `uiWorkspace.openSession`，不猜 URL | DSH 会话选择是客户端状态，URL 始终是根路径、`?session=` 不生效；宿主服务是唯一真实导航口。`ctx.sessions.list` 是标题的唯一来源，卡片自己不存标题 |
-| verdict 认证的树就是交付的树 | 未提交的改动从未经评审；为了让交付“走得通”而把改动提交进去，交付的就不是 verdict 签认的那棵树。被评审 head 上工作树干净则跳过提交，脏树拒绝且零 git 写 |
+| verdict 认证的树就是交付的树 | 未提交的改动从未经评审；「手动 / 你批准 / 机器批准」三档下，被评审 head 上工作树干净则跳过提交，脏树拒绝且零 git 写。L4 则在评审**之前**先把脏树提交成新 head、让评审认证它，交付的仍是同一棵树（§2.5） |
 | arm 令牌是一次性的，权威是代码闸门而非令牌 | 执行前对活卡片与活 head 重评整套闸门再动手，令牌永远不能当作常驻授权；skill、报告与 HTTP 调用方都武装不了交付，只有引擎 tick 能 |
 | 「自动交付」止于 draft PR：不合并、不自动标完成、不延伸到其他档位或工作模式 | 用户的常驻授权恰好以此为界：机器把被评审的 head 交付到 draft PR，之后的所有事留给人 |
 | 存储四个语义档，L0–L4 是呈现层映射 | 「你批准」档加它的开关覆盖两个显示档；`auto-delivery` 是独立的存储档、不读任何开关，五个滑杆档位不需要新的存储值，也没有开关泄漏能力 |
@@ -265,6 +267,8 @@
 - **P2b — 三条人工退回。** `return-to-build` / `return-to-plan` / `return-to-inbox`，Inbox 补料开新会话重派，以及 `push-existing`：已有 PR 的卡只在原分支上推、更新同一个 PR 并保持 draft。
 - **P3 — 五档与 L4 闸门。** 四个存储档在单个滑杆上呈现为 L0–L4（§2.8）；`auto-delivery` 继承 `machine-approve` 并加上代码闸控的交付：§2.5 的条件、按 head 幂等、认证树规则、止于 draft PR。
 
+**P8 之后的 L4 实战修补（延续本迭代，均已实现）：** review 入口自动提交脏树（双条件幂等 + 独立提交失败预算），使 build 留树与交付要净树不再互相打架；`reviewStale` 显式布尔 + 独立 `markReviewStale`/`clearReviewStale`；`previousReviewedHead` 一等字段（只取上一轮 verdict，不采模型传参）与两种复评范围行；引擎自动复评，每卡一生最多 3 次、只引擎发起计数、三级会话回退；skill 判据改为「有回退转移或有 head 差量」；终态卡永久删除（双闸、审计保留）；提交失败计数与派发失败计数分离；`autoDeliveryFailedNotice` 恢复 `{reason}` 模板；交付前 `worktreeExists` 前置检查给出可读错误。另外修复了「已取消的孤儿卡仍渲染取消按钮」——孤儿快路加终态守卫，终态孤儿只剩删除按钮（删除按钮由 `finish()` 统一出口提供）。
+
 **这一轮改变了验收做法**（因为改的是本项目的验证方式，特记）：离线套件全程绿灯，四个 bug 全部只有真机才暴露——引擎依赖工厂漏传一个端口（被静默丢弃）、一个公开导出被新导出顶掉、一个拿提交前 HEAD 去校验提交后 sha 的检查（真实 git 下永不成立）、以及漏掉的 push 加容器里 git 没有 credential helper。注入的假端口证明的是分支逻辑，证明不了接线与环境。长期规则：凡跨层端口透传、公开导出面、或真实 git/gh 命令链的改动，都要跑一次真实命令链并在验收里记下来。通用版规则沉淀在 `.agents/skills/dsh-plugin-live-verification`（§十）。
 
 ### TODO — 候选下一轮（**仅记录，未排期**）
@@ -333,7 +337,9 @@
 | **卡片操作按钮的双击禁用** | 前端确实把 `busy` 传给 `disabled`，但 React 重渲染是异步的，**同一帧内的第二次点击仍会进 handler、再发一个 `run`**；disabled 只能在重渲染之后的后续事件里拦住。真正防重复的是**后端兜底**：dispatch 有并发锁、commit / 开 PR 有单次授权 + 状态闸、resupply 有状态门禁。残留小瑕疵：takeover 会多写一条重复审计，两个 run 交错时可能出现重复 toast。 | 结论：双击不会产生重复副作用（有 4 条测试证据）。这不是功能缺陷、也不是已修复项，原行描述不准确已改正；仍欠一次真浏览器双击的真机验证。 |
 | ~~**退回/接管的风险提示（AC43）前端未实现**~~ | 后端默认值已按档位派生，前端提示原本没做。 | **已完成**：退回改计划时，若档位为 machine-approve / auto-delivery（这两档后端会自动接管该卡），备注弹窗多一行警示（`NoteModal` 新增可选 `notice`，与 message 分开，不撑长 textarea 的 placeholder）；交还在同两档且卡处于 plan-review 时，成功提示末尾追加一行「下一 tick 会被自动批准」。新增两个 key 四字典已同步；另有 3 条 dev 测试覆盖四字典一致、两档守卫与 notice 不碰 placeholder。如实标注：三个项目里没有 plan-review 卡，风险行与 toast 目前只由测试覆盖、未在真机点过一次，真机眼见仍欠。 |
 | ~~更早的 UI 缺口：退回动作仍用 `window.prompt`；Inbox 的 `needsHumanInfo` 徽标未渲染~~ | 两处的后端强制校验都在，只是表现层没跟上。 | **已完成**：退回动作改为页内 `NoteModal`（补充信息重派 / 退回 Inbox / 退回改计划 / 退回构建四个动作全覆盖；空值不可提交、取消中止）；新增「待补充信息 / Needs info」徽标，在共享卡片头部按 `needsHumanInfo === true` 渲染，看板与 Inbox 两处都覆盖。 |
-| **真机未覆盖：60 秒 tick 的完整自动交付；`push-existing` 端到端；`return-to-plan` 续会话失败回滚** | 交付是 Dev/QA 直接调 `runAutoDelivery` + 真实 git port 验的；引擎接线由单测与 P3 修 bug 时的 tick 证据覆盖，但没在真机上等过一次完整 tick 交付。 | 一次真机 tick 交付、一次真机 push-existing、一次真机回滚。 |
+| **真机未覆盖：`approved → push + 草稿 PR` 这一段；`push-existing` 端到端；`return-to-plan` 续会话失败回滚** | 交付是 Dev/QA 直接调 `runAutoDelivery` + 真实 git port 验的；引擎接线由单测与 P3 修 bug 时的 tick 证据覆盖。真机 E2E 已跑通 autoCommit → 过期 → 自动复评 → 新 verdict，但评审两次判 `verification-incomplete`，**`approved → push + 开草稿 PR` 从未在真机触发过**（正在验证）；这条链路的设备行为仍以离线证据为主。 | 一次真机 tick 走完 approved → push → 草稿 PR（换更容易判 approved 的任务）；一次真机 push-existing；一次真机回滚。 |
+| **`qa-p3` 的 `realPort` 假端口缺 `worktreeExists`** | 真实 host 在交付评估前多一次 `worktreeExists` 本地 git 检查；`qa-p3` 的 fake port 没有该方法，靠 `typeof port?.worktreeExists === 'function'` 守卫让调用序列断言照常通过，**与真机有偏差**。 | QA 给 fake port 补上 `worktreeExists`，让夹具忠实反映真机的调用序列；本轮未改 `qa-*`。 |
+| **历史遗留的共用失败计数未迁移** | 提交阶段已拆出独立的 `commitFailures` / `commitStalled`（新行为互不干扰），但存量卡里过去与派发共用的 `dispatchFailures` 计数**没有做数据迁移**。 | 真需要时对存量卡做一次计数迁移；不影响新卡的分离行为。 |
 | **P1/P2a 残留：没有打包好的 review preset；状态接口里 auto-review 可用性最多一分钟陈旧** | 记为分期限制，不是缺陷。 | 包内 review preset、实时插件状态读。 |
 | ~~**「自动交付」已授权但未设定时与最终安全评审**~~ | 调度其实已就位：L4 项目在**每次 tick 里自动尝试交付**，受 `delivery` 的七条硬条件门禁 + 每 head 幂等 + 树等价约束，不需要单独的调度开关。真正缺的是：一次真机等过完整 tick 的端到端交付证据（已在上行记录），以及一次正式的安全评审。 | **剩下要定的是「是否/何时做一次正式安全评审」，不是「要不要开启自动交付」**。 |
 | ~~**`/factory` 帮助文本：「commit / push / PR 仍需人工批准」**~~ | `plugins/dsh-factory/commands.js` 的产品可见文案在「自动交付」档下已不准确——该档机器会 commit、push、开 draft PR，而 merge 与标完成仍留给人。 | **已完成**：文案改为写明 L4 会自己 commit / push / 开 draft PR，merge 与标完成始终需要人；锁旧文案的两条正则断言（Dev 与 QA 各一条）已同步更新为锁新文案的关键片段，旧措辞在代码与测试里已无残留。 |

@@ -32,7 +32,7 @@ const audit = (store, cardId, decision, note, extra = {}) => {
  * or a readable refusal. `readHead` and `resolveIdentity` are injected so the
  * whole chain is offline-testable without git/gh/remote access.
  */
-export async function evaluateAutoDelivery({ store, cardId, readHead, resolveIdentity, protectedBranches = DEFAULT_PROTECTED_BRANCHES } = {}) {
+export async function evaluateAutoDelivery({ store, cardId, readHead, resolveIdentity, port, protectedBranches = DEFAULT_PROTECTED_BRANCHES } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) return { ok: false, reason: `卡片不存在：${cardId}` }
   const project = store.getProject(card.projectId)
@@ -61,6 +61,12 @@ export async function evaluateAutoDelivery({ store, cardId, readHead, resolveIde
   if (typeof card.reviewSessionId !== 'string' || card.reviewSessionId === ''
     || verdict.reviewerSessionId !== card.reviewSessionId) {
     return { ok: false, reason: 'verdict 不是本卡登记的评审会话产出，禁止自动交付' }
+  }
+  // A cleaned-up worktree must be named as such BEFORE readHead / isWorktreeClean
+  // shell out — otherwise the user sees a meaningless `spawnSync git ENOENT`.
+  // Guarded by typeof so legacy offline ports keep their historical shape.
+  if (typeof port?.worktreeExists === 'function' && port.worktreeExists(card.worktreePath) !== true) {
+    return { ok: false, reason: `卡片工作树已失效：${card.worktreePath}（可能已被清理），需重新派发` }
   }
   let head
   try {
@@ -100,8 +106,8 @@ export async function evaluateAutoDelivery({ store, cardId, readHead, resolveIde
  * Arm a SINGLE delivery for one head. The returned token carries no standing
  * permission: executeAutoDelivery re-checks it against the live card/head.
  */
-export async function armAutoDelivery({ store, cardId, readHead, resolveIdentity } = {}) {
-  const result = await evaluateAutoDelivery({ store, cardId, readHead, resolveIdentity })
+export async function armAutoDelivery({ store, cardId, readHead, resolveIdentity, port } = {}) {
+  const result = await evaluateAutoDelivery({ store, cardId, readHead, resolveIdentity, port })
   if (result.ok !== true) {
     audit(store, cardId, 'refused', result.reason)
     return result
@@ -122,11 +128,13 @@ export async function executeAutoDelivery({ store, token, port, readHead, resolv
     throw new Error('自动交付缺少专用 arm 令牌；拒绝执行')
   }
   const cardId = token.cardId
-  const recheck = await evaluateAutoDelivery({ store, cardId, readHead, resolveIdentity })
+  const recheck = await evaluateAutoDelivery({ store, cardId, readHead, resolveIdentity, port })
   if (recheck.ok !== true || recheck.head !== token.head) {
     throw new Error(`arm 失效，拒绝交付：${recheck.reason ?? 'head 不一致'}`)
   }
   const card = store.getCard(cardId)
+  // The worktree-validity pre-flight lives in evaluateAutoDelivery (also used
+  // by arm), so a cleaned-up path is named before readHead shells out to git.
   // P3 head fix: the tree the reviewer approved is the tree we may deliver.
   // 1) A matching commitSha means it was committed and reviewed — skip commit.
   // 2) A clean worktree at the same HEAD means the reviewed tree IS HEAD —
@@ -283,7 +291,7 @@ export async function ensureCommittedForAutoDelivery({
 
 /** Engine entry point: arm + execute with a readable failure fallback. */
 export async function runAutoDelivery({ store, cardId, readHead, resolveIdentity, port } = {}) {
-  const arm = await armAutoDelivery({ store, cardId, readHead, resolveIdentity })
+  const arm = await armAutoDelivery({ store, cardId, readHead, resolveIdentity, port })
   if (arm.ok !== true) return { delivered: false, reason: arm.reason, alreadyDelivered: arm.alreadyDelivered === true }
   try {
     const result = await executeAutoDelivery({ store, token: arm.token, port, readHead, resolveIdentity })

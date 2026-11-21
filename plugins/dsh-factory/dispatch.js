@@ -31,7 +31,7 @@
  */
 import { randomUUID } from 'node:crypto'
 
-import { attachSessionContext, buildSessionContext, reviewScopeLine } from './session-context.js'
+import { attachSessionContext, buildSessionContext, languageDirective, reviewScopeLine } from './session-context.js'
 import { reviewedHeadFor } from './verdict.js'
 import { createWorktree, removeWorktree, worktreePathFor } from './worktree.js'
 import { hasPreparation, prepareWorktree } from './worktree-setup.js'
@@ -452,11 +452,19 @@ export async function effectiveWorkModeFor({ project, cardId, store, port } = {}
   return { workMode: 'workspace-write', warning }
 }
 
-/** Human-readable review message: head, mode, previous verdict, optional focus. */
-export function reviewMessage({ card, reviewedHead, previousVerdict, previousReviewedHead, note, rereview = false } = {}) {
+/**
+ * Human-readable review message: language directive (top), head, mode, previous
+ * verdict, optional focus. The language directive leads because this is the
+ * FIRST user message the reviewer sees — the highest-priority channel available,
+ * and the only one resent when a live reviewer session is reused (followup),
+ * where setup/sectionText does not re-run.
+ */
+export function reviewMessage({ card, reviewedHead, previousVerdict, previousReviewedHead, note, rereview = false, locale = 'zh' } = {}) {
   const mode = card?.prUrl ? `审 PR ${card.prUrl}` : '审分支改动（branch diff）'
   const scope = reviewScopeLine({ previousReviewedHead, reviewedHead, previousVerdict })
+  const languageLine = languageDirective(locale)
   return [
+    ...(languageLine === '' ? [] : [languageLine, '']),
     `Factory review for ${card?.id ?? 'unknown'} — ${mode}.`,
     `reviewedHead: ${reviewedHead}`,
     `previousReviewedHead: ${typeof previousReviewedHead === 'string' && previousReviewedHead !== '' ? previousReviewedHead : '—'}`,
@@ -494,7 +502,7 @@ export async function dispatchReview({ store, cardId, port, locale = 'zh', note,
     store, cardId, locale, reviewMode: true, presetId,
     review: { reviewedHead, previousReviewedHead, rereview, ...reviewOptions },
   })
-  const firstMessage = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview })
+  const firstMessage = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview, locale })
   const created = await port.createSession({
     cwd: card.worktreePath,
     permission: project.defaultPermission,
@@ -524,7 +532,7 @@ export async function followupReview({ store, cardId, port, locale = 'zh', note,
   const rereview = true
   const previousReviewedHead = typeof card.reviewVerdict?.reviewedHead === 'string'
     ? card.reviewVerdict.reviewedHead : null
-  const message = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview })
+  const message = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview, locale })
   const makeSetup = (reviewOptions = {}) => makeAgentSetup({
     store, cardId, locale, reviewMode: true, presetId,
     review: { reviewedHead, previousReviewedHead, rereview, ...reviewOptions },

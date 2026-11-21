@@ -294,6 +294,18 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
     isWorktreeClean(cwd) {
       return run('git', ['status', '--porcelain'], cwd) === ''
     },
+    /**
+     * True only when cwd exists AND is a git work tree. Auto-delivery checks
+     * this BEFORE readHead / isWorktreeClean shell out: a cleaned-up worktree
+     * otherwise surfaces as a meaningless `spawnSync git ENOENT` instead of a
+     * readable "worktree 已失效，需重新派发" message.
+     */
+    worktreeExists(cwd) {
+      if (typeof cwd !== 'string' || cwd.trim() === '') return false
+      try {
+        return run('git', ['rev-parse', '--is-inside-work-tree'], cwd) === 'true'
+      } catch { return false }
+    },
     // git itself has no gh credential helper unless the profile configured one;
     // pass it explicitly so buildGitEnv's gh-login path actually authenticates.
     push(cwd, branch) {
