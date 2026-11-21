@@ -63,6 +63,12 @@ const realPort = ({ clean = true } = {}) => {
   const calls = []
   return {
     calls,
+    // Mirror the real host createGitPort: delivery's worktree-validity preflight
+    // (arm + execute recheck) calls this before any git read/push. The fixture's
+    // worktree is always valid, so it reports true — but it MUST be present so
+    // this QA acceptance path exercises the same branches as the real machine
+    // instead of silently skipping them via the typeof guard.
+    worktreeExists: () => { calls.push(['worktreeExists']); return true },
     isWorktreeClean: () => { calls.push(['isWorktreeClean']); return clean },
     push: (...a) => { calls.push(['push', ...a]) },
     createPr: (w, opts) => { calls.push(['createPr', opts]); return 'https://github.com/o/r/pull/99' },
@@ -351,7 +357,7 @@ test('P3-C5 clean reviewed tree: NO commit, push → DRAFT PR, full audit', asyn
     const res = await runAutoDelivery({ ...gate(f), port: p })
     assert.equal(res.delivered, true)
     assert.equal(res.state, 'delivered')
-    assert.deepEqual(p.calls.map((c) => c[0]), ['isWorktreeClean', 'push', 'createPr'], 'real host never commits the reviewed tree')
+    assert.deepEqual(p.calls.map((c) => c[0]), ['worktreeExists', 'worktreeExists', 'isWorktreeClean', 'push', 'createPr'], 'real host checks worktree (arm+recheck), never commits the reviewed tree')
     assert.equal(p.calls.find((c) => c[0] === 'createPr')[1].draft, true, 'draft PR only')
     assert.equal(p.calls.find((c) => c[0] === 'push')[2], f.store.getCard(f.card.id).branch, 'pushes the card branch')
     const card = f.store.getCard(f.card.id)
@@ -375,7 +381,7 @@ test('P3-C5b dirty worktree: readable refusal with ZERO git writes', async () =>
     assert.equal(res.delivered, false)
     assert.match(res.reason, /工作树存在未提交改动；这些改动未经评审/)
     assert.equal(res.retryable, true)
-    assert.deepEqual(p.calls.map((c) => c[0]), ['isWorktreeClean'], 'no push/createPr/commit/force')
+    assert.deepEqual(p.calls.map((c) => c[0]), ['worktreeExists', 'worktreeExists', 'isWorktreeClean'], 'no push/createPr/commit/force')
     const card = f.store.getCard(f.card.id)
     assert.equal(card.status, 'review')
     assert.equal(card.autoDelivery.state, 'failed')
@@ -391,7 +397,7 @@ test('P3-C6 existing PR: only push update, never a second createPr', async () =>
     const p = realPort()
     const res = await runAutoDelivery({ ...gate(f), port: p })
     assert.equal(res.delivered, true)
-    assert.deepEqual(p.calls.map((c) => c[0]), ['isWorktreeClean', 'push'], 'existing PR: only push, no createPr, no commit')
+    assert.deepEqual(p.calls.map((c) => c[0]), ['worktreeExists', 'worktreeExists', 'isWorktreeClean', 'push'], 'existing PR: only push, no createPr, no commit')
     assert.equal(f.store.getCard(f.card.id).prUrl, 'https://github.com/o/r/pull/1')
     assert.equal(f.store.state.events.some((e) => e.type === 'auto-delivery' && e.decision === 'pushed'), true)
   } finally { f.cleanup() }
@@ -421,7 +427,7 @@ test('P3-C8 mid-execution failure keeps card in review with failed state (semant
     assert.equal(card.status, 'review')
     assert.equal(card.autoDelivery.state, 'failed')
     // The branch push already happened; commit did NOT (reviewed tree is HEAD).
-    assert.deepEqual(p.calls.map((c) => c[0]), ['isWorktreeClean', 'push', 'createPr-failed'])
+    assert.deepEqual(p.calls.map((c) => c[0]), ['worktreeExists', 'worktreeExists', 'isWorktreeClean', 'push', 'createPr-failed'])
     assert.equal(f.store.state.events.some((e) => e.type === 'auto-delivery' && e.decision === 'failed'), true)
   } finally { f.cleanup() }
 })
