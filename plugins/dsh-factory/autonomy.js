@@ -30,7 +30,7 @@
  * `deps` port, so the whole chain is exercised offline with a fake store and
  * fake host — no real timer, no real `gh`, no real sessions.
  */
-import { continueCard, createHostPort, dispatchCard, readAutoReviewPluginState, SANDBOX_MODES } from './dispatch.js'
+import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview, readAutoReviewPluginState, SANDBOX_MODES } from './dispatch.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { localeFromContext } from './session-context.js'
 import { precheckReceipt } from './receipt.js'
@@ -51,6 +51,9 @@ export const MACHINE_APPROVE_TIER = 'machine-approve'
 export const AUTO_DELIVERY_TIER = 'auto-delivery'
 export const RULE_APPROVE = 'auto-approve-plan'
 export const RULE_DELIVER = 'auto-deliver-approved-head'
+
+/** Hard cap on engine-initiated re-reviews per card for its whole life. */
+export const AUTO_REREVIEW_LIMIT = 3
 
 /** L4 inherits L3's capabilities; the extra delivery power is gated separately. */
 export function canDeliver(level) {
@@ -300,6 +303,9 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         dispatched: 0,
         approved: 0,
         continued: 0,
+        reviewDispatched: 0,
+        autoRereviewed: 0,
+        autoCommitted: 0,
         delivered: 0,
         approvalHeld: 0,
         queued: 0,
@@ -424,12 +430,98 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           }
         }
 
+        // L4 review-entry auto-commit. build leaves a dirty worktree on purpose;
+        // the delivery gate needs a clean tree at the reviewed head. Commit HERE,
+        // before review dispatch, so the reviewer and delivery share one head.
+        // The gate + bounded retry live in ensureCommittedForAutoDelivery. Only
+        // cards whose commit result is { ok:true } proceed to review + delivery.
+        // Without the port wired (offline fakes / older hosts) this is a no-op
+        // and review+delivery run unchanged.
+        const wantsCommit = canDeliver(level) && typeof deps.autoCommit === 'function'
+          && status.paused !== true && project.paused !== true
+        const committedOk = new Set()
+        if (wantsCommit) {
+          const reviewCards = allCards.filter((card) => card.projectId === project.id
+            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true)
+          for (const card of reviewCards) {
+            try {
+              const outcome = await deps.autoCommit({ store, cardId: card.id })
+              if (outcome?.ok === true) {
+                committedOk.add(card.id)
+                if (outcome.committed === true) report.autoCommitted += 1
+              }
+            } catch (error) {
+              errors += 1
+              const message = error instanceof Error ? error.message : String(error)
+              status.lastError = `L4 auto-commit failed for card ${card.id}: ${message}`
+            }
+          }
+        }
+        const commitPassed = (card) => !wantsCommit || committedOk.has(card.id)
+
+        // L4 auto-review: a Review card cannot be delivered until a reviewer
+        // produces a verdict. Dispatch one independent read-only review session
+        // for cards that have no reviewer yet; idempotent on reviewSessionId
+        // (dispatchReview only records that id after createSession succeeds).
+        // A failed dispatch leaves no half-session and is recorded in lastError;
+        // a later tick may retry, same as first-dispatch failures do.
+        if (canDeliver(level) && typeof deps.reviewDispatch === 'function'
+          && status.paused !== true && project.paused !== true) {
+          const needReview = allCards.filter((card) => card.projectId === project.id
+            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true
+            && commitPassed(card)
+            && (card.reviewSessionId === null || card.reviewSessionId === undefined || card.reviewSessionId === ''))
+          for (const card of needReview) {
+            try {
+              await deps.reviewDispatch({ store, cardId: card.id })
+              report.reviewDispatched += 1
+            } catch (error) {
+              errors += 1
+              const message = error instanceof Error ? error.message : String(error)
+              status.lastError = `auto-review dispatch failed for card ${card.id}: ${message}`
+            }
+          }
+        }
+
+        // L4 auto re-review: a verdict that went stale (engine committed a new
+        // HEAD after the last verdict) is re-reviewed automatically, bounded by
+        // AUTO_REREVIEW_LIMIT per card for life. Uses followupReview so an alive
+        // reviewer is reused before a resume/new session; the old verdict stays
+        // as previousVerdict context. Mutually exclusive with first review:
+        // first review needs NO reviewer, this path needs one + reviewStale.
+        // Idempotent per head: followupReview calls setReviewSession, which
+        // clears reviewStale, so the same head is never dispatched twice. Count
+        // on ATTEMPT (before the call) so a failing session can't burn attempts
+        // every tick forever — 3 tries then fully manual. Manual redispatch goes
+        // through the HTTP route and never touches this counter.
+        if (canDeliver(level) && typeof deps.reviewRereview === 'function'
+          && status.paused !== true && project.paused !== true) {
+          const needRereview = allCards.filter((card) => card.projectId === project.id
+            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true
+            && commitPassed(card)
+            && card.reviewStale === true
+            && !(card.reviewSessionId === null || card.reviewSessionId === undefined || card.reviewSessionId === '')
+            && (card.autoRereviewCount ?? 0) < AUTO_REREVIEW_LIMIT)
+          for (const card of needRereview) {
+            try {
+              store.recordAutoRereview(card.id)
+              await deps.reviewRereview({ store, cardId: card.id })
+              report.autoRereviewed += 1
+            } catch (error) {
+              errors += 1
+              const message = error instanceof Error ? error.message : String(error)
+              status.lastError = `auto re-review failed for card ${card.id}: ${message}`
+            }
+          }
+        }
+
         // P3: L4 auto-delivery. The gate lives in delivery.js, NOT here: this
         // loop only offers Review cards. Pause/takeover are checked again by
         // the gate, so a stale tick snapshot cannot widen the permission.
         if (canDeliver(level) && typeof deps.deliver === 'function' && status.paused !== true && project.paused !== true) {
           const deliverable = allCards.filter((card) => card.projectId === project.id
-            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true)
+            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true
+            && commitPassed(card))
           for (const card of deliverable) {
             try {
               const outcome = await deps.deliver({ store, cardId: card.id })
@@ -563,7 +655,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
  * that one card (caught by runTick), never the whole tick. Injectable `deps` let
  * QA exercise the same runTick with a fake store and fake host, offline.
  */
-export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor, deliver } = {}) {
+export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor, deliver, autoCommit } = {}) {
   return {
     intake: intakeIssues,
     // Per-project gh port from the identity ladder (PGH-9). The host supplies it
@@ -578,6 +670,14 @@ export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortF
     // lazy host port as dispatch, so a profile without `agents` fails only this
     // card (caught by runTick), never the whole tick.
     continue: (args) => continueCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
+    // L4 auto-review: an independent read-only reviewer session, wired with the
+    // same lazy host port. Only consumes a slot when the tick offers a Review
+    // card with no reviewer; a profile without `agents` fails only that card.
+    reviewDispatch: (args) => dispatchReview({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
+    // L4 auto re-review: reuse the existing reviewer (followup → resume → new)
+    // for a card whose verdict went stale. Same lazy host port; counting and
+    // the per-card cap live in runTick, not here.
+    reviewRereview: (args) => followupReview({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
     isSessionActive: (sessionId) => {
       const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
       if (agents === undefined || agents === null || typeof agents.get !== 'function') return false
@@ -602,6 +702,7 @@ export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortF
     // P3: L4 delivery is wired here. Without this the tick's `deps.deliver`
     // guard is always false and the host silently never delivers (QA BUG1).
     ...(typeof deliver === 'function' ? { deliver } : {}),
+    ...(typeof autoCommit === 'function' ? { autoCommit } : {}),
     ghPort,
   }
 }

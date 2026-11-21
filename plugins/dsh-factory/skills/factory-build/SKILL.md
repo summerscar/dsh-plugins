@@ -1,13 +1,13 @@
 ---
 user-invocable: false
 name: factory-build
-description: Implement an approved factory plan inside the card's worktree, prove each step with the project's own tests, and hand the card to review with factory_report and factory_transition_work_item — without committing, pushing, or opening a change request.
+description: Implement an approved factory plan inside the card's worktree, prove each step with the project's own tests, self-review the branch, and hand the card to review with factory_report and factory_transition_work_item — without committing, pushing, or opening a change request.
 whenToUse: The dispatched card is in the build phase.
 ---
 
 # Factory Build
 
-You are working one factory card whose phase is `build`. Implement the approved plan inside the card's worktree, verify every step, post what you did, then move the card to `review`. You do not commit, push or open a change request — a human does that from the review phase, after seeing the diff.
+You are working one factory card whose phase is `build`. Implement the approved plan inside the card's worktree, verify every step, self-review the branch, post what you did, then move the card to `review`. You do not commit, push or open a change request — a human does that from the review phase, after seeing the diff.
 
 Read the injected context first (cardId, title, phase, nextPhases, repo, branch, worktreePath, planStatus). If `planStatus` is not `approved`, the card is not ready to build — report and stop, and move it back to its previous phase only if the state machine allows. Work only inside `worktreePath` and only on this card.
 
@@ -39,7 +39,10 @@ If the plan proves wrong (a step cannot work as written, or the cause is elsewhe
 
 ## Hand off
 
-1. `factory_report(cardId, report)` — what changed (files and shape), the tests and verification you ran with their real results, anything you could not verify and why, and any assumptions.
-2. `factory_transition_work_item(cardId, 'review', note)` — your terminal step. `review` is where a human inspects the diff, decides to push and open the change request, and either marks the card done or sends it back to `build`.
+All three steps are the completion criteria for the build stage — the card moves to `review` only when all three are done. This holds for every autonomy tier (manual, you-approve, machine-approve, auto-delivery): the tier differences are handled by the engine at the hand-off point, never by branching this session's behavior.
+
+1. **Self-review** — run the `factory-self-review` skill on the branch: check the committed and uncommitted diff against the base at a reviewer's bar, and fix the blocking findings you can fix.
+2. `factory_report(cardId, report)` — what changed (files and shape), the tests and verification you ran with their real results, anything you could not verify and why, any assumptions, and the self-check report: what you checked and its conclusion (approved / changes requested / verification incomplete) with the head SHA.
+3. `factory_transition_work_item(cardId, 'review', note)` — your terminal step, only when the self-review has no blocking finding left. `review` is where a human inspects the diff, decides to push and open the change request, and either marks the card done or sends it back to `build`.
 
 Report real results only. Never present a skipped or failed check as a pass.

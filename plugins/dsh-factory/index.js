@@ -22,7 +22,7 @@ import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
 import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview } from './dispatch.js'
 import { commitCard, commitForExistingPr, createGitPort, createPrForCard, pushExistingCard } from './git-exec.js'
-import { runAutoDelivery } from './delivery.js'
+import { runAutoDelivery, ensureCommittedForAutoDelivery } from './delivery.js'
 import { localeFromContext } from './session-context.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
@@ -59,7 +59,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.23'
+export const BUILD = 'factory-2026-11-20.28'
 
 export const name = 'dsh-factory'
 
@@ -181,6 +181,16 @@ export function apply(ctx, config = {}) {
       ctx, store,
       ghPort: createGhPort(),
       ghPortFor: async (project) => createGhPort((await resolveIdentity(project)).git),
+      // L4 review-entry commit: real git port from the identity ladder, same
+      // authorization boundary as deliver (pre-authorized L4, no forged
+      // pendingAuthorization). ensureCommitted... gates on tier/branch/dirty
+      // tree and applies the bounded retry; no commitSha means no review/deliver.
+      autoCommit: async ({ store: s, cardId }) => {
+        const card = s.getCard(cardId)
+        const project = card?.projectId ? s.getProject(card.projectId) : undefined
+        const identity = await resolveIdentity(project)
+        return ensureCommittedForAutoDelivery({ store: s, cardId, port: createGitPort(identity.git) })
+      },
       deliver: async ({ store: s, cardId }) => {
         const card = s.getCard(cardId)
         const project = card?.projectId ? s.getProject(card.projectId) : undefined

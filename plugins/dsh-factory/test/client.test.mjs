@@ -121,11 +121,11 @@ test('client mirrors the resolved display language to the host', () => {
 
 test('approve-plan waits for the session to finish', () => {
   const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
-  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal, tier, orphan \}\)/)
+  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, reviewWorking, onToast, onModal, tier, orphan \}\)/)
   assert.match(code, /disabled: busy \|\| extra\.disabled === true/)
   assert.match(code, /card\.history\.some\(\(entry\) => entry && entry\.type === 'report'\)/, 'requires a plan report')
   assert.match(code, /\(working \|\| !hasReport\) \? \{ disabled: true, title: working \? t\('approvePlanWaiting'\) : t\('approvePlanNoReport'\) \}/)
-  assert.match(code, /h\(CardActions, \{ key: 'actions', card, run, t, busy, working, onToast/)
+  assert.match(code, /h\(CardActions, \{ key: 'actions', card, run, t, busy, working, reviewWorking, onToast/)
 })
 
 test('session and report entries are part of the card body', () => {
@@ -164,7 +164,7 @@ test('a running host session drives the card working animation', () => {
   // The signal is the host session catalog's live Agent-busy bit, read from
   // the subscribed list snapshot — not a guessed status or a new backend field.
   assert.match(code, /sessionRows\[card\.sessionId\]\.running === true/)
-  assert.match(code, /className: working \? 'df-card df-card-working' : 'df-card'/)
+  assert.match(code, /busyClass/, 'className reflects working state via busyClass')
   assert.match(code, /@keyframes df-working-glow/)
   assert.match(code, /@keyframes df-working-pulse/)
   assert.match(code, /@keyframes df-working-sweep/, 'a top sweep bar is visible at a glance')

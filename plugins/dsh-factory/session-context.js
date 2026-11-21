@@ -204,6 +204,23 @@ function repoOf(card, project) {
 }
 
 /**
+ * Incremental re-review scope line: previous verdict head → current head.
+ * Returns null when there is no previous head or it already equals the current
+ * head (first review, or a verdict already on this head). Shared by the review
+ * message and the session context so the two never drift. The two SHA strings
+ * are scope context ONLY — never a factory_report argument; verdict.reviewedHead
+ * stays git-computed by the backend (tools.js).
+ */
+export function reviewScopeLine({ previousReviewedHead, reviewedHead, previousVerdict } = {}) {
+  const prev = typeof previousReviewedHead === 'string' && previousReviewedHead !== '' ? previousReviewedHead : null
+  if (prev === null || prev === reviewedHead) return null
+  const hadBlocking = Array.isArray(previousVerdict?.blocking) && previousVerdict.blocking.length > 0
+  return hadBlocking
+    ? `Rereview scope: your previous verdict was on ${prev}; the current head is ${reviewedHead}. Verify each earlier blocking finding is fixed on ${reviewedHead}, review only the delta ${prev}..${reviewedHead} for regressions, then do one full pass.`
+    : `Rereview scope: the previous verdict approved ${prev} with no blocking findings; the current head is ${reviewedHead}. Review the delta ${prev}..${reviewedHead} for new problems, then do one full pass.`
+}
+
+/**
  * The field set both the system-prompt section and the first message share
  * (cardId / title / phase / nextPhases / repo / branch / worktreePath /
  * planStatus / prUrl), plus the rendered `sectionText` and `firstMessage`.
@@ -285,11 +302,21 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
     }
     fields.reviewedHead = head
     fields.previousVerdict = card.reviewVerdict ?? null
+    // The authoritative previous head is the one the last verdict certified.
+    // Never infer it from commitSha or the current HEAD; never accept model input.
+    const previousReviewedHead = typeof review.previousReviewedHead === 'string' && review.previousReviewedHead !== ''
+      ? review.previousReviewedHead : null
+    fields.previousReviewedHead = previousReviewedHead
     fields.commitSha = card.commitSha ?? null
     fields.nextPhases = []
-    // AC5: a card with a review→build return gets the rereview skill instead.
-    fields.skill = review.rereview === true ? 'factory-rereview' : skillForPhase('review')
+    const scope = reviewScopeLine({ previousReviewedHead, reviewedHead: head, previousVerdict: fields.previousVerdict })
+    // A review→build return OR a head that moved past the last verdict both
+    // require the incremental re-review skill. The two signals are independent:
+    // the engine can commit a new HEAD inside Review without a review→build edge.
+    fields.skill = (review.rereview === true || scope !== null)
+      ? 'factory-rereview' : skillForPhase('review')
     const previous = fields.previousVerdict === null ? '—' : JSON.stringify(fields.previousVerdict)
+    const prevHeadLine = previousReviewedHead !== null ? previousReviewedHead : '—'
     const skillLine = `Read the \`${fields.skill}\` skill below first. Report with \`factory_report\` using its structured verdict fields (source, verdict, blocking, followUps, checks, reviewerSessionId); reviewedHead is computed by the factory from git and must NOT be supplied by you.`
     const sectionText = [
       ...bodyLines,
@@ -304,7 +331,9 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `- worktreePath: ${show(fields.worktreePath)}`,
       `- prUrl: ${show(fields.prUrl)}`,
       `- reviewedHead: ${fields.reviewedHead}`,
+      `- previousReviewedHead: ${prevHeadLine}`,
       `- previousVerdict: ${previous}`,
+      ...(scope !== null ? [scope] : []),
       `- commitSha: ${show(fields.commitSha)}`,
       skillLine,
     ].join('\n')
@@ -315,7 +344,9 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `repo: ${show(fields.repo)}${fields.branch ? ` (branch ${fields.branch})` : ''}`,
       ...(languageLine === '' ? [] : [languageLine]),
       `reviewedHead: ${fields.reviewedHead}`,
+      `previousReviewedHead: ${prevHeadLine}`,
       `previousVerdict: ${previous}`,
+      ...(scope !== null ? [scope] : []),
       `commitSha: ${show(fields.commitSha)}`,
       `This is a read-only review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the ${fields.skill} skill and record a structured verdict with factory_report.`,
     ].join('\n')
@@ -376,6 +407,7 @@ const VARIABLE_FIELDS = {
   factory_worktree: (built) => built.worktreePath ?? '',
   factory_pr_url: (built) => built.prUrl ?? '',
   factory_reviewed_head: (built) => built.reviewedHead ?? '',
+  factory_previous_reviewed_head: (built) => built.previousReviewedHead ?? '',
   factory_previous_verdict: (built) => built.previousVerdict === null || built.previousVerdict === undefined ? '' : JSON.stringify(built.previousVerdict),
   factory_commit_sha: (built) => built.commitSha ?? '',
 }

@@ -10,7 +10,7 @@
  * DRAFT PR by head, nothing else. No merge, no mark-done, no other tier, no
  * other work mode. Every decision is audited with tier='auto-delivery'.
  */
-import { reviewedHeadFor } from './verdict.js'
+import { reviewedHeadFor, isFullSha } from './verdict.js'
 import { AUTO_DELIVERY_TIER, RULE_DELIVER } from './autonomy.js'
 import { DEFAULT_PROTECTED_BRANCHES, isProtectedBranch } from './git-exec.js'
 import { STATUS } from './state.js'
@@ -173,6 +173,111 @@ export async function executeAutoDelivery({ store, token, port, readHead, resolv
   store.setAutoDelivery(cardId, { head: token.head, state: 'delivered', actor: AUTO_DELIVERY_TIER })
   audit(store, cardId, 'delivered', `head ${token.head}`, { head: token.head })
   return { head: token.head, url: store.getCard(cardId).prUrl, state: 'delivered' }
+}
+
+/**
+ * After a staging write moves HEAD, a verdict from the previous HEAD is stale:
+ * the delivery gate will refuse it and the card would sit in Review with no
+ * visible reason. Flag it explicitly so the UI can show reviewStaleNotice and
+ * offer the redispatch action. Only marks when a verdict exists AND its head
+ * differs from the new HEAD — the very condition the delivery gate checks.
+ */
+function markStaleIfVerdictOld(store, cardId, card, newHead) {
+  const prev = card.reviewVerdict?.reviewedHead
+  if (typeof prev === 'string' && prev !== '' && prev !== newHead) {
+    try { store.markReviewStale(cardId, { previousReviewedHead: prev, head: newHead }) } catch { /* audit is primary */ }
+  }
+}
+
+/**
+ * L4 auto-commit at the Review entry. build deliberately leaves a dirty
+ * worktree for humans to inspect, but the delivery gate requires a clean tree
+ * whose HEAD is the reviewed head. Committing HERE (before review dispatch)
+ * reconciles the two: the reviewer sees the new head, and delivery pushes that
+ * same head. This is the user-pre-authorized L4 write boundary — identical to
+ * executeAutoDelivery's git writes — NOT a human confirm-commit. No
+ * pendingAuthorization is forged: that record means "a human confirmed" and
+ * fabricating it would break AG-1. AG-1's commitCard gate is untouched.
+ *
+ * Returns a RESULT, never throws: { ok, committed?, skipped?, synced?, sha?,
+ * head?, reason?, stalled? }. The tick gates review dispatch and delivery on
+ * ok === true, so a failed commit never produces an unreviewed verdict.
+ */
+export async function ensureCommittedForAutoDelivery({
+  store, cardId, port, readHead,
+  protectedBranches = DEFAULT_PROTECTED_BRANCHES,
+} = {}) {
+  const card = store.getCard(cardId)
+  if (card === undefined || card === null) return { ok: false, reason: `卡片不存在：${cardId}` }
+  const project = store.getProject(card.projectId)
+  if (project === undefined || project === null) return { ok: false, reason: `项目不存在：${card.projectId}` }
+  if (project.autonomy !== AUTO_DELIVERY_TIER) return { ok: false, reason: '非 L4 档位，不自动提交' }
+  if (card.status !== STATUS.REVIEW) return { ok: false, reason: `仅 Review 卡片自动提交（当前 ${card.status}）` }
+  if (card.takenOver === true) return { ok: false, reason: '卡片已被人接管，不自动提交' }
+  if (card.needsHumanInfo === true) return { ok: false, reason: '卡片待补充信息，不自动提交' }
+  // Branch safety is the SAME gate as delivery — never bypass it here.
+  if (isProtectedBranch(card.branch, protectedBranches)) {
+    const reason = `拒绝向受保护分支「${card.branch}」自动提交`
+    audit(store, cardId, 'commit-refused', reason)
+    return { ok: false, reason }
+  }
+  if (card.baseBranch && String(card.branch).toLowerCase() === String(card.baseBranch).toLowerCase()) {
+    const reason = `拒绝向 base 分支「${card.branch}」自动提交`
+    audit(store, cardId, 'commit-refused', reason)
+    return { ok: false, reason }
+  }
+  if (typeof card.worktreePath !== 'string' || card.worktreePath.trim() === '') {
+    return { ok: false, reason: '卡片没有 worktreePath，无法自动提交' }
+  }
+  if (typeof port?.isWorktreeClean !== 'function') {
+    return { ok: false, reason: 'git 端口未提供 isWorktreeClean，无法安全判断脏树' }
+  }
+  // Bounded retry: a previously stalled card is not retried every tick. Same
+  // dispatchFailures/stalled budget that first-dispatch failures use.
+  if (card.stalled === true) return { ok: false, reason: '卡片已停滞，需人工处理', stalled: true }
+
+  let head
+  try {
+    head = reviewedHeadFor({ worktreePath: card.worktreePath, readHead })
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+  const clean = port.isWorktreeClean(card.worktreePath) === true
+  // Idempotency is a DOUBLE condition: clean tree AND commitSha === HEAD.
+  // A stale commitSha (review→build rebuild) or a dirty tree (legacy card)
+  // must NOT be mistaken for "already committed".
+  if (clean && card.commitSha === head) {
+    return { ok: true, skipped: true, head }
+  }
+  if (clean && card.commitSha !== head) {
+    // Tree is already clean but the recorded sha drifted — align it without a
+    // (no-op) commit. The delivery gate still re-checks verdict head on this.
+    store.recordCommit(cardId, { sha: head, message: 'factory: auto-delivery (head sync)', actor: AUTO_DELIVERY_TIER })
+    store.clearDispatchFailures(cardId)
+    audit(store, cardId, 'head-synced', `reviewed tree ${head} is already HEAD`, { head })
+    markStaleIfVerdictOld(store, cardId, card, head)
+    return { ok: true, synced: true, head }
+  }
+  // Dirty tree: add + commit to the card branch. sha is the POST-commit HEAD;
+  // it differs from the pre-commit head by design — never compare the two.
+  const shortId = String(cardId).slice(0, 8)
+  const message = `factory: auto-delivery ${shortId}`
+  try {
+    port.add(card.worktreePath)
+    const sha = port.commit(card.worktreePath, message)
+    if (!isFullSha(sha)) throw new Error(`提交返回的 sha 不是完整 SHA：${sha}`)
+    store.recordCommit(cardId, { sha, message, actor: AUTO_DELIVERY_TIER })
+    store.clearDispatchFailures(cardId)
+    audit(store, cardId, 'committed', `head ${sha}`, { head: sha })
+    markStaleIfVerdictOld(store, cardId, card, sha)
+    return { ok: true, committed: true, sha, head: sha }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    try { store.setAutoDelivery(cardId, { head, state: 'failed', error: reason, actor: AUTO_DELIVERY_TIER }) } catch { /* audit is primary */ }
+    store.recordDispatchFailure(cardId, { reason })
+    audit(store, cardId, 'commit-failed', reason, { head })
+    return { ok: false, reason, retryable: true }
+  }
 }
 
 /** Engine entry point: arm + execute with a readable failure fallback. */

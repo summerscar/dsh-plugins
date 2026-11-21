@@ -63,6 +63,8 @@ window.__ModuleLoader__.load({
       accentInk: 'var(--df-accent-ink, #3b33b8)',
       blue: 'var(--df-blue, #2f7de1)',
       blueWash: 'var(--df-blue-wash, #eaf2fe)',
+      warningInk: 'var(--df-warning-ink, #8a5a00)',
+      dangerInk: 'var(--df-danger-ink, #b4232b)',
       orange: 'var(--df-orange, #c9771f)',
       orangeWash: 'var(--df-orange-wash, #fdf1e3)',
       green: 'var(--df-green, #1f8f63)',
@@ -433,7 +435,15 @@ window.__ModuleLoader__.load({
       toastCardCanceled: "卡片已取消，保留在「已取消」列表",
       working: "工作中…",
       sessionLabel: "会话",
-      openSession: "打开会话",
+      openSession: "打开构建会话",
+      openReviewSession: "打开评审会话",
+      reviewWorking: "评审进行中…",
+      reviewStalledNotice: "评审会话已派出但没有结论；引擎不会重复派发或自动交付，需人工处理。",
+      reviewStaleNotice: "代码已提交，但评审结论针对旧版本；需重新评审后才会自动交付。",
+      autoRereviewExhaustedNotice: "自动重评审次数已用完，需人工处理。",
+      actRedispatchReview: "重新派发评审",
+      toastReviewRedispatched: "已重新派发评审",
+      autoDeliveryFailedNotice: "自动交付失败，需人工处理。原因：",
       sessionUnavailable: "会话已不可用",
       viewReports: "查看报告",
       reportsTitle: "阶段报告",
@@ -774,7 +784,15 @@ window.__ModuleLoader__.load({
       toastCardCanceled: "Card canceled; kept in the canceled list",
       working: "Working…",
       sessionLabel: "Session",
-      openSession: "Open session",
+      openSession: "Open build session",
+      openReviewSession: "Open review session",
+      reviewWorking: "Review in progress…",
+      reviewStalledNotice: "A reviewer was dispatched but produced no verdict. The engine will not retry or deliver; manual action is needed.",
+      reviewStaleNotice: "The code was committed, but the review verdict is for an older version. Delivery resumes after a new review.",
+      autoRereviewExhaustedNotice: "Automatic re-review limit reached. Manual action is needed.",
+      actRedispatchReview: "Redispatch reviewer",
+      toastReviewRedispatched: "Reviewer redispatched",
+      autoDeliveryFailedNotice: "Auto-delivery failed; manual action is needed. Reason:",
       sessionUnavailable: "Session unavailable",
       viewReports: "View reports",
       reportsTitle: "Stage reports",
@@ -904,20 +922,46 @@ window.__ModuleLoader__.load({
           : h('span', { key: index, title: row.text, style: badge(row) }, row.text)))
     }
 
-    function Card({ card, t, working, sessionRows, uiWorkspace, onOpenReports, orphan, onOpenOrphan }) {
+    function Card({ card, t, working, reviewWorking, tier, sessionRows, uiWorkspace, onOpenReports, orphan, onOpenOrphan }) {
       const accent = STATUS_ACCENT[card.status] || T.muted
       const meta = (card.source && card.source !== 'manual' ? `${card.source} · ` : '') + card.status
       const fullBody = plainBodyText(card.body)
       const bodySummary = fullBody === '' ? '' : Array.from(fullBody).slice(0, 240).join('')
+      // A review session running outranks a build session: one dot, red wins.
+      const busy = reviewWorking === true || working === true
+      const busyClass = reviewWorking === true ? 'df-card df-card-working df-card-review-working' : working === true ? 'df-card df-card-working' : 'df-card'
+      // L4 review card with a stale verdict / no verdict / a recorded delivery
+      // failure gets ONE persistent notice. Priority: stale > delivery error >
+      // no verdict, so an expired-verdict card never shows a generic failure.
+      // Mutually exclusive. L3 and manual tiers never see any of them.
+      const l4Review = card.status === 'review' && tier === 'auto-delivery'
+        && card.takenOver !== true && card.needsHumanInfo !== true
+      const reviewStale = l4Review && card.reviewStale === true
+      const deliveryError = l4Review && card.autoDelivery && typeof card.autoDelivery.error === 'string' && card.autoDelivery.error.trim() !== ''
+        ? card.autoDelivery.error.trim() : ''
+      const noVerdict = l4Review && !reviewStale && deliveryError === '' && typeof card.reviewSessionId === 'string' && card.reviewSessionId !== ''
+        && card.reviewVerdict == null
+      // 3 matches autonomy.js AUTO_REREVIEW_LIMIT. client.js is an injected
+      // browser script (no module import), so the number is mirrored here and
+      // guarded by dev-auto-rereview. The manual redispatch button stays
+      // available at the cap — only the engine stops auto-triggering.
+      const rereviewExhausted = reviewStale && (card.autoRereviewCount ?? 0) >= 3
+      const noticeText = rereviewExhausted
+        ? t('autoRereviewExhaustedNotice')
+        : reviewStale
+          ? t('reviewStaleNotice')
+          : deliveryError !== ''
+            ? `${t('autoDeliveryFailedNotice')}\n${deliveryError}`
+            : noVerdict ? t('reviewStalledNotice') : ''
       return h('div', {
-        className: working ? 'df-card df-card-working' : 'df-card',
+        className: busyClass,
         // The working glow is a CSS animation; an inline box-shadow would win
         // over it, so let the scoped stylesheet own the shadow while running.
-        style: { background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${accent}`, borderRadius: T.radiusLg, ...(working ? { position: 'relative', overflow: 'hidden' } : { boxShadow: T.shadow }), padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
+        style: { background: T.card, border: `1px solid ${T.line}`, borderLeft: `3px solid ${accent}`, borderRadius: T.radiusLg, ...(busy ? { position: 'relative', overflow: 'hidden' } : { boxShadow: T.shadow }), padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
       }, [
-        working ? h('span', { key: 'workingBar', className: 'df-working-bar', 'aria-hidden': 'true' }) : null,
+        busy ? h('span', { key: 'workingBar', className: 'df-working-bar', 'aria-hidden': 'true' }) : null,
         h('div', { key: 'titleRow', style: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 } }, [
-          working ? h('span', { key: 'workingDot', className: 'df-working-dot', title: t('working'), style: { flex: '0 0 auto', width: 9, height: 9, borderRadius: '50%', background: T.blue } }) : null,
+          busy ? h('span', { key: 'workingDot', className: 'df-working-dot', title: reviewWorking === true ? t('reviewWorking') : t('working'), style: { flex: '0 0 auto', width: 9, height: 9, borderRadius: '50%', background: reviewWorking === true ? T.danger : T.blue } }) : null,
           h('span', { key: 'title', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, color: T.ink, fontWeight: 500, lineHeight: 1.55 } }, card.title),
           card.takenOver === true ? h(TakenOverBadge, { key: 'takenOver', t }) : null,
           card.needsHumanInfo === true ? h(NeedsInfoBadge, { key: 'needsInfo', t }) : null,
@@ -928,6 +972,10 @@ window.__ModuleLoader__.load({
           style: { display: '-webkit-box', WebkitLineClamp: '2', WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', fontSize: '11.5px', lineHeight: 1.45, color: T.mutedInk },
         }, bodySummary),
         h('div', { key: 'meta', style: { fontSize: 11.5, color: T.mutedInk, lineHeight: 1.4 } }, meta),
+        noticeText === '' ? null : h('div', {
+          key: 'reviewNotice', title: noticeText,
+          style: { fontSize: 11.5, color: T.warningInk, lineHeight: 1.4 },
+        }, noticeText),
         h(DeliveryStatus, { key: 'deliveryStatus', card, t }),
         h(CardExtras, { key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports, orphan }),
       ].filter(Boolean))
@@ -958,10 +1006,15 @@ window.__ModuleLoader__.load({
         : []
       const row = card.sessionId && sessionRows ? sessionRows[card.sessionId] : undefined
       const title = row ? (row.displayTitle || row.title || card.sessionId) : card.sessionId
+      const reviewId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : ''
+      const reviewRow = reviewId && sessionRows ? sessionRows[reviewId] : undefined
+      const reviewTitle = reviewRow ? (reviewRow.displayTitle || reviewRow.title || reviewId) : reviewId
       const canOpen = Boolean(card.sessionId) && typeof (uiWorkspace && uiWorkspace.openSession) === 'function'
+      const canOpenReview = reviewId !== '' && typeof (uiWorkspace && uiWorkspace.openSession) === 'function'
       const canViewReports = reports.length > 0 && typeof onOpenReports === 'function'
-      if (!card.sessionId && !canViewReports) return null
+      if (!card.sessionId && reviewId === '' && !canViewReports) return null
       const linkStyle = { alignSelf: 'flex-start', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', color: T.accentInk, fontSize: 11.5, lineHeight: 1.4, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }
+      const reviewLinkStyle = { ...linkStyle, color: T.dangerInk }
       return h('div', { className: 'df-card-extras', style: { display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 } }, [
         orphan || !card.sessionId ? null : (canOpen
           ? h('button', {
@@ -971,6 +1024,13 @@ window.__ModuleLoader__.load({
             }, `${t('openSession')} · ${title}`)
           : h('div', { key: 'session', title: card.sessionId, style: { ...linkStyle, cursor: 'default', color: T.mutedInk } },
             `${t('sessionLabel')} · ${title || t('sessionUnavailable')}`)),
+        // A reviewer is a separate read-only session; open it without touching
+        // the builder session id. Orphan cards hide both links.
+        orphan || reviewId === '' || !canOpenReview ? null : h('button', {
+          key: 'reviewSession', type: 'button', title: reviewTitle,
+          onClick: () => uiWorkspace.openSession(reviewId),
+          style: reviewLinkStyle,
+        }, `${t('openReviewSession')} · ${reviewTitle}`),
         !canViewReports ? null : h('button', {
           key: 'reports', type: 'button', onClick: () => onOpenReports(card),
           style: linkStyle,
@@ -1044,7 +1104,7 @@ window.__ModuleLoader__.load({
     // back would be auto-approved next tick. Only these tiers carry that risk.
     const needsAutoApproveNotice = (tier) => tier === 'machine-approve' || tier === 'auto-delivery'
 
-    function CardActions({ card, run, t, busy, working, onToast, onModal, tier, orphan }) {
+    function CardActions({ card, run, t, busy, working, reviewWorking, onToast, onModal, tier, orphan }) {
       const buttons = []
       // Disable while a board action is in flight: a second click cannot start
       // a parallel run, and the backend gates still guard the write regardless.
@@ -1143,6 +1203,16 @@ window.__ModuleLoader__.load({
         }, t('returnToEngine')))
       }
       if (card.status === 'review') {
+        // L4 reviewer dispatched but no verdict and no delivery failure: give
+        // the user a recovery action on the existing route (no backend change).
+        const canRedispatch = tier === 'auto-delivery' && card.takenOver !== true
+          && card.needsHumanInfo !== true && typeof card.reviewSessionId === 'string'
+          && card.reviewSessionId !== '' && (card.reviewVerdict == null || card.reviewStale === true)
+          && !(card.autoDelivery && typeof card.autoDelivery.error === 'string' && card.autoDelivery.error.trim() !== '')
+        if (canRedispatch) add(t('actRedispatchReview'), async () => {
+          await callApi('POST', `/cards/${card.id}/review-dispatch`)
+          if (onToast) onToast(t('toastReviewRedispatched'), 'ok')
+        }, reviewWorking === true ? { disabled: true, title: t('reviewWorking') } : {})
         add(t('actReturnToBuild'), async () => {
           const note = await askNote(t('notePromptReturnBuild'))
           if (note === null) return
@@ -2455,7 +2525,7 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || document.getElementById('dsh-factory-p4-css')) return
       const css = [
         // P4 brand tokens, scoped to this view only — never alter the host theme.
-        '[data-dsh-factory-p4]{--df-accent:#4f46d5;--df-accent-wash:#eef0ff;--df-accent-ink:#3b33b8;--df-blue:#2f7de1;--df-blue-wash:#eaf2fe;--df-orange:#c9771f;--df-orange-wash:#fdf1e3;--df-green:#1f8f63;--df-gray:#8b95a5;--df-gray-wash:#f1f3f6;--df-danger-wash:#fdf0f1;--df-muted-ink:#596273;--df-warning-ink:#8a5a00;--df-danger-ink:#b4232b;--df-info-ink:#2457c5;--df-orange-ink:#8a4a05;--df-green-ink:#146c4a;--df-green-wash:#e8f6ef;--df-radius:11px;--df-radius-sm:7px;--df-shadow:0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04)}',
+        '[data-dsh-factory-p4]{--df-accent:#4f46d5;--df-accent-wash:#eef0ff;--df-accent-ink:#3b33b8;--df-blue:#2f7de1;--df-blue-wash:#eaf2fe;--df-orange:#c9771f;--df-orange-wash:#fdf1e3;--df-green:#1f8f63;--df-gray:#8b95a5;--df-gray-wash:#f1f3f6;--df-danger-wash:#fdf0f1;--df-muted-ink:#596273;--df-warning-ink:#8a5a00;--df-danger-ink:#b4232b;--df-info-ink:#2457c5;--df-orange-ink:#8a4a05;--df-green-ink:#146c4a;--df-green-wash:#e8f6ef;--df-working-color:#2f7de1;--df-glow-a:rgba(47,125,225,.14);--df-glow-b:rgba(47,125,225,.26);--df-glow-dot:rgba(47,125,225,.18);--df-radius:11px;--df-radius-sm:7px;--df-shadow:0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04)}',
         // Mockup stage-main padding; the ≤760px rule falls back to 8px.
         // Page padding lives on the main panel, not the root: the rail must sit
         // flush at the left edge with only its border-right, so its left and
@@ -2472,13 +2542,16 @@ window.__ModuleLoader__.load({
         // Live-session treatment: a breathing halo on the card plus a pulsing
         // dot, both driven by the host session row's `running` bit. Reduced
         // motion is disabled globally by the rule at the end of this sheet.
+        // Review working outranks build: the same animations, recoloured red by
+        // overriding the working CSS variables on the scoped card element.
+        '[data-dsh-factory-p4] .df-card-review-working{--df-working-color:#b4232b;--df-glow-a:rgba(180,35,43,.16);--df-glow-b:rgba(180,35,43,.3);--df-glow-dot:rgba(180,35,43,.2)}',
         '[data-dsh-factory-p4] .df-card-working{animation:df-working-glow 1.8s ease-in-out infinite}',
-        '@keyframes df-working-glow{0%,100%{box-shadow:0 0 0 0 rgba(47,125,225,.14),var(--df-shadow,0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}50%{box-shadow:0 0 0 5px rgba(47,125,225,.26),var(--df-shadow,0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}}',
+        '@keyframes df-working-glow{0%,100%{box-shadow:0 0 0 0 var(--df-glow-a,rgba(47,125,225,.14)),var(--df-shadow,0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}50%{box-shadow:0 0 0 5px var(--df-glow-b,rgba(47,125,225,.26)),var(--df-shadow,0 1px 2px rgba(20,28,40,.04),0 6px 20px rgba(20,28,40,.04))}}',
         // A sweeping top bar plus a breathing halo make the whole card read
         // as live; no extra text is added to the card body.
-        '[data-dsh-factory-p4] .df-working-bar{position:absolute;left:0;top:0;height:3px;width:35%;border-radius:0 3px 3px 0;background:linear-gradient(90deg,transparent,var(--df-blue,#2f7de1),transparent);animation:df-working-sweep 1.4s linear infinite;pointer-events:none}',
+        '[data-dsh-factory-p4] .df-working-bar{position:absolute;left:0;top:0;height:3px;width:35%;border-radius:0 3px 3px 0;background:linear-gradient(90deg,transparent,var(--df-working-color,#2f7de1),transparent);animation:df-working-sweep 1.4s linear infinite;pointer-events:none}',
         '@keyframes df-working-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(390%)}}',
-        '[data-dsh-factory-p4] .df-working-dot{animation:df-working-pulse 1.2s ease-in-out infinite;box-shadow:0 0 0 3px rgba(47,125,225,.18)}',
+        '[data-dsh-factory-p4] .df-working-dot{animation:df-working-pulse 1.2s ease-in-out infinite;box-shadow:0 0 0 3px var(--df-glow-dot,rgba(47,125,225,.18))}',
         '@keyframes df-working-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}',
         // Large containers share the 11px radius; controls share 7px (Design #3).
         '[data-dsh-factory-p4] .df-col,[data-dsh-factory-p4] .df-group,[data-dsh-factory-p4] .df-inbox{border-radius:var(--df-radius, 11px)!important}',
@@ -2781,14 +2854,16 @@ window.__ModuleLoader__.load({
       // without any new backend field or guessed URL.
       const renderCard = (card) => {
         const working = Boolean(card.sessionId && sessionRows[card.sessionId] && sessionRows[card.sessionId].running === true)
+        const reviewWorking = Boolean(card.reviewSessionId && sessionRows[card.reviewSessionId] && sessionRows[card.reviewSessionId].running === true)
         return h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
           h(Card, {
-            key: 'card', card, t, sessionRows, uiWorkspace, working,
+            key: 'card', card, t, sessionRows, uiWorkspace, working, reviewWorking,
+            tier: project?.autonomy,
             orphan: orphanByCard.get(card.id),
             onOpenOrphan: (c, o) => setPageModal(h(OrphanModal, { card: c, orphan: o, t, onClose: () => setPageModal(null) })),
             onOpenReports: (item) => setPageModal(h(ReportsModal, { card: item, t, onClose: () => setPageModal(null) })),
           }),
-          h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast, onModal: setPageModal, tier: project?.autonomy, orphan: orphanByCard.get(card.id) }),
+          h(CardActions, { key: 'actions', card, run, t, busy, working, reviewWorking, onToast: showToast, onModal: setPageModal, tier: project?.autonomy, orphan: orphanByCard.get(card.id) }),
         ])
       }
 

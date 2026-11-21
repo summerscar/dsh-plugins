@@ -46,7 +46,12 @@ function fixture() {
   return { tmp, file, store, project, board, cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
 }
 function depsFor() {
-  const calls = { intake: 0, dispatch: 0, approve: 0 }
+  // The four L4-only git/review seams are ALWAYS injected as real counting
+  // functions, not omitted. Omitting them would make "never called" a fake
+  // green (the engine would have no seam to call); injecting them gives the
+  // engine every opportunity, so a tier regression that commits / reviews /
+  // re-reviews / delivers under machine-approve actually turns the counters red.
+  const calls = { intake: 0, dispatch: 0, approve: 0, autoCommit: 0, reviewDispatch: 0, reviewRereview: 0, deliver: 0 }
   const active = new Map()
   const deps = {
     ghPort: {},
@@ -64,6 +69,14 @@ function depsFor() {
       return { approved: true, cardId }
     },
     isSessionActive: async (id) => active.get(id) === true,
+    // L4 review-entry commit (autonomy.js deps.autoCommit; delivery.js owns the git write).
+    autoCommit: async () => { calls.autoCommit += 1; return { ok: true, committed: false } },
+    // L4 automatic reviewer dispatch (deps.reviewDispatch).
+    reviewDispatch: async () => { calls.reviewDispatch += 1; return { dispatched: true } },
+    // L4 automatic re-review of a stale verdict (deps.reviewRereview; followupReview).
+    reviewRereview: async () => { calls.reviewRereview += 1; return { sessionId: 'x', mode: 'followup' } },
+    // L4 arm+execute delivery (deps.deliver; internally push / draft PR).
+    deliver: async () => { calls.deliver += 1; return { delivered: false } },
   }
   return { deps, calls }
 }
@@ -96,7 +109,7 @@ test('B1 four combinations run a real tick with the expected side effects', asyn
   }
 })
 
-test('B1 machine-approve auto-approves plan-review to build and stops at review (no git)', async () => {
+test('B1 machine-approve auto-approves plan-review to build and stops there (no git/delivery)', async () => {
   const f = fixture()
   try {
     f.store.updateAutonomy(f.project.id, { autonomy: 'machine-approve' })
@@ -106,10 +119,67 @@ test('B1 machine-approve auto-approves plan-review to build and stops at review 
     const { deps, calls } = depsFor()
     await runTick({ store: f.store, status: createEngineStatus(), deps })
     assert.equal(calls.approve, 1, 'machine-approve approved the plan')
-    assert.equal(f.store.getCard(c.id).status, 'build', 'advanced to build')
-    // No git/PR/done keys are touched by the engine at this level (static guard).
-    assert.doesNotMatch(autonomySrc, /commit|create-pr|mark-done/, 'engine never performs git/PR/done')
+    assert.equal(f.store.getCard(c.id).status, 'build', 'advanced to build, does not self-advance to review/done')
+    // Same tier boundary on the approval path: if a future change slips a git
+    // call into the machine-approve approve branch, these go red. The seams are
+    // injected (depsFor), so this is engine behaviour, not a source-text check.
+    assert.equal(calls.autoCommit, 0, 'machine-approve approval path must not auto-commit')
+    assert.equal(calls.reviewDispatch, 0, 'machine-approve approval path must not dispatch a reviewer')
+    assert.equal(calls.reviewRereview, 0, 'machine-approve approval path must not re-review')
+    assert.equal(calls.deliver, 0, 'machine-approve approval path must not deliver')
   } finally { f.cleanup() }
+})
+
+// Intent-level replacement for the old whole-file `doesNotMatch(autonomySrc,
+// /commit|create-pr|mark-done/)` guard. That guard only checked that no git
+// word appeared ANYWHERE in autonomy.js, so it falsely failed when L4 added
+// legitimate git code (and forced Dev to rename identifiers to dodge it).
+// What B1 actually means: at machine-approve the ENGINE must not write git —
+// even when a card is sitting in review, including a stale-verdict card that
+// L4 would re-review. Two tiers, identical cards in review, identical injected
+// seams; only the tier differs:
+//   machine-approve → git/review seams stay at 0
+//   auto-delivery   → the very same seams fire
+// Two cards per tier because first-review and re-review are mutually exclusive:
+//   - plain card (no reviewer)     → deps.reviewDispatch fires at L4
+//   - stale card (reviewer + rS)   → deps.reviewRereview fires at L4
+// The seams are ALWAYS injected (see depsFor), so a regression that lets
+// machine-approve commit / dispatch / re-review / deliver turns the zeros red
+// rather than hiding behind a missing deps port. This is a behaviour guard, not
+// a source-text guard: identifiers and comments in autonomy.js may change freely.
+test('B1 git boundary: machine-approve in review touches no git seam; L4 does', async () => {
+  for (const [tier, wantGit] of [['machine-approve', 0], ['auto-delivery', 1]]) {
+    const f = fixture()
+    try {
+      f.store.updateAutonomy(f.project.id, { autonomy: tier })
+      // Card 1: plain, in review, no reviewer → first-review / delivery path.
+      const c = f.store.createCard({ boardId: f.board.id, title: 'plain' })
+      for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'autoRule'], ['review', 'agent']]) f.store.transitionCard(c.id, to, actor)
+      // Card 2: stale verdict + registered reviewer, count below cap → re-review
+      // path. This is the prerequisite the reviewRereview gate checks; without
+      // it a removed canDeliver() gate would never actually call the seam.
+      const s = f.store.createCard({ boardId: f.board.id, title: 'stale' })
+      for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'autoRule'], ['review', 'agent']]) f.store.transitionCard(s.id, to, actor)
+      f.store.setReviewSession(s.id, 'reviewer-stale')
+      f.store.markReviewStale(s.id, { previousReviewedHead: 'old-head', head: 'new-head' })
+      const { deps, calls } = depsFor()
+      await runTick({ store: f.store, status: createEngineStatus(), deps })
+      if (wantGit === 0) {
+        assert.equal(calls.autoCommit, 0, `${tier}: engine must not auto-commit`)
+        assert.equal(calls.reviewDispatch, 0, `${tier}: engine must not dispatch a reviewer`)
+        assert.equal(calls.reviewRereview, 0, `${tier}: engine must not re-review a stale card`)
+        assert.equal(calls.deliver, 0, `${tier}: engine must not deliver (push / draft PR)`)
+        assert.equal(f.store.getCard(c.id).status, 'review', `${tier}: card stays in review, not done`)
+        assert.equal(f.store.getCard(s.id).reviewStale, true, `${tier}: stale card left for human, not auto-rereviewed`)
+      } else {
+        assert.ok(calls.autoCommit >= 1, `${tier}: review cards reach deps.autoCommit`)
+        assert.ok(calls.reviewDispatch >= 1, `${tier}: plain review card reaches deps.reviewDispatch`)
+        assert.ok(calls.reviewRereview >= 1, `${tier}: stale review card reaches deps.reviewRereview`)
+        assert.ok(calls.deliver >= 1, `${tier}: review cards reach deps.deliver`)
+        assert.equal(f.store.getCard(s.id).autoRereviewCount, 1, `${tier}: exactly one auto re-review attempt`)
+      }
+    } finally { f.cleanup() }
+  }
 })
 
 // ==============================================================================

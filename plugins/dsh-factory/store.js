@@ -579,6 +579,42 @@ export class FactoryStore {
       type: 'review-session', from: previous, sessionId, mode,
       actor: 'autoRule', at: new Date().toISOString(),
     })
+    // A freshly dispatched reviewer owns the current head; any earlier stale
+    // mark is resolved by THIS session. Clear it on every dispatch path.
+    this.clearReviewStale(id, `review-session ${mode}`)
+    return clone(card)
+  }
+
+  /**
+   * L4: flag that the current HEAD moved past the last structured verdict
+   * (e.g. the engine auto-committed a dirty tree on entry to Review). Stores
+   * WHICH head the verdict was on and WHICH head superseded it, so a later
+   * verdict on the new head can clear the flag exactly. No error-string match.
+   */
+  markReviewStale(id, { previousReviewedHead = null, head = null } = {}) {
+    const card = this._card(id)
+    const at = new Date().toISOString()
+    card.reviewStale = true
+    card.reviewStaleInfo = {
+      previousReviewedHead: optionalString(previousReviewedHead) || null,
+      head: optionalString(head) || null, at,
+    }
+    card.history.push({ type: 'review-stale', ...card.reviewStaleInfo, at })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Clear the stale verdict mark (audit the reason; idempotent). */
+  clearReviewStale(id, reason = '') {
+    const card = this._card(id)
+    if (card.reviewStale !== true && card.reviewStaleInfo == null) return clone(card)
+    const at = new Date().toISOString()
+    card.history.push({
+      type: 'review-stale-cleared', reason: optionalString(reason),
+      previousReviewedHead: card.reviewStaleInfo?.previousReviewedHead ?? null, at,
+    })
+    card.reviewStale = false
+    card.reviewStaleInfo = null
     this._commit()
     return clone(card)
   }
@@ -798,6 +834,12 @@ export class FactoryStore {
       // Latest structured review verdict (P1). null until a reviewer records
       // one; history keeps every verdict for audit / re-review.
       reviewVerdict: null,
+      // L4: set true when the engine commits a new HEAD on a Review card whose
+      // verdict is for an older HEAD. Drives the stale-notice + redispatch button
+      // and the incremental re-review scope; cleared when the new head is
+      // reviewed or the card leaves Review. Explicit boolean, never an error-string match.
+      reviewStale: false,
+      reviewStaleInfo: null,
       // P3: per-head auto-delivery state, arm→delivered/failed. Never a
       // standing permission; the code gate re-evaluates on every tick.
       autoDelivery: null,
@@ -812,6 +854,9 @@ export class FactoryStore {
       // Consecutive dispatch failures. Reset on a successful dispatch; a card
       // that reaches the limit is not re-dispatched automatically any more.
       dispatchFailures: 0,
+      // L4: engine-initiated re-reviews used so far (lifetime cap AUTO_REREVIEW_LIMIT).
+      // Manual redispatch never increments this.
+      autoRereviewCount: 0,
       // Set when the automatic engine has stopped re-dispatching this card, so
       // the board can show why instead of silently doing nothing.
       stalled: false,
@@ -880,6 +925,8 @@ export class FactoryStore {
       })
     }
 
+    // A stale verdict only means something while the card sits in Review.
+    if (from === STATUS.REVIEW) this.clearReviewStale(id, `left review to ${to}`)
     card.status = to
     card.history.push({ type: 'transition', from, to, actor, note: optionalString(note), ...auditFields(meta), at: new Date().toISOString() })
     this._commit()
@@ -1071,6 +1118,11 @@ export class FactoryStore {
       card.history.push({ type: 'verdict', actor, ...canonical, at })
       card.reviewVerdict = { ...canonical, recordedBy: actor, recordedAt: at }
     }
+    // A verdict recorded on the head that had gone stale resolves the mark.
+    // A verdict still on the old head does not.
+    if (card.reviewStale === true && card.reviewStaleInfo?.head === canonical.reviewedHead) {
+      this.clearReviewStale(id, 'verdict on new head')
+    }
     const count = card.history.filter((entry) => entry.type === 'report').length
     this._commit()
     return { count, idempotent, verdict: card.reviewVerdict }
@@ -1178,6 +1230,16 @@ export class FactoryStore {
       reason: optionalString(reason),
       at: new Date().toISOString(),
     })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Count ONE engine-initiated re-review attempt (audit + cap enforcement). */
+  recordAutoRereview(id) {
+    const card = this._card(id)
+    const at = new Date().toISOString()
+    card.autoRereviewCount = (card.autoRereviewCount ?? 0) + 1
+    card.history.push({ type: 'auto-rereview', count: card.autoRereviewCount, actor: 'autoRule', at })
     this._commit()
     return clone(card)
   }

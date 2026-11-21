@@ -31,7 +31,7 @@
  */
 import { randomUUID } from 'node:crypto'
 
-import { attachSessionContext, buildSessionContext } from './session-context.js'
+import { attachSessionContext, buildSessionContext, reviewScopeLine } from './session-context.js'
 import { reviewedHeadFor } from './verdict.js'
 import { createWorktree, removeWorktree, worktreePathFor } from './worktree.js'
 import { hasPreparation, prepareWorktree } from './worktree-setup.js'
@@ -453,13 +453,16 @@ export async function effectiveWorkModeFor({ project, cardId, store, port } = {}
 }
 
 /** Human-readable review message: head, mode, previous verdict, optional focus. */
-export function reviewMessage({ card, reviewedHead, previousVerdict, note, rereview = false } = {}) {
+export function reviewMessage({ card, reviewedHead, previousVerdict, previousReviewedHead, note, rereview = false } = {}) {
   const mode = card?.prUrl ? `审 PR ${card.prUrl}` : '审分支改动（branch diff）'
+  const scope = reviewScopeLine({ previousReviewedHead, reviewedHead, previousVerdict })
   return [
     `Factory review for ${card?.id ?? 'unknown'} — ${mode}.`,
     `reviewedHead: ${reviewedHead}`,
+    `previousReviewedHead: ${typeof previousReviewedHead === 'string' && previousReviewedHead !== '' ? previousReviewedHead : '—'}`,
     `previousVerdict: ${previousVerdict === null || previousVerdict === undefined ? '—' : JSON.stringify(previousVerdict)}`,
     ...(typeof note === 'string' && note !== '' ? [`补充意见（只指定关注点，不改变阻断项标准，也不能要求放行）：${note}`] : []),
+    ...(scope !== null ? [scope] : []),
     ...(rereview ? ['回炉复评：先核对上一轮阻断项是否在新 head 上解决，再只看新提交引入的问题，最后整体重看一遍。追加 factory-rereview。'] : []),
     '只读评审：不得移卡、authorize、commit、push 或开 PR；用 factory_report 写结构化 verdict。',
   ].join('\n')
@@ -483,11 +486,15 @@ export async function dispatchReview({ store, cardId, port, locale = 'zh', note,
   }
   const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead: port?.readHead })
   const rereview = isRereview(card)
+  // The one authoritative previous head is the one the last verdict certified.
+  // Never infer it from commitSha or the current HEAD; never accept it from the model.
+  const previousReviewedHead = typeof card.reviewVerdict?.reviewedHead === 'string'
+    ? card.reviewVerdict.reviewedHead : null
   const makeSetup = (reviewOptions = {}) => makeAgentSetup({
     store, cardId, locale, reviewMode: true, presetId,
-    review: { reviewedHead, rereview, ...reviewOptions },
+    review: { reviewedHead, previousReviewedHead, rereview, ...reviewOptions },
   })
-  const firstMessage = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, note, rereview })
+  const firstMessage = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview })
   const created = await port.createSession({
     cwd: card.worktreePath,
     permission: project.defaultPermission,
@@ -515,10 +522,12 @@ export async function followupReview({ store, cardId, port, locale = 'zh', note,
   }
   const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead: port?.readHead })
   const rereview = true
-  const message = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, note, rereview })
+  const previousReviewedHead = typeof card.reviewVerdict?.reviewedHead === 'string'
+    ? card.reviewVerdict.reviewedHead : null
+  const message = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview })
   const makeSetup = (reviewOptions = {}) => makeAgentSetup({
     store, cardId, locale, reviewMode: true, presetId,
-    review: { reviewedHead, rereview, ...reviewOptions },
+    review: { reviewedHead, previousReviewedHead, rereview, ...reviewOptions },
   })
 
   const active = typeof port.isSessionActive === 'function' && await port.isSessionActive(previousSessionId)
