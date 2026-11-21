@@ -34,7 +34,7 @@ test('Dev-AC43: two new keys exist in all four dictionaries', () => {
 
 test('Dev-AC43: risk notice and toast line are gated to the two auto-approve tiers', () => {
   // tier is wired from the project's saved autonomy level into CardActions.
-  assert.match(client, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal, tier \}\)/)
+  assert.match(client, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal, tier, orphan \}\)/)
   assert.match(client, /h\(CardActions,[\s\S]{0,260}tier: project\?\.autonomy/)
   // The gate itself names exactly the two tiers.
   const gate = client.match(/const needsAutoApproveNotice = \(tier\) =>[^\n]*/)?.[0]

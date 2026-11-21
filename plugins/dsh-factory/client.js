@@ -929,7 +929,7 @@ window.__ModuleLoader__.load({
         }, bodySummary),
         h('div', { key: 'meta', style: { fontSize: 11.5, color: T.mutedInk, lineHeight: 1.4 } }, meta),
         h(DeliveryStatus, { key: 'deliveryStatus', card, t }),
-        h(CardExtras, { key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports }),
+        h(CardExtras, { key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports, orphan }),
       ].filter(Boolean))
     }
 
@@ -952,7 +952,7 @@ window.__ModuleLoader__.load({
       }, t('orphanBadge'))
     }
 
-    function CardExtras({ card, t, sessionRows, uiWorkspace, onOpenReports }) {
+    function CardExtras({ card, t, sessionRows, uiWorkspace, onOpenReports, orphan }) {
       const reports = Array.isArray(card.history)
         ? card.history.filter((entry) => entry && entry.type === 'report')
         : []
@@ -963,7 +963,7 @@ window.__ModuleLoader__.load({
       if (!card.sessionId && !canViewReports) return null
       const linkStyle = { alignSelf: 'flex-start', maxWidth: '100%', padding: 0, border: 0, background: 'transparent', color: T.accentInk, fontSize: 11.5, lineHeight: 1.4, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }
       return h('div', { className: 'df-card-extras', style: { display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 } }, [
-        !card.sessionId ? null : (canOpen
+        orphan || !card.sessionId ? null : (canOpen
           ? h('button', {
               key: 'session', type: 'button', title: title,
               onClick: () => uiWorkspace.openSession(card.sessionId),
@@ -1044,7 +1044,7 @@ window.__ModuleLoader__.load({
     // back would be auto-approved next tick. Only these tiers carry that risk.
     const needsAutoApproveNotice = (tier) => tier === 'machine-approve' || tier === 'auto-delivery'
 
-    function CardActions({ card, run, t, busy, working, onToast, onModal, tier }) {
+    function CardActions({ card, run, t, busy, working, onToast, onModal, tier, orphan }) {
       const buttons = []
       // Disable while a board action is in flight: a second click cannot start
       // a parallel run, and the backend gates still guard the write regardless.
@@ -1063,6 +1063,13 @@ window.__ModuleLoader__.load({
           onCancel: () => { onModal(null); resolve(null) },
         }))
       })
+      // An orphan's session is gone and the engine will not rebuild it. Collapse
+      // its actions to a single cancel; the badge/modal explain the situation.
+      // Reports history stays reachable in CardExtras.
+      if (orphan) {
+        buttons.push(makeCancelButton())
+        return finish()
+      }
       if (card.status === 'inbox') {
         if (card.needsHumanInfo === true) {
           add(t('actResupply'), async () => {
@@ -1071,7 +1078,14 @@ window.__ModuleLoader__.load({
             await callApi('POST', `/cards/${card.id}/resupply`, { note })
           })
         } else {
-          add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) })
+          // Backend refuses a card that is already claimed or stalled; disable
+          // up front with a reason instead of firing a request that only errors.
+          const dispatchBusy = card.pendingDispatch !== null && card.pendingDispatch !== undefined
+          const dispatchStalled = card.stalled === true
+          add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) }, {
+            disabled: dispatchBusy || dispatchStalled,
+            title: dispatchStalled ? t('needsStalled') : t('working'),
+          })
         }
       }
       if (card.status === 'triage') {
@@ -1112,6 +1126,7 @@ window.__ModuleLoader__.load({
       // Give a taken-over card back. No confirmation (reversible, one click like
       // takeover); busy/disabled is the only guard against a double submit.
       if (card.takenOver === true) {
+        if (['done', 'canceled'].includes(card.status)) return finish()
         const live = Boolean(card.sessionId) || Boolean(card.pendingDispatch)
         buttons.push(h(Button, {
           key: 'returnToEngine',
@@ -1133,7 +1148,7 @@ window.__ModuleLoader__.load({
           if (note === null) return
           await callApi('POST', `/cards/${card.id}/return-to-build`, { note })
         })
-        if (!card.commitSha || !card.prUrl) add(t('actConfirmCommit'), async () => {
+        if (!card.commitSha) add(t('actConfirmCommit'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'confirm-commit' })
           await callApi('POST', card.prUrl ? `/cards/${card.id}/commit-existing` : `/cards/${card.id}/commit`)
         })
@@ -1161,8 +1176,28 @@ window.__ModuleLoader__.load({
           style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28 },
         }, t('cancelCard')))
       }
-      if (buttons.length === 0) return null
-      return h('div', { className: 'df-card-actions', style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 } }, buttons)
+      // Shared cancel button for the orphan fast-path; the normal gate below
+      // keeps its literal form for source guards.
+      function makeCancelButton() {
+        return h(Button, {
+          key: 'cancelCard',
+          onClick: () => void run(async () => {
+            await callApi('POST', `/cards/${card.id}/transition`, { to: 'canceled', actor: 'human' })
+            if (onToast) onToast(t('toastCardCanceled'), 'ok')
+          }),
+          disabled: busy,
+          style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28 },
+        }, t('cancelCard'))
+      }
+
+      return finish()
+
+      // Single exit so an early guard (e.g. terminal taken-over card) still
+      // respects the "no buttons -> no action bar" rule.
+      function finish() {
+        if (buttons.length === 0) return null
+        return h('div', { className: 'df-card-actions', style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 } }, buttons)
+      }
     }
 
     function Column({ title, cards, t, renderCard }) {
@@ -2753,7 +2788,7 @@ window.__ModuleLoader__.load({
             onOpenOrphan: (c, o) => setPageModal(h(OrphanModal, { card: c, orphan: o, t, onClose: () => setPageModal(null) })),
             onOpenReports: (item) => setPageModal(h(ReportsModal, { card: item, t, onClose: () => setPageModal(null) })),
           }),
-          h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast, onModal: setPageModal, tier: project?.autonomy }),
+          h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast, onModal: setPageModal, tier: project?.autonomy, orphan: orphanByCard.get(card.id) }),
         ])
       }
 

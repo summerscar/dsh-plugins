@@ -59,7 +59,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.19'
+export const BUILD = 'factory-2026-11-20.23'
 
 export const name = 'dsh-factory'
 
@@ -339,6 +339,29 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         console.error('[dsh-factory] continuation failed:', message)
+        // Approve-plan is two calls (transition plan-review->build, then this
+        // /continue). If the session cannot start, the card would be stranded
+        // in build with no session. Roll it back to plan-review using the
+        // synthetic agent edge so the human can retry — symmetric to the
+        // return-to-plan AC24 rollback. Only a build card is affected; engine
+        // continuations (deps.continue) never pass through this HTTP route.
+        const cardId = decodeURIComponent(continuation[1])
+        if (store.getCard(cardId)?.status === 'build') {
+          store.transitionCard(cardId, 'plan-review', 'agent', 'continuation failed; retry')
+          // continueCard's failure path records a dispatch failure; after 3
+          // tries that latches stalled=true. A synthetic rollback is not a
+          // real dispatch failure, so clear the counter here too — otherwise
+          // the retry this rollback promises is refused at assertDispatchable.
+          // Only this approve-plan rollback clears it; engine deps.continue
+          // failures keep their stall protection.
+          store.clearDispatchFailures(cardId)
+          store.recordEvent({
+            type: 'approve-plan-continue-failed', scope: 'card', targetId: cardId,
+            actor: 'human', decision: 'failed', note: message,
+          })
+          sendJson(res, 400, { error: message || 'continuation failed', retryable: true })
+          return
+        }
         sendJson(res, 400, { error: message || 'continuation failed' })
       }
       return

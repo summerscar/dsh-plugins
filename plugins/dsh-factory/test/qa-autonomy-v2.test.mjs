@@ -122,9 +122,16 @@ test('B2 machine-approve reads no switch; behaviorOf is the capability truth sou
   // No live read of autoApprove/autoStart anywhere in engine; switch only read for you-approve.
   const liveLines = autonomySrc.split('\n').filter((l) => /project\.(autoApprove|autoStart)/.test(l) && !/^\s*(\*|\/\/)/.test(l))
   assert.equal(liveLines.length, 0, `no legacy switch reads: ${liveLines.join(' | ')}`)
-  // The one live switch read is `behavior.dispatch && (level==='machine-approve' || project.autoDispatch===true)`.
-  assert.match(autonomySrc, /const autoDispatch = behavior\.dispatch\s*\n\s*&& \(level === 'machine-approve' \|\| project\.autoDispatch === true\)/,
-    'autoDispatch read once, short-circuited by machine-approve, gated by behavior.dispatch')
+  // autoDispatch is computed in one place, gated by behavior.dispatch, and
+  // includes both dispatch tiers plus the you-approve switch. Check the
+  // clauses separately so line breaks / clause order may change without
+  // weakening the real regression guards.
+  const adExpr = autonomySrc.match(/const autoDispatch = behavior\.dispatch[\s\S]{0,220}?(?=\n\s*const\b)/)?.[0]
+  assert.ok(adExpr, 'autoDispatch computed once from behavior.dispatch')
+  assert.equal((autonomySrc.match(/const autoDispatch =/g) ?? []).length, 1, 'autoDispatch computed only once')
+  assert.match(adExpr, /level === 'machine-approve'/, 'machine-approve short-circuits the switch')
+  assert.match(adExpr, /AUTO_DELIVERY_TIER/, 'auto-delivery tier participates (its stored switch is forced false)')
+  assert.match(adExpr, /project\.autoDispatch === true/, 'you-approve switch is still read')
 
   // Real behavior: machine-approve dispatch is identical for switch true/false.
   for (const sw of [true, false]) {

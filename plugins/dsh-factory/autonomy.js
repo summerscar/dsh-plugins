@@ -14,10 +14,14 @@
  *     dispatched. Plans always stop for a human.
  *   - machine-approve: discovers, dispatches and auto-approves plans, stopping
  *     at Review. It never checks any switch, and never touches git/PR/Done.
+ *   - auto-delivery: inherits machine-approve's dispatch (so it never reads the
+ *     autoDispatch switch), and additionally delivers at Review behind the
+ *     seven hard gates in delivery.js.
  *
  * Default zero side effects: a manual project, a paused project, or one without
  * explicit intake config produces no cards/sessions/git writes. A you-approve
- * project with autoDispatch off still discovers cards into Inbox.
+ * project with autoDispatch off still discovers cards into Inbox; a L4 project
+ * dispatches those Inbox cards automatically without reading the switch.
  *
  * The engine deliberately does NOT reimplement dedupe, dispatch, continuation,
  * rollback, circuit breaking or the state machine — it calls the existing
@@ -477,8 +481,11 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         }
 
         const paused = status.paused === true || project.paused === true
+        // auto-delivery inherits machine-approve's dispatch behavior; its
+        // stored autoDispatch is forced false by normalizeAutonomy, so the tier
+        // itself must participate here (the switch is only for you-approve).
         const autoDispatch = behavior.dispatch
-          && (level === 'machine-approve' || project.autoDispatch === true)
+          && (level === 'machine-approve' || level === AUTO_DELIVERY_TIER || project.autoDispatch === true)
         const projectCards = allCards.filter((card) => card.projectId === project.id)
         const inbox = projectCards
           .filter((card) => card.status === 'inbox')

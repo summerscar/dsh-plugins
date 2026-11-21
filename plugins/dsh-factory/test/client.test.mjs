@@ -121,7 +121,7 @@ test('client mirrors the resolved display language to the host', () => {
 
 test('approve-plan waits for the session to finish', () => {
   const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
-  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal, tier \}\)/)
+  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, onToast, onModal, tier, orphan \}\)/)
   assert.match(code, /disabled: busy \|\| extra\.disabled === true/)
   assert.match(code, /card\.history\.some\(\(entry\) => entry && entry\.type === 'report'\)/, 'requires a plan report')
   assert.match(code, /\(working \|\| !hasReport\) \? \{ disabled: true, title: working \? t\('approvePlanWaiting'\) : t\('approvePlanNoReport'\) \}/)
@@ -130,7 +130,7 @@ test('approve-plan waits for the session to finish', () => {
 
 test('session and report entries are part of the card body', () => {
   const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
-  assert.match(code, /h\(CardExtras, \{ key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports \}\)/, 'rendered inside Card')
+  assert.match(code, /h\(CardExtras, \{ key: 'extras', card, t, sessionRows, uiWorkspace, onOpenReports, orphan \}\)/, 'rendered inside Card')
   assert.doesNotMatch(code, /h\(Card, \{ key: 'card'[\s\S]{0,400}?\}\),\s*\n\s*h\(CardExtras/, 'no detached extras row')
 })
 

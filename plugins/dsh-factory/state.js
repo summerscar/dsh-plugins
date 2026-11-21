@@ -51,6 +51,10 @@ export const EDGE_ACTORS = Object.freeze({
   'plan-review->plan': ['human'],
   'plan-review->canceled': ['human'],
   'build->review': ['agent'],
+  // Synthetic rollback for a failed approve-plan continuation: the human
+  // already approved plan-review->build, but the session could not start.
+  // Agent-only so the human tools/UI cannot freely push a build card back.
+  'build->plan-review': ['agent'],
   'build->canceled': ['agent', 'human'],
   'review->done': ['human'],
   'review->build': ['human'],
