@@ -278,6 +278,11 @@ window.__ModuleLoader__.load({
       needsApprove: "待批准计划",
       needsStalled: "停滞任务卡",
       needsOrphan: "孤儿会话",
+      orphanBadge: "孤儿卡",
+      orphanWhy: "这张卡留有 worktree 或会话痕迹，但宿主已找不到对应会话。为避免重复 worktree / 会话，引擎不会自动清理或重建它——请人工决定如何处理。",
+      orphanSessionLabel: "会话 ID",
+      orphanStatusLabel: "发现时状态",
+      orphanDeliveryLabel: "自动交付失败原因",
       needsEngineErr: "引擎错误",
       needsClear: "暂无待你处理的事项",
       gmInvalid: "全局并发上限必须是正整数或留空（null）",
@@ -614,6 +619,11 @@ window.__ModuleLoader__.load({
       needsApprove: "Plans to approve",
       needsStalled: "Stalled tasks",
       needsOrphan: "Orphan sessions",
+      orphanBadge: "Orphan card",
+      orphanWhy: "This card still has a worktree or session trace, but the host can no longer find the matching session. To avoid duplicate worktrees / sessions, the engine will not clean up or rebuild it automatically — please decide how to handle it.",
+      orphanSessionLabel: "Session ID",
+      orphanStatusLabel: "Status when found",
+      orphanDeliveryLabel: "Auto-delivery failure",
       needsEngineErr: "Engine error",
       needsClear: "Nothing needs your attention",
       gmInvalid: "Global concurrency cap must be a positive integer or blank (null)",
@@ -894,7 +904,7 @@ window.__ModuleLoader__.load({
           : h('span', { key: index, title: row.text, style: badge(row) }, row.text)))
     }
 
-    function Card({ card, t, working, sessionRows, uiWorkspace, onOpenReports }) {
+    function Card({ card, t, working, sessionRows, uiWorkspace, onOpenReports, orphan, onOpenOrphan }) {
       const accent = STATUS_ACCENT[card.status] || T.muted
       const meta = (card.source && card.source !== 'manual' ? `${card.source} · ` : '') + card.status
       const fullBody = plainBodyText(card.body)
@@ -911,6 +921,7 @@ window.__ModuleLoader__.load({
           h('span', { key: 'title', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, color: T.ink, fontWeight: 500, lineHeight: 1.55 } }, card.title),
           card.takenOver === true ? h(TakenOverBadge, { key: 'takenOver', t }) : null,
           card.needsHumanInfo === true ? h(NeedsInfoBadge, { key: 'needsInfo', t }) : null,
+          orphan ? h(OrphanBadge, { key: 'orphan', orphan, t, onOpen: () => onOpenOrphan(card, orphan) }) : null,
         ].filter(Boolean)),
         bodySummary === '' ? null : h('div', {
           key: 'body', title: Array.from(fullBody).slice(0, 2000).join(''),
@@ -928,6 +939,19 @@ window.__ModuleLoader__.load({
      * backend field), and opening goes through the host's uiWorkspace service:
      * DSH has no URL route for a session, so a guessed link would not work.
      */
+    /**
+     * Orphan badge: shown on the shared Card when the engine reports the card
+     * has a worktree/session trace but no live session. Clicking opens an
+     * in-page explanation (never auto-cleaned/rebuilt — PRD §9.1).
+     */
+    function OrphanBadge({ orphan, t, onOpen }) {
+      return h('button', {
+        key: 'orphanBadge', type: 'button',
+        onClick: onOpen, title: t('orphanBadge'), 'aria-label': t('orphanBadge'),
+        style: { flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', boxSizing: 'border-box', height: 20, padding: '2px 6px', border: `1px solid ${T.warning}`, borderRadius: 6, background: T.warningWash, color: T.warningInk, fontSize: 11, fontWeight: 650, lineHeight: 1.4, whiteSpace: 'nowrap', cursor: 'pointer' },
+      }, t('orphanBadge'))
+    }
+
     function CardExtras({ card, t, sessionRows, uiWorkspace, onOpenReports }) {
       const reports = Array.isArray(card.history)
         ? card.history.filter((entry) => entry && entry.type === 'report')
@@ -1469,6 +1493,39 @@ window.__ModuleLoader__.load({
           style: { width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, lineHeight: 1.55, fontFamily: 'inherit', resize: 'vertical' },
         }),
       ])
+    }
+
+    /**
+     * Explains an orphan card in-page: what the engine detected, the exact
+     * session / status traces, and any auto-delivery failure recorded on the
+     * card. Informational only — no cleanup / rebuild button (PRD §9.1).
+     */
+    function OrphanModal({ card, orphan, t, onClose }) {
+      const fields = [
+        { key: 'session', label: t('orphanSessionLabel'), value: typeof orphan?.sessionId === 'string' && orphan.sessionId !== '' ? orphan.sessionId : '—' },
+        { key: 'status', label: t('orphanStatusLabel'), value: typeof orphan?.status === 'string' && orphan.status !== '' ? orphan.status : (card.status ?? '—') },
+      ]
+      const deliveryError = typeof card?.autoDelivery?.error === 'string' && card.autoDelivery.error !== ''
+        ? card.autoDelivery.error : null
+      return h(Modal, {
+        title: t('orphanBadge'),
+        confirmLabel: t('close'),
+        hideCancel: true,
+        onConfirm: onClose,
+        onCancel: onClose,
+        busy: false,
+        t,
+      }, [
+        h('div', { key: 'why', style: { fontSize: 12.5, color: T.ink, lineHeight: 1.7, marginBottom: 10 } }, t('orphanWhy')),
+        h('div', { key: 'fields', style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: deliveryError ? 10 : 0 } },
+          fields.map((f) => h('div', { key: f.key, style: { display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.6 } }, [
+            h('b', { key: 'l', style: { color: T.mutedInk, flex: '0 0 auto' } }, `${f.label}：`),
+            h('span', { key: 'v', style: { color: T.ink, overflowWrap: 'anywhere' } }, f.value),
+          ]))),
+        deliveryError ? h('div', { key: 'delivery', style: { boxSizing: 'border-box', border: `1px solid ${T.warning}`, borderRadius: T.radiusSm, background: T.warningWash, color: T.warningInk, padding: '8px 10px', fontSize: 12, lineHeight: 1.6, overflowWrap: 'anywhere' } }, [
+          h('b', { key: 'l' }, `${t('orphanDeliveryLabel')}：`), deliveryError,
+        ]) : null,
+      ].filter(Boolean))
     }
 
     function AutonomySection({ project, t, onSaved, onModal }) {
@@ -2679,6 +2736,11 @@ window.__ModuleLoader__.load({
         try { await fn(); await load() } catch (err) { setError(err.message); showToast(`${t('errorPrefix')}${err.message}`, 'err') } finally { setBusy(false) }
       }
 
+      // Orphans are reported by the engine's last tick, keyed by card id. Index
+      // once per render so every card (board column AND inbox list) can show the
+      // badge through the shared Card component.
+      const orphanByCard = new Map((engine?.orphans ?? []).map((o) => [o.cardId, o]))
+
       // `running` is the host session catalog's live Agent-busy bit; it flips
       // through the subscribed list snapshot, so the card reflects the session
       // without any new backend field or guessed URL.
@@ -2687,6 +2749,8 @@ window.__ModuleLoader__.load({
         return h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
           h(Card, {
             key: 'card', card, t, sessionRows, uiWorkspace, working,
+            orphan: orphanByCard.get(card.id),
+            onOpenOrphan: (c, o) => setPageModal(h(OrphanModal, { card: c, orphan: o, t, onClose: () => setPageModal(null) })),
             onOpenReports: (item) => setPageModal(h(ReportsModal, { card: item, t, onClose: () => setPageModal(null) })),
           }),
           h(CardActions, { key: 'actions', card, run, t, busy, working, onToast: showToast, onModal: setPageModal, tier: project?.autonomy }),
