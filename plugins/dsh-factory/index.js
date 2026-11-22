@@ -60,7 +60,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.36'
+export const BUILD = 'factory-2026-11-20.37'
 
 export const name = 'dsh-factory'
 
@@ -122,7 +122,7 @@ export function apply(ctx, config = {}) {
   // One liveness reader for the whole write boundary: the UI hides actions
   // while a session runs, and these routes refuse the same direct requests.
   const isSessionActive = (sessionId) => sessionActiveFor(ctx, sessionId)
-  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {}, workModeAvailability: () => runtime.engine?.autoReviewPluginState, isSessionActive })
+  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {}, workModeAvailability: () => runtime.engine?.autoReviewPluginState, isSessionActive, requireApprovedVerdict: true })
 
   // The HTTP-written githubClientId (NON-secret) lives in store.settings; the
   // actual GitHub identities live in the host credential service, never here.

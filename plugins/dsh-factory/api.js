@@ -22,6 +22,7 @@ import { applyRemoteSync } from './sync.js'
 import { assertWorktreeRoot, isPathInside, removeWorktree, worktreeRootOf } from './worktree.js'
 import { DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
 import { assertNoActiveSession } from './session-guard.js'
+import { assertApprovedVerdict } from './verdict-guard.js'
 
 /**
  * Delete a project and really remove its worktrees (P4 §4 — the one sanctioned
@@ -86,7 +87,7 @@ function concurrencyView(store, engineConfig) {
   }
 }
 
-export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {}, workModeAvailability, isSessionActive } = {}) {
+export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {}, workModeAvailability, isSessionActive, requireApprovedVerdict } = {}) {
   return function handle(input = {}) {
     const method = String(input.method ?? 'GET').toUpperCase()
     const rawRoute = String(input.route ?? '/')
@@ -253,7 +254,17 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
           // Backend fallback: the UI hides these actions while a session runs,
           // so a direct request must fail the same way instead of racing it.
           if (body.actor === 'human') {
-            assertNoActiveSession({ card: store.getCard(seg[1]), isSessionActive, action: `转移到 ${body.to}` })
+            const card = store.getCard(seg[1])
+            assertNoActiveSession({ card, isSessionActive, action: `转移到 ${body.to}` })
+            // Same gate as the git writes: a human may only finish a card that
+            // review approved. Cancel and the return actions are deliberately
+            // NOT gated — abandoning or sending work back needs no verdict.
+            // Opt-in at the HTTP boundary: the state machine itself still
+            // allows review→done for any human caller (state.test/M4 cover that
+            // legal edge); this is an API-level business gate, not an edge change.
+            if (body.to === 'done' && requireApprovedVerdict === true) {
+              assertApprovedVerdict({ card, action: '标记完成', deny: '禁止标记完成' })
+            }
           }
           // External callers always supply a string note; a missing note on a
           // human return becomes an explicit empty one and is refused by the

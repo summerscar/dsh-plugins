@@ -76,10 +76,51 @@ test('Dev-Session: confirm-commit is disabled too when review runs before a comm
 test('Dev-Session: idle review card keeps its actions enabled', () => {
   const card = {
     id: 'review-3', status: 'review', history: [report], commitSha: 'abc',
-    prUrl: 'https://example/pr/1', takenOver: false,
+    prUrl: 'https://example/pr/1', takenOver: false, reviewVerdict: { verdict: 'approved' },
   }
   for (const key of ['actReturnToBuild', 'actPushExisting', 'actMarkDone', 'takeover', 'cancelCard']) {
     assert.notEqual(buttonOf(render(card), key).props.disabled, true, `${key} enabled when idle`)
+  }
+})
+
+function reviewCard(verdict, { commitSha, prUrl } = {}) {
+  return {
+    id: 'review-verdict', status: 'review', history: [report], takenOver: false,
+    commitSha, prUrl, ...(verdict === undefined ? {} : { reviewVerdict: { verdict } }),
+  }
+}
+
+const WRITE_BUTTONS = ['actConfirmCommit', 'actCreatePr', 'actPushExisting', 'actMarkDone']
+
+function reviewWriteButtons(verdict) {
+  const shapes = [
+    reviewCard(verdict),
+    reviewCard(verdict, { commitSha: 'abc' }),
+    reviewCard(verdict, { commitSha: 'abc', prUrl: 'https://example/pr/1' }),
+  ]
+  return shapes.flatMap((card) => render(card))
+}
+
+test('Dev-Session: review writes grey out without an approved verdict, but return-to-build stays', () => {
+  for (const verdict of [undefined, 'changes-requested']) {
+    const buttons = reviewWriteButtons(verdict)
+    const present = WRITE_BUTTONS.filter((key) => buttons.some((button) => button.props.key === key))
+    assert.deepEqual(present.sort(), WRITE_BUTTONS.slice().sort(), 'all four write buttons rendered across the three shapes')
+    for (const button of buttons.filter((b) => WRITE_BUTTONS.includes(b.props.key))) {
+      assert.equal(button.props.disabled, true, `${button.props.key} disabled without approval`)
+      assert.ok(button.props.title, `${button.props.key} explains why`)
+    }
+    const back = buttonOf(render(reviewCard(verdict)), 'actReturnToBuild')
+    assert.notEqual(back.props.disabled, true, 'return-to-build is the way out of a failed review')
+  }
+})
+
+test('Dev-Session: an approved verdict restores every review write button', () => {
+  const buttons = reviewWriteButtons('approved')
+  for (const key of WRITE_BUTTONS) {
+    const button = buttons.find((b) => b.props.key === key)
+    assert.ok(button, `${key} rendered`)
+    assert.notEqual(button.props.disabled, true, `${key} enabled with approval`)
   }
 })
 

@@ -15,10 +15,10 @@
  * route opts in with `requireApprovedVerdict: true`, while internal/offline
  * callers (and delivery.js) keep their existing behaviour.
  */
-export function assertApprovedVerdict({ card, action = '该操作' } = {}) {
+export function assertApprovedVerdict({ card, action = '该操作', deny = '禁止写入 git' } = {}) {
   const verdict = card?.reviewVerdict
   if (verdict?.verdict !== 'approved') {
-    throw new Error(`${action}被拒绝：没有 approved 评审结论，禁止写入 git`)
+    throw new Error(`${action}被拒绝：没有 approved 评审结论，${deny}`)
   }
   if (Array.isArray(verdict.blocking) && verdict.blocking.length > 0) {
     throw new Error(`${action}被拒绝：评审仍有 ${verdict.blocking.length} 条阻断项，禁止写入 git`)

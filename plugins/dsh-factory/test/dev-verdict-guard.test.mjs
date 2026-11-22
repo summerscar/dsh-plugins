@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { createApi } from '../api.js'
 import { commitCard, commitForExistingPr, createPrForCard, pushExistingCard } from '../git-exec.js'
 import { FactoryStore } from '../store.js'
 import { assertApprovedVerdict } from '../verdict-guard.js'
@@ -50,6 +51,29 @@ function fakePort() {
     },
   }
 }
+
+test('Dev-Verdict: human done needs a verdict, canceled does not, approved done succeeds', () => {
+  const none = setup()
+  try {
+    const api = createApi({ store: none.store, build: 'test', requireApprovedVerdict: true })
+    const route = (to) => ({ method: 'POST', route: `/cards/${none.card.id}/transition`, body: { to, actor: 'human' } })
+    const done = api(route('done'))
+    assert.equal(done.status, 400, 'no-verdict done refused')
+    assert.match(done.body.error, /没有 approved 评审结论/)
+    assert.equal(none.store.getCard(none.card.id).status, 'review', 'no status written by refusal')
+    const canceled = api(route('canceled'))
+    assert.equal(canceled.status, 200, 'cancel is not a verdict-gated action')
+    assert.equal(none.store.getCard(none.card.id).status, 'canceled')
+  } finally { none.cleanup() }
+
+  const approved = setup({ verdict: 'approved' })
+  try {
+    const api = createApi({ store: approved.store, build: 'test', requireApprovedVerdict: true })
+    const res = api({ method: 'POST', route: `/cards/${approved.card.id}/transition`, body: { to: 'done', actor: 'human' } })
+    assert.equal(res.status, 200, 'approved verdict allows done')
+    assert.equal(approved.store.getCard(approved.card.id).status, 'done')
+  } finally { approved.cleanup() }
+})
 
 test('Dev-Verdict: helper accepts only an approved, unblocked verdict', () => {
   assert.throws(() => assertApprovedVerdict({ card: {} }), /没有 approved 评审结论/)

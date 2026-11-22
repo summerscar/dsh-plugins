@@ -442,6 +442,8 @@ window.__ModuleLoader__.load({
       openSession: "打开构建会话",
       openReviewSession: "打开评审会话",
       reviewWorking: "评审进行中…",
+      verdictMissing: "还没有评审结论，等评审完成后再操作",
+      verdictNotApproved: "评审未通过，请先处理评审意见",
       reviewStalledNotice: "评审会话已派出但没有结论；引擎不会重复派发或自动交付，需人工处理。",
       reviewStaleNotice: "代码已提交，但评审结论针对旧版本；需重新评审后才会自动交付。",
       autoRereviewExhaustedNotice: "自动重评审次数已用完，需人工处理。",
@@ -795,6 +797,8 @@ window.__ModuleLoader__.load({
       openSession: "Open build session",
       openReviewSession: "Open review session",
       reviewWorking: "Review in progress…",
+      verdictMissing: "No review verdict yet — wait for the review to finish",
+      verdictNotApproved: "Review did not approve — address the findings first",
       reviewStalledNotice: "A reviewer was dispatched but produced no verdict. The engine will not retry or deliver; manual action is needed.",
       reviewStaleNotice: "The code was committed, but the review verdict is for an older version. Delivery resumes after a new review.",
       autoRereviewExhaustedNotice: "Automatic re-review limit reached. Manual action is needed.",
@@ -1233,7 +1237,16 @@ window.__ModuleLoader__.load({
           await callApi('POST', `/cards/${card.id}/review-dispatch`)
           if (onToast) onToast(t('toastReviewRedispatched'), 'ok')
         }, reviewWorking === true ? { disabled: true, title: t('reviewWorking') } : {})
+        // Return-to-build is the exit for a failed review, so it is gated by
+        // the session only — never by the verdict. The four finishing actions
+        // additionally require an approved verdict, mirrored by the API gate.
         const reviewActionGuard = sessionRunning ? { disabled: true, title: sessionRunningTitle } : {}
+        const verdict = card.reviewVerdict
+        const verdictApproved = verdict?.verdict === 'approved'
+        const verdictTitle = verdict === undefined || verdict === null ? t('verdictMissing') : t('verdictNotApproved')
+        const writeGuard = sessionRunning || !verdictApproved
+          ? { disabled: true, title: sessionRunning ? sessionRunningTitle : verdictTitle }
+          : {}
         add(t('actReturnToBuild'), async () => {
           const note = await askNote(t('notePromptReturnBuild'))
           if (note === null) return
@@ -1242,16 +1255,16 @@ window.__ModuleLoader__.load({
         if (!card.commitSha) add(t('actConfirmCommit'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'confirm-commit' })
           await callApi('POST', card.prUrl ? `/cards/${card.id}/commit-existing` : `/cards/${card.id}/commit`)
-        }, reviewActionGuard)
+        }, writeGuard)
         if (card.commitSha && !card.prUrl) add(t('actCreatePr'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'create-pr' })
           await callApi('POST', `/cards/${card.id}/create-pr`)
-        }, reviewActionGuard)
+        }, writeGuard)
         if (card.commitSha && card.prUrl) add(t('actPushExisting'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'push-existing' })
           await callApi('POST', `/cards/${card.id}/push-existing`)
-        }, reviewActionGuard)
-        add(t('actMarkDone'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'done', actor: 'human' }) }, reviewActionGuard)
+        }, writeGuard)
+        add(t('actMarkDone'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'done', actor: 'human' }) }, writeGuard)
       }
       // Cancel (soft delete) is the last, visually quiet action. The card stays
       // in the store so its source still blocks intake re-creation; only the

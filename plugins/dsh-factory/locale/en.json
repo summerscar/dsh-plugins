@@ -345,6 +345,8 @@
   "openSession": "Open build session",
   "openReviewSession": "Open review session",
   "reviewWorking": "Review in progress…",
+  "verdictMissing": "No review verdict yet — wait for the review to finish",
+  "verdictNotApproved": "Review did not approve — address the findings first",
   "reviewStalledNotice": "A reviewer was dispatched but produced no verdict. The engine will not retry or deliver; manual action is needed.",
   "reviewStaleNotice": "The code was committed, but the review verdict is for an older version. Delivery resumes after a new review.",
   "autoRereviewExhaustedNotice": "Automatic re-review limit reached. Manual action is needed.",
