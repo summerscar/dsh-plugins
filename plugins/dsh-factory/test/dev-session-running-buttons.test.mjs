@@ -83,6 +83,16 @@ test('Dev-Session: idle review card keeps its actions enabled', () => {
   }
 })
 
+test('Dev-Session: inbox dispatch is disabled with a reason while a session runs', () => {
+  const card = { id: 'inbox-1', status: 'inbox', history: [], needsHumanInfo: false, pendingDispatch: null, stalled: false }
+  const running = buttonOf(render(card, { working: true }), 'actDispatch')
+  assert.ok(running, 'dispatch button rendered')
+  assert.equal(running.props.disabled, true, 'dispatch disabled while a session runs')
+  assert.equal(running.props.title, 'working', 'reason names the running session')
+  const idle = buttonOf(render(card), 'actDispatch')
+  assert.notEqual(idle.props.disabled, true, 'dispatch enabled when idle')
+})
+
 function reviewCard(verdict, { commitSha, prUrl } = {}) {
   return {
     id: 'review-verdict', status: 'review', history: [report], takenOver: false,

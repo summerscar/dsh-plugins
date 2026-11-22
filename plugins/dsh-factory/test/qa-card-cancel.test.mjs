@@ -29,8 +29,8 @@ const enLocale = JSON.parse(readFileSync(join(packageRoot, 'locale', 'en.json'),
 
 // Fixed copy contract (self-contained, byte-for-byte, Design 稿).
 const COPY = {
-  zh: { cancelCard: '取消卡片', toastCardCanceled: '卡片已取消，保留在「已取消」列表' },
-  en: { cancelCard: 'Cancel card', toastCardCanceled: 'Card canceled; kept in the canceled list' },
+  zh: { cancelCard: '放弃这张卡', toastCardCanceled: '已放弃这张卡，保留在「已取消」列表' },
+  en: { cancelCard: 'Abandon card', toastCardCanceled: 'Card abandoned; kept in the canceled list' },
 }
 const NON_TERMINAL = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']
 const TERMINAL = ['done', 'canceled']

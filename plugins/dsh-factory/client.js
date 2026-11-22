@@ -431,13 +431,14 @@ window.__ModuleLoader__.load({
       returnToEngineTitle: "交还引擎，恢复自动处理",
       toastReturned: "已交还引擎，恢复自动处理",
       returnWithSessionNotice: "会话继续，引擎不会重复派发",
-      cancelCard: "取消卡片",
-      toastCardCanceled: "卡片已取消，保留在「已取消」列表",
+      cancelCard: "放弃这张卡",
+      toastCardCanceled: "已放弃这张卡，保留在「已取消」列表",
       actDeleteCard: "删除卡片",
       confirmDeleteCardTitle: "删除卡片？",
       confirmDeleteCardBody: "此操作不可撤销，将永久删除这张终态卡及其本地记录。",
       toastCardDeleted: "卡片已删除",
       working: "工作中…",
+      actionBusy: "处理中，请稍候…",
       sessionLabel: "会话",
       openSession: "打开构建会话",
       openReviewSession: "打开评审会话",
@@ -786,13 +787,14 @@ window.__ModuleLoader__.load({
       returnToEngineTitle: "Return to engine and resume automatic processing",
       toastReturned: "Returned to engine; automatic processing resumed",
       returnWithSessionNotice: "The session continues; the engine will not dispatch again.",
-      cancelCard: "Cancel card",
-      toastCardCanceled: "Card canceled; kept in the canceled list",
+      cancelCard: "Abandon card",
+      toastCardCanceled: "Card abandoned; kept in the canceled list",
       actDeleteCard: "Delete card",
       confirmDeleteCardTitle: "Delete card?",
       confirmDeleteCardBody: "This is irreversible. The terminal card and its local record will be permanently deleted.",
       toastCardDeleted: "Card deleted",
       working: "Working…",
+      actionBusy: "Working — please wait…",
       sessionLabel: "Session",
       openSession: "Open build session",
       openReviewSession: "Open review session",
@@ -1166,9 +1168,11 @@ window.__ModuleLoader__.load({
           // up front with a reason instead of firing a request that only errors.
           const dispatchBusy = card.pendingDispatch !== null && card.pendingDispatch !== undefined
           const dispatchStalled = card.stalled === true
+          // A resumed card may still have a live session after its dispatch
+          // claim was released; refuse that up front with the busy reason.
           add(t('actDispatch'), async () => { await callApi('POST', `/cards/${card.id}/dispatch`) }, {
-            disabled: dispatchBusy || dispatchStalled,
-            title: dispatchStalled ? t('needsStalled') : t('working'),
+            disabled: dispatchBusy || dispatchStalled || sessionRunning,
+            title: dispatchStalled ? t('needsStalled') : sessionRunning ? sessionRunningTitle : t('working'),
           })
         }
       }
@@ -1277,7 +1281,7 @@ window.__ModuleLoader__.load({
             if (onToast) onToast(t('toastCardCanceled'), 'ok')
           }),
           disabled: busy || sessionRunning,
-          title: sessionRunning ? sessionRunningTitle : undefined,
+          title: busy ? t('actionBusy') : sessionRunning ? sessionRunningTitle : undefined,
           style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28 },
         }, t('cancelCard')))
       }
@@ -1291,6 +1295,7 @@ window.__ModuleLoader__.load({
             if (onToast) onToast(t('toastCardCanceled'), 'ok')
           }),
           disabled: busy,
+          title: busy ? t('actionBusy') : undefined,
           style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28 },
         }, t('cancelCard'))
       }
@@ -1317,6 +1322,7 @@ window.__ModuleLoader__.load({
             }, t('confirmDeleteCardBody')))
           },
           disabled: busy,
+          title: busy ? t('actionBusy') : undefined,
           style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28, color: T.dangerInk },
         }, t('actDeleteCard'))
       }
