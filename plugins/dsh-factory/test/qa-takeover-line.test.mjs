@@ -91,6 +91,27 @@ function loadInlineDicts() {
   return JSON.parse(JSON.stringify(captured))
 }
 
+// Execute the REAL CardActions from client.js and return its rendered button
+// nodes. Only host primitives are stubbed; t() is identity, so a button's key
+// and label both read as the locale key it was built from. This is a behaviour
+// check, not a snapshot of the source text.
+function renderCardActionButtons(card, opts = {}) {
+  const source = clientSrc.slice(clientSrc.indexOf('function CardActions('), clientSrc.indexOf('function Column('))
+  assert.ok(source.startsWith('function CardActions('), 'CardActions source found')
+  const h = (tag, props, ...children) => ({ tag, props: props || {}, children })
+  const T = { panel: '#fff', mutedInk: '#888', dangerInk: '#c00' }
+  const cardActions = new Function(
+    'h', 'Button', 'callApi', 'T', 'NoteModal', 'Modal', 'needsAutoApproveNotice',
+    `${source}\nreturn CardActions`,
+  )(h, 'button', async () => ({}), T, 'note-modal', 'modal', () => false)
+  const view = cardActions({
+    card, run: async (fn) => fn(), t: (key) => key,
+    busy: opts.busy === true, working: opts.working === true, reviewWorking: opts.reviewWorking === true,
+    onToast: () => {}, onModal: () => {}, tier: 'manual', orphan: undefined,
+  })
+  return view === null ? [] : view.children.flat().filter((child) => child && child.tag === 'button')
+}
+
 // ==============================================================================
 // Q1 — takeover persists across reload; badge stays; takeover btn gone, return shown
 // ==============================================================================
@@ -107,7 +128,20 @@ test('Q1 takeover persists across reload; store flags the card', () => setup((f)
 test('Q1 client render conditions: badge when takenOver; takeover hidden, return shown', () => {
   assert.match(clientSrc, /card\.takenOver === true \? h\(TakenOverBadge/, 'badge renders when takenOver===true')
   assert.match(clientSrc, /card\.takenOver !== true\) \{[\s\S]{0,80}t\('takeover'\)/, 'takeover button only when NOT taken over')
-  assert.match(clientSrc, /if \(card\.takenOver === true\) \{[\s\S]{0,900}t\('returnToEngine'\)/, 'return button when takenOver===true')
+  // Behaviour-level, not a source character window: measuring the distance
+  // from `if (card.takenOver === true)` to `t('returnToEngine')` breaks on any
+  // unrelated edit inside the branch (a disabled/title guard, a comment), even
+  // though the button still renders. Render and inspect the actual buttons.
+  const takenCard = { id: 'c1', status: 'build', history: [{ type: 'report' }], takenOver: true }
+  const takenButtons = renderCardActionButtons(takenCard)
+  const takenKeys = takenButtons.map((button) => button.props.key)
+  assert.ok(takenKeys.includes('returnToEngine'), 'returnToEngine button renders when takenOver===true')
+  assert.ok(!takenKeys.includes('takeover'), 'takeover button is hidden when takenOver===true')
+  const returnButton = takenButtons.find((button) => button.props.key === 'returnToEngine')
+  assert.equal(returnButton.children[0], 'returnToEngine', 'return button label uses the returnToEngine key')
+  const freeKeys = renderCardActionButtons({ ...takenCard, takenOver: false }).map((button) => button.props.key)
+  assert.ok(freeKeys.includes('takeover'), 'takeover button renders when not taken over')
+  assert.ok(!freeKeys.includes('returnToEngine'), 'returnToEngine hidden when not taken over')
   // The takeover and return branches are mutually exclusive on the same field.
   const takeoverBlock = clientSrc.match(/if \(card\.status !== 'done'[\s\S]*?\n      \}/)[0]
   assert.match(takeoverBlock, /card\.takenOver !== true/)

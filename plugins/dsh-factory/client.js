@@ -1123,6 +1123,11 @@ window.__ModuleLoader__.load({
         key: label, onClick: () => void run(fn),
         disabled: busy || extra.disabled === true, title: extra.title,
       }, label))
+      // A live builder or reviewer session owns the card: human actions must
+      // not race it or bypass an unfinished review. `busy` above covers the
+      // separate case of an in-flight board request.
+      const sessionRunning = working === true || reviewWorking === true
+      const sessionRunningTitle = reviewWorking === true ? t('reviewWorking') : t('working')
       // Ask for a note through an in-page modal, never a native browser prompt.
       // Resolves with the trimmed note, or null on cancel/empty — the caller's
       // `if (note === null) return` still aborts the request exactly as before.
@@ -1188,7 +1193,7 @@ window.__ModuleLoader__.load({
           const note = await askNote(t('notePromptReturnPlan'), risk)
           if (note === null) return
           await callApi('POST', `/cards/${card.id}/return-to-plan`, { note })
-        }, working ? { disabled: true } : {})
+        }, sessionRunning ? { disabled: true, title: sessionRunningTitle } : {})
       }
       // Take-over pulls one card out of the engine's control, persisted on the
       // card. Available on any live (non-terminal) card (P4-6, third entry).
@@ -1196,7 +1201,7 @@ window.__ModuleLoader__.load({
         add(t('takeover'), async () => {
           await callApi('POST', `/cards/${card.id}/takeover`)
           if (onToast) onToast(t('toastTaken'), 'ok')
-        })
+        }, sessionRunning ? { disabled: true, title: sessionRunningTitle } : {})
       }
       // Give a taken-over card back. No confirmation (reversible, one click like
       // takeover); busy/disabled is the only guard against a double submit.
@@ -1211,8 +1216,8 @@ window.__ModuleLoader__.load({
               ? `\n${t('returnWithAutoApproveNotice')}` : ''
             if (onToast) onToast(`${live ? `${t('toastReturned')}\n${t('returnWithSessionNotice')}` : t('toastReturned')}${notice}`, 'ok')
           }),
-          disabled: busy,
-          title: t('returnToEngineTitle'),
+          disabled: busy || sessionRunning,
+          title: sessionRunning ? sessionRunningTitle : t('returnToEngineTitle'),
           ariaLabel: t('returnToEngineTitle'),
           style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28, minWidth: 88 },
         }, t('returnToEngine')))
@@ -1228,24 +1233,25 @@ window.__ModuleLoader__.load({
           await callApi('POST', `/cards/${card.id}/review-dispatch`)
           if (onToast) onToast(t('toastReviewRedispatched'), 'ok')
         }, reviewWorking === true ? { disabled: true, title: t('reviewWorking') } : {})
+        const reviewActionGuard = sessionRunning ? { disabled: true, title: sessionRunningTitle } : {}
         add(t('actReturnToBuild'), async () => {
           const note = await askNote(t('notePromptReturnBuild'))
           if (note === null) return
           await callApi('POST', `/cards/${card.id}/return-to-build`, { note })
-        })
+        }, reviewActionGuard)
         if (!card.commitSha) add(t('actConfirmCommit'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'confirm-commit' })
           await callApi('POST', card.prUrl ? `/cards/${card.id}/commit-existing` : `/cards/${card.id}/commit`)
-        })
+        }, reviewActionGuard)
         if (card.commitSha && !card.prUrl) add(t('actCreatePr'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'create-pr' })
           await callApi('POST', `/cards/${card.id}/create-pr`)
-        })
+        }, reviewActionGuard)
         if (card.commitSha && card.prUrl) add(t('actPushExisting'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'push-existing' })
           await callApi('POST', `/cards/${card.id}/push-existing`)
-        })
-        add(t('actMarkDone'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'done', actor: 'human' }) })
+        }, reviewActionGuard)
+        add(t('actMarkDone'), async () => { await callApi('POST', `/cards/${card.id}/transition`, { to: 'done', actor: 'human' }) }, reviewActionGuard)
       }
       // Cancel (soft delete) is the last, visually quiet action. The card stays
       // in the store so its source still blocks intake re-creation; only the
@@ -1257,7 +1263,8 @@ window.__ModuleLoader__.load({
             await callApi('POST', `/cards/${card.id}/transition`, { to: 'canceled', actor: 'human' })
             if (onToast) onToast(t('toastCardCanceled'), 'ok')
           }),
-          disabled: busy,
+          disabled: busy || sessionRunning,
+          title: sessionRunning ? sessionRunningTitle : undefined,
           style: { padding: '5px 9px', fontSize: 11, borderRadius: 6, minHeight: 28 },
         }, t('cancelCard')))
       }

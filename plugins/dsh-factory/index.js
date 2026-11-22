@@ -24,6 +24,7 @@ import { continueCard, createHostPort, dispatchCard, dispatchReview, followupRev
 import { commitCard, commitForExistingPr, createGitPort, createPrForCard, pushExistingCard } from './git-exec.js'
 import { runAutoDelivery, ensureCommittedForAutoDelivery } from './delivery.js'
 import { localeFromContext } from './session-context.js'
+import { assertNoActiveSession, sessionActiveFor } from './session-guard.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
 import { registerFactorySkills } from './skills.js'
@@ -59,7 +60,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.33'
+export const BUILD = 'factory-2026-11-20.35'
 
 export const name = 'dsh-factory'
 
@@ -118,7 +119,10 @@ export function apply(ctx, config = {}) {
   // `config.engine` is the launch-config fallback for the global concurrency cap;
   // the HTTP-written value in store.settings takes priority (P4 §3.3). The API
   // needs it to report the effective value + source back to the UI.
-  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {}, workModeAvailability: () => runtime.engine?.autoReviewPluginState })
+  // One liveness reader for the whole write boundary: the UI hides actions
+  // while a session runs, and these routes refuse the same direct requests.
+  const isSessionActive = (sessionId) => sessionActiveFor(ctx, sessionId)
+  const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {}, workModeAvailability: () => runtime.engine?.autoReviewPluginState, isSessionActive })
 
   // The HTTP-written githubClientId (NON-secret) lives in store.settings; the
   // actual GitHub identities live in the host credential service, never here.
@@ -449,6 +453,7 @@ export function apply(ctx, config = {}) {
       const current = store.getCard(cardId)
       if (current?.status === 'review') {
         try {
+          assertNoActiveSession({ card: current, isSessionActive, action: '「退回构建」' })
           const note = typeof body.note === 'string' ? body.note.trim() : ''
           if (note === '') throw new Error('退回构建必须填写修改意见；builder 需要据此修改')
           const card = store.transitionCard(cardId, 'build', 'human', note)
@@ -485,6 +490,7 @@ export function apply(ctx, config = {}) {
       const cardId = decodeURIComponent(returnToBuild[1])
       try {
         const text = requireNote(body.note)
+        assertNoActiveSession({ card: store.getCard(cardId), isSessionActive, action: '「退回构建」' })
         const card = store.transitionCard(cardId, 'build', 'human', text)
         let continued = null
         try {
@@ -513,6 +519,7 @@ export function apply(ctx, config = {}) {
       const before = store.getCard(cardId)
       if (before?.status !== 'plan-review') { sendJson(res, 400, { error: `退回修改计划仅 Plan-review 可执行（当前 ${before?.status ?? '未知'}）` }); return }
       try {
+        assertNoActiveSession({ card: before, isSessionActive, action: '「退回修改计划」' })
         const feedback = store.getCard(cardId).history.filter((h) => h && h.type === 'plan-feedback').at(-1) ?? null
         const takenOver = body.takeOver === undefined
           ? ['machine-approve', 'auto-delivery'].includes(tier)
@@ -578,7 +585,7 @@ export function apply(ctx, config = {}) {
       try {
         const port = createGitPort()
         const result = await commitForExistingPr({
-          store, cardId: decodeURIComponent(commitExisting[1]), port, message: body.message,
+          store, cardId: decodeURIComponent(commitExisting[1]), port, message: body.message, isSessionActive,
         })
         sendJson(res, 200, result)
       } catch (error) {
@@ -593,7 +600,7 @@ export function apply(ctx, config = {}) {
         const card = store.getCard(cardId)
         const project = card?.projectId ? store.getProject(card.projectId) : undefined
         const decision = await resolveIdentity(project)
-        const result = await pushExistingCard({ store, cardId, port: createGitPort(decision.git) })
+        const result = await pushExistingCard({ store, cardId, port: createGitPort(decision.git), isSessionActive })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -608,7 +615,7 @@ export function apply(ctx, config = {}) {
     if (method === 'POST' && commitMatch !== null) {
       try {
         const port = createGitPort()
-        const result = await commitCard({ store, cardId: decodeURIComponent(commitMatch[1]), port, message: body.message })
+        const result = await commitCard({ store, cardId: decodeURIComponent(commitMatch[1]), port, message: body.message, isSessionActive })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -627,7 +634,7 @@ export function apply(ctx, config = {}) {
         // is untouched; it only receives the winner's argument group.
         const decision = await resolveIdentity(project)
         const port = createGitPort(decision.git)
-        const result = await createPrForCard({ store, cardId, port, title: body.title, body: body.body })
+        const result = await createPrForCard({ store, cardId, port, title: body.title, body: body.body, isSessionActive })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })

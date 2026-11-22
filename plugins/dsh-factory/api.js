@@ -21,6 +21,7 @@ import { inspectRepo } from './project-proposal.js'
 import { applyRemoteSync } from './sync.js'
 import { assertWorktreeRoot, isPathInside, removeWorktree, worktreeRootOf } from './worktree.js'
 import { DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
+import { assertNoActiveSession } from './session-guard.js'
 
 /**
  * Delete a project and really remove its worktrees (P4 §4 — the one sanctioned
@@ -85,7 +86,7 @@ function concurrencyView(store, engineConfig) {
   }
 }
 
-export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {}, workModeAvailability } = {}) {
+export function createApi({ store, build = 'unknown', inspect = inspectRepo, runtime = {}, deleteProject = deleteProjectWithWorktrees, engineConfig = {}, workModeAvailability, isSessionActive } = {}) {
   return function handle(input = {}) {
     const method = String(input.method ?? 'GET').toUpperCase()
     const rawRoute = String(input.route ?? '/')
@@ -249,6 +250,11 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         if (method === 'POST' && seg.length === 1) return ok({ card: store.createCard(body) }, 201)
         if (method === 'GET' && seg.length === 2) return ok({ card: store.getCard(seg[1]) })
         if (method === 'POST' && seg.length === 3 && seg[2] === 'transition') {
+          // Backend fallback: the UI hides these actions while a session runs,
+          // so a direct request must fail the same way instead of racing it.
+          if (body.actor === 'human') {
+            assertNoActiveSession({ card: store.getCard(seg[1]), isSessionActive, action: `转移到 ${body.to}` })
+          }
           // External callers always supply a string note; a missing note on a
           // human return becomes an explicit empty one and is refused by the
           // store hard boundary. Direct internal callers may still omit it.
@@ -261,12 +267,14 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         // Take-over removes ONE card from the engine's control, persisted so a
         // reload cannot put it back (PRD §8). Never a project-wide pause.
         if (method === 'POST' && seg.length === 3 && seg[2] === 'takeover') {
+          assertNoActiveSession({ card: store.getCard(seg[1]), isSessionActive, action: '「我来接手」' })
           return ok({ card: store.takeOverCard(seg[1], 'human') })
         }
         // Reverse of takeover: one card goes back to the engine. Deliberately a
         // separate route from the dispatch concurrency lock (releaseClaim).
         // Auth is inherited from the host connection gate in index.js.
         if (method === 'POST' && seg.length === 3 && seg[2] === 'release') {
+          assertNoActiveSession({ card: store.getCard(seg[1]), isSessionActive, action: '「交还引擎」' })
           return ok({ card: store.releaseOverCard(seg[1], 'human') })
         }
         // AE-2b remote-snapshot injection (controlled product entry). Feeds a

@@ -1,0 +1,92 @@
+/**
+ * Dev self-check: while a card's builder or reviewer session is running, the
+ * human action buttons on that card must be disabled (with a reason), so a
+ * click cannot race a live agent or bypass an unfinished review.
+ *
+ * The test executes the real CardActions function from client.js with stubbed
+ * host primitives and inspects the rendered button props — it does not pin
+ * source wording.
+ */
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import test from 'node:test'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const client = readFileSync(join(here, '..', 'client.js'), 'utf8')
+const source = client.slice(client.indexOf('function CardActions('), client.indexOf('function Column('))
+assert.ok(source.startsWith('function CardActions('), 'CardActions source found')
+
+const T = { card: '#fff', line: '#ddd', panel: '#fff', mutedInk: '#888', dangerInk: '#c00', accent: '#00f', accentWash: '#eef', accentInk: '#00c' }
+const h = (tag, props, ...children) => ({ tag, props: props || {}, children })
+const cardActions = new Function(
+  'h', 'Button', 'callApi', 'T', 'NoteModal', 'Modal', 'needsAutoApproveNotice',
+  `${source}\nreturn CardActions`,
+)(h, 'button', async () => ({}), T, 'note-modal', 'modal', () => false)
+
+function render(card, { working = false, reviewWorking = false, tier = 'manual', busy = false } = {}) {
+  const view = cardActions({
+    card, run: async (fn) => fn(), t: (key) => key, busy, working, reviewWorking,
+    onToast: () => {}, onModal: () => {}, tier, orphan: undefined,
+  })
+  return view === null ? [] : view.children.flat().filter((child) => child && child.tag === 'button')
+}
+
+const keysOf = (buttons) => buttons.map((button) => button.props.key)
+const buttonOf = (buttons, key) => buttons.find((button) => button.props.key === key)
+const report = { type: 'report' }
+
+test('Dev-Session: builder running disables the takeover and cancel actions with a reason', () => {
+  const card = { id: 'build-1', status: 'build', history: [report], sessionId: 's1', takenOver: false }
+  const buttons = render(card, { working: true })
+  assert.deepEqual(keysOf(buttons).sort(), ['cancelCard', 'takeover'], 'build card offers only the overlay actions')
+  for (const button of buttons) {
+    assert.equal(button.props.disabled, true, `${button.props.key} disabled while the builder runs`)
+    assert.ok(button.props.title, `${button.props.key} says why it is disabled`)
+  }
+  for (const button of render(card)) {
+    assert.notEqual(button.props.disabled, true, `${button.props.key} is actionable when idle`)
+  }
+})
+
+test('Dev-Session: reviewer running disables every review action and overlay action', () => {
+  const card = {
+    id: 'review-1', status: 'review', history: [report], sessionId: 's1', reviewSessionId: 'r1',
+    commitSha: 'abc', prUrl: 'https://example/pr/1', takenOver: false,
+  }
+  const buttons = render(card, { reviewWorking: true, tier: 'auto-delivery' })
+  const keys = keysOf(buttons)
+  for (const key of ['actRedispatchReview', 'actReturnToBuild', 'actPushExisting', 'actMarkDone', 'takeover', 'cancelCard']) {
+    assert.ok(keys.includes(key), `${key} rendered`)
+  }
+  for (const button of buttons) {
+    assert.equal(button.props.disabled, true, `${button.props.key} disabled while the reviewer runs`)
+    assert.ok(button.props.title, `${button.props.key} says why it is disabled`)
+  }
+})
+
+test('Dev-Session: confirm-commit is disabled too when review runs before a commit exists', () => {
+  const card = { id: 'review-2', status: 'review', history: [report], reviewSessionId: 'r1', takenOver: false }
+  const buttons = render(card, { reviewWorking: true })
+  assert.ok(keysOf(buttons).includes('actConfirmCommit'), 'confirm-commit rendered before a commit exists')
+  assert.equal(buttonOf(buttons, 'actConfirmCommit').props.disabled, true)
+})
+
+test('Dev-Session: idle review card keeps its actions enabled', () => {
+  const card = {
+    id: 'review-3', status: 'review', history: [report], commitSha: 'abc',
+    prUrl: 'https://example/pr/1', takenOver: false,
+  }
+  for (const key of ['actReturnToBuild', 'actPushExisting', 'actMarkDone', 'takeover', 'cancelCard']) {
+    assert.notEqual(buttonOf(render(card), key).props.disabled, true, `${key} enabled when idle`)
+  }
+})
+
+test('Dev-Session: plan-review running still gates approve and return-to-plan', () => {
+  const card = { id: 'plan-1', status: 'plan-review', history: [report], sessionId: 's1', takenOver: false }
+  const buttons = render(card, { working: true })
+  for (const key of ['actApprovePlan', 'actReturnToPlan']) {
+    assert.equal(buttonOf(buttons, key).props.disabled, true, `${key} disabled while the builder runs`)
+  }
+})
