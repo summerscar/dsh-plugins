@@ -17,13 +17,15 @@ import { spawnSync } from 'node:child_process'
 
 import { cleanGitEnv } from './git-env.js'
 import { assertNoActiveSession } from './session-guard.js'
+import { assertApprovedVerdict } from './verdict-guard.js'
 
-export async function commitCard({ store, cardId, port, message = 'factory: implement card', isSessionActive } = {}) {
+export async function commitCard({ store, cardId, port, message = 'factory: implement card', isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
   if (card.status !== 'review') throw new Error(`「确认提交」仅 Review 可执行（当前 ${card.status}）`)
   if (card.commitSha) throw new Error('该卡已提交，不能重复提交')
   assertNoActiveSession({ card, isSessionActive, action: '「确认提交」' })
+  if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '「确认提交」' })
   if (!store.hasPendingAuthorization(cardId, 'confirm-commit')) {
     throw new Error('缺少「确认提交」授权，拒绝执行 git 提交')
   }
@@ -44,11 +46,12 @@ export async function commitCard({ store, cardId, port, message = 'factory: impl
  * This separate action keeps the same Review + human authorization gate but
  * records a new head on the same card/PR.
  */
-export async function commitForExistingPr({ store, cardId, port, message = 'factory: address review feedback', isSessionActive } = {}) {
+export async function commitForExistingPr({ store, cardId, port, message = 'factory: address review feedback', isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
   if (card.status !== 'review') throw new Error(`回炉提交仅 Review 可执行（当前 ${card.status}）`)
   assertNoActiveSession({ card, isSessionActive, action: '回炉提交' })
+  if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '回炉提交' })
   if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡尚无 PR；请使用「确认提交」')
   if (!store.hasPendingAuthorization(cardId, 'confirm-commit')) {
     throw new Error('缺少「确认提交」授权，拒绝执行 git 提交')
@@ -78,11 +81,12 @@ export function isProtectedBranch(branch, protectedBranches = DEFAULT_PROTECTED_
  * autonomy level: the PR is the last human review gate before merge, so opening
  * it ready-for-review would skip that gate. Callers may still opt out explicitly.
  */
-export async function createPrForCard({ store, cardId, port, title, body, protectedBranches = DEFAULT_PROTECTED_BRANCHES, draft = true, isSessionActive } = {}) {
+export async function createPrForCard({ store, cardId, port, title, body, protectedBranches = DEFAULT_PROTECTED_BRANCHES, draft = true, isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
   if (card.status !== 'review') throw new Error(`「推送分支并创建 PR」仅 Review 可执行（当前 ${card.status}）`)
   assertNoActiveSession({ card, isSessionActive, action: '「推送分支并创建 PR」' })
+  if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '「推送分支并创建 PR」' })
   if (!card.commitSha) throw new Error('请先「确认提交」再创建 PR')
   if (card.prUrl) throw new Error('该卡已有 PR')
   if (!store.hasPendingAuthorization(cardId, 'create-pr')) {
@@ -122,11 +126,12 @@ export async function createPrForCard({ store, cardId, port, title, body, protec
  * never merges, never force-pushes, and never rewrites `prUrl`. The human
  * authorization is per-action (`push-existing`) and single-use.
  */
-export async function pushExistingCard({ store, cardId, port, protectedBranches = DEFAULT_PROTECTED_BRANCHES, isSessionActive } = {}) {
+export async function pushExistingCard({ store, cardId, port, protectedBranches = DEFAULT_PROTECTED_BRANCHES, isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
   if (card.status !== 'review') throw new Error(`「推送更新草稿 PR」仅 Review 可执行（当前 ${card.status}）`)
   assertNoActiveSession({ card, isSessionActive, action: '「推送更新草稿 PR」' })
+  if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '「推送更新草稿 PR」' })
   if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡尚无 PR，不能更新已有 PR')
   if (!card.commitSha) throw new Error('请先提交回炉改动再推送更新')
   if (!store.hasPendingAuthorization(cardId, 'push-existing')) {

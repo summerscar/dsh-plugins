@@ -60,7 +60,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.35'
+export const BUILD = 'factory-2026-11-20.36'
 
 export const name = 'dsh-factory'
 
@@ -584,8 +584,11 @@ export function apply(ctx, config = {}) {
     if (method === 'POST' && commitExisting !== null) {
       try {
         const port = createGitPort()
+        // Human git writes are gated on an approved review verdict; L4's
+        // separate delivery path has its own gate and never reaches here.
         const result = await commitForExistingPr({
-          store, cardId: decodeURIComponent(commitExisting[1]), port, message: body.message, isSessionActive,
+          store, cardId: decodeURIComponent(commitExisting[1]), port, message: body.message,
+          isSessionActive, requireApprovedVerdict: true,
         })
         sendJson(res, 200, result)
       } catch (error) {
@@ -600,7 +603,7 @@ export function apply(ctx, config = {}) {
         const card = store.getCard(cardId)
         const project = card?.projectId ? store.getProject(card.projectId) : undefined
         const decision = await resolveIdentity(project)
-        const result = await pushExistingCard({ store, cardId, port: createGitPort(decision.git), isSessionActive })
+        const result = await pushExistingCard({ store, cardId, port: createGitPort(decision.git), isSessionActive, requireApprovedVerdict: true })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -615,7 +618,7 @@ export function apply(ctx, config = {}) {
     if (method === 'POST' && commitMatch !== null) {
       try {
         const port = createGitPort()
-        const result = await commitCard({ store, cardId: decodeURIComponent(commitMatch[1]), port, message: body.message, isSessionActive })
+        const result = await commitCard({ store, cardId: decodeURIComponent(commitMatch[1]), port, message: body.message, isSessionActive, requireApprovedVerdict: true })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -634,7 +637,7 @@ export function apply(ctx, config = {}) {
         // is untouched; it only receives the winner's argument group.
         const decision = await resolveIdentity(project)
         const port = createGitPort(decision.git)
-        const result = await createPrForCard({ store, cardId, port, title: body.title, body: body.body, isSessionActive })
+        const result = await createPrForCard({ store, cardId, port, title: body.title, body: body.body, isSessionActive, requireApprovedVerdict: true })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
