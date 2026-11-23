@@ -1,7 +1,7 @@
 # AGENTS.md
 
 本仓库是 summerscar 的 DSH 插件 monorepo，托管插件发布站 <https://summerscar.github.io/dsh-plugins/>。
-专项规则按需加载：在 `plugins/**` 下开发插件时遵循 `plugins/AGENTS.md`；改动 `site/**` 时遵循 `site/AGENTS.md`（站点结构、catalog 规则、渲染与部署）；往第三方市场（awesome-dsh-plugin、dsh-plugin-index）投递或更新条目时遵循 `.agents/skills/dsh-plugin-market-release/SKILL.md`；在真机上验证插件（工具注册不上、技能加载失败、路径判断、验收判据怎么写）时遵循 `.agents/skills/dsh-plugin-live-verification/SKILL.md`；设计多来源凭据的优先级、掩码只读状态与修复入口时遵循 `.agents/skills/dsh-credential-identity-ladder/SKILL.md`；给卡片加一行按优先级选出的流程/状态提示、判断纯显示层改动要不要 bump `BUILD`、用注入状态与变异验证给这类显示逻辑写测试时遵循 `.agents/skills/dsh-card-flow-hint/SKILL.md`；用宿主轻量模型调用起草提交信息与 PR 文案、把生成与写入分开并设计可编辑草稿弹窗时遵循 `.agents/skills/dsh-ai-delivery-copy/SKILL.md`。
+专项规则按需加载：在 `plugins/**` 下开发插件时遵循 `plugins/AGENTS.md`；改动 `site/**` 时遵循 `site/AGENTS.md`（站点结构、catalog 规则、渲染与部署）；往第三方市场（awesome-dsh-plugin、dsh-plugin-index）投递或更新条目时遵循 `.agents/skills/dsh-plugin-market-release/SKILL.md`；在真机上验证插件（工具注册不上、技能加载失败、路径判断、验收判据怎么写）时遵循 `.agents/skills/dsh-plugin-live-verification/SKILL.md`；设计多来源凭据的优先级、掩码只读状态与修复入口时遵循 `.agents/skills/dsh-credential-identity-ladder/SKILL.md`；给卡片加一行按优先级选出的流程/状态提示、判断纯显示层改动要不要 bump `BUILD`、用注入状态与变异验证给这类显示逻辑写测试时遵循 `.agents/skills/dsh-card-flow-hint/SKILL.md`；用宿主轻量模型调用起草提交信息与 PR 文案、把生成与写入分开并设计可编辑草稿弹窗时遵循 `.agents/skills/dsh-ai-delivery-copy/SKILL.md`；给自动 git 写加护栏、隔离钩子环境变量或为停住的交付设计人工重试入口时遵循 `.agents/skills/dsh-git-write-gates/SKILL.md`。
 
 ## 排查问题的顺序
 
