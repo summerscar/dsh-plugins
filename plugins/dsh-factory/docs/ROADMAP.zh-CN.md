@@ -131,6 +131,13 @@
 
 上一轮认证的 head 作为一等字段 `previousReviewedHead` 显式注入评审上下文（唯一来源是上一轮 verdict 的 `reviewedHead`，不接受模型传参；无上轮结论时为 `—`），后端据此生成两种范围行：上轮有阻断项则逐项在新 head 上核对是否解决、只看差量找回归；上轮 approved 则只看差量找新问题——两者最后都整体重看一遍。`—` 或与当前 head 相等时不走增量，按全量评审；skill 判据为「有回退转移或有 head 差量」即挂 `factory-rereview`。引擎对「review 内自动提交导致 verdict 过期（`reviewStale`）」的 L4 卡自动复评（走 `followupReview` 三级回退，旧 verdict 留作上下文、不清），每卡一生最多 3 次（`AUTO_REREVIEW_LIMIT`），只在引擎自动发起时计数、人手动重派不计数、不重置；用尽后转全人工，但过期提示与重派按钮仍在。卡片提示优先级：复评额度用尽 > 评审过期 > 通用交付失败 > 无结论。
 
+### 2.14 每张卡一行的流程提示与补充信息上文
+
+- **每卡恰好一行流程提示。** 看板卡片在 meta 行与操作按钮之间渲染 `flowHint`：单行（`whiteSpace:nowrap`、超出省略、不用 `pre-line`），最多一个节点。四个字典新增 17 个 key：基础 11 个（`flowInboxAuto` / `flowInboxManual`、`flowTriageAuto`、`flowPlanAuto`、`flowPlanReviewAuto` / `flowPlanReviewManual`、`flowBuildAuto`、`flowReviewAuto` / `flowReviewManual`、`flowDone`、`flowCanceled`）与覆盖 6 个（`flowPaused`、`flowCapacity`、`flowTakenOver`、`flowNeedsInfo`、`flowStalled`、`flowSessionStopped`）。自动/手动文案按存储档位定：`you-approve` 且 `autoDispatch === true`（显示档 L2）、`machine-approve`、`auto-delivery` 为自动；triage / plan / build 三行描述正在进行的会话，不分自动/手动。
+- **优先级放在纯函数里。** `cardFlowHintKey(ctx)` 按序只选一个 key：孤儿卡复用 `orphanWhy`；已有 L4 评审提示时返回空（不叠加）；再依次 `needsHumanInfo` → `takenOver` → `paused` → `capacity` → `stalled` → `sessionStopped` → 状态 × 档位基础文案。入参全部取自页面已有的状态快照——`engine.paused`、`project.paused`、并发用 `engine.projects[].action === 'queued'` 或 `approvalHeld > 0`、`card.stalled`、会话活跃用 `sessionRows[].running`——不加后端字段、不改路由与 schema。
+- **三处按代码事实校正了文案稿。** capacity 的判据是 `action === 'queued'` 或 `approvalHeld > 0`，不是裸的排队卡数；评审卡的会话停止看 `reviewSessionId`，并排除 `plan-review` 与新鲜的 approved verdict；L1/L2 的区分是 `you-approve` 下 `project.autoDispatch === true`，不靠显示档位猜。
+- **补充信息弹窗只读展示上次退回原因。** `needsHumanInfo` 卡点「补充信息并重新派发」时，`lastTriageReturnReason(history)` 取最近一条非空 `triage-return.reason`，在输入框上方以 `notePreviousReason` + 原文 + `noteResupplyGuidance` 渲染。**输入框不预填**——预填会让后端首条会话消息重复同一段文字；没有退回原因时弹窗与旧行为完全一致。两个 key 都不带占位符（符合 AC-1.5）。
+
 ## 3. 已经定死、不必再争的设计
 
 | 决定 | 理由 |
@@ -159,6 +166,9 @@
 | arm 令牌是一次性的，权威是代码闸门而非令牌 | 执行前对活卡片与活 head 重评整套闸门再动手，令牌永远不能当作常驻授权；skill、报告与 HTTP 调用方都武装不了交付，只有引擎 tick 能 |
 | 「自动交付」止于 draft PR：不合并、不自动标完成、不延伸到其他档位或工作模式 | 用户的常驻授权恰好以此为界：机器把被评审的 head 交付到 draft PR，之后的所有事留给人 |
 | 存储四个语义档，L0–L4 是呈现层映射 | 「你批准」档加它的开关覆盖两个显示档；`auto-delivery` 是独立的存储档、不读任何开关，五个滑杆档位不需要新的存储值，也没有开关泄漏能力 |
+| 每卡只给一行流程提示，优先级固定、不叠加 | 一张卡对「下一步做什么」只能说一件事；孤儿卡与已有 L4 评审提示已占用这一行，新提示让位而不是堆上去。优先级是状态快照上的纯函数，不需要浏览器就能测 |
+| 上次退回原因只展示、不预填 | 后端本就会把该原因带进下一会话首条消息，预填会让同一段话出现两次；只读展示省去手打，又不改变请求内容 |
+| 纯显示层增量不 bump `BUILD` | 提示与弹窗复用的都是页面已有的数据与路由，没有改 Host 侧代码、导出面、路由或 schema。`BUILD` 标记的是必须重载才能相信新读数的 Host 侧改动；既有状态契约下的纯客户端改动保持原值 |
 
 ## 4. 后续计划（按优先级）
 
@@ -271,6 +281,14 @@
 
 **这一轮改变了验收做法**（因为改的是本项目的验证方式，特记）：离线套件全程绿灯，四个 bug 全部只有真机才暴露——引擎依赖工厂漏传一个端口（被静默丢弃）、一个公开导出被新导出顶掉、一个拿提交前 HEAD 去校验提交后 sha 的检查（真实 git 下永不成立）、以及漏掉的 push 加容器里 git 没有 credential helper。注入的假端口证明的是分支逻辑，证明不了接线与环境。长期规则：凡跨层端口透传、公开导出面、或真实 git/gh 命令链的改动，都要跑一次真实命令链并在验收里记下来。通用版规则沉淀在 `.agents/skills/dsh-plugin-live-verification`（§十）。
 
+### P9 — 每张卡的流程提示与补充信息上文（**已完成**）
+
+P8 之后的纯显示层增量，在单文件客户端里完成，未改后端、`qa-*`、`delivery.js`、`session-context.js`，也未 bump `BUILD`。以下条目从 `client.js` 与 locale 文件逐条复核（见 §2.14）。
+
+- **一行优先。** `cardFlowHintKey(ctx)` 从 17 个新 key 中选一个：孤儿卡复用 `orphanWhy`，已有 L4 评审提示时不出提示，再依次 待补充信息 > 已接管 > 暂停 > 并发排队 > 卡住 > 会话停止 > 状态 × 档位。capacity、评审会话停止、L1/L2 按 `autoDispatch` 区分这三处按代码事实校正文案稿，没有为迁就文案改引擎行为。
+- **上次退回原因只读。** `lastTriageReturnReason(history)` 提供输入框上方的信息块，textarea 保持空；后端首条会话消息里只出现一次该原因。没有退回原因时弹窗保持旧行为。
+- **验证如实记录。** Dev 新增 `dev-flow-hint` 与 `dev-resupply-hint`，并更新自有 dev 测试的签名；去掉 paused 优先级、去掉「已有评审提示压制」、去掉 context 信息块的变异各自让对应断言变红，还原后一致。整包、i18n parity 与 lint 均报告全绿，`git diff --check` 干净；测试数字以实际运行为准，这里不记。QA 用 DOM 证据在真机核过流程提示：基础文案随状态/档位、每卡唯一且单行位于按钮前、needsHumanInfo/takenOver/paused 优先级、L4 既有提示不叠加、review 场景会话停止。`done`、capacity、triage/plan/build 会话停止三处**未做真机验证**（造不出或没抓到样本），由纯函数测试与代码复核覆盖，Chief 已认可。补充信息弹窗只过 Dev 离线测试与变异验证，**未做真机眼见**，用户选择不补验直接提交。
+
 ### TODO — 候选下一轮（**仅记录，未排期**）
 
 以下为用户提出、尚未授权开工的想法；先记在这里，由 PM/Design 出 PRD 与验收标准、Chief 排优先级。本节任何一条都不是开发指令。
@@ -343,6 +361,8 @@
 | **P1/P2a 残留：没有打包好的 review preset；状态接口里 auto-review 可用性最多一分钟陈旧** | 记为分期限制，不是缺陷。 | 包内 review preset、实时插件状态读。 |
 | ~~**「自动交付」已授权但未设定时与最终安全评审**~~ | 调度其实已就位：L4 项目在**每次 tick 里自动尝试交付**，受 `delivery` 的七条硬条件门禁 + 每 head 幂等 + 树等价约束，不需要单独的调度开关。真正缺的是：一次真机等过完整 tick 的端到端交付证据（已在上行记录），以及一次正式的安全评审。 | **剩下要定的是「是否/何时做一次正式安全评审」，不是「要不要开启自动交付」**。 |
 | ~~**`/factory` 帮助文本：「commit / push / PR 仍需人工批准」**~~ | `plugins/dsh-factory/commands.js` 的产品可见文案在「自动交付」档下已不准确——该档机器会 commit、push、开 draft PR，而 merge 与标完成仍留给人。 | **已完成**：文案改为写明 L4 会自己 commit / push / 开 draft PR，merge 与标完成始终需要人；锁旧文案的两条正则断言（Dev 与 QA 各一条）已同步更新为锁新文案的关键片段，旧措辞在代码与测试里已无残留。 |
+| **流程提示三处场景未在真机验到** | `done`、capacity（`action==='queued'` / `approvalHeld>0`）与 triage/plan/build 的会话停止在造数据里造不出样本，QA 如实报「未验」；基础文案、单行唯一、覆盖优先、不叠加与 review 会话停止已用 DOM 证据验过 | 由纯函数测试与源码复核覆盖，Chief 认可这三处未验；不伪造样本 |
+| **补充信息弹窗未做真机眼见** | `lastTriageReturnReason` 的 context 展示与空输入框只过 Dev 离线测试与变异验证，没有真机视觉检查 | 用户选择不补验直接提交；仍欠一次真机点击验证 |
 
 ### 5.2 本轮 UI/UX 明确不做的
 
