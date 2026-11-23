@@ -123,7 +123,7 @@ export async function armAutoDelivery({ store, cardId, readHead, resolveIdentity
  * there is no public route to supply either. Failure leaves the card in Review
  * with state='failed' and ZERO git writes unless a step already succeeded.
  */
-export async function executeAutoDelivery({ store, token, port, readHead, resolveIdentity } = {}) {
+export async function executeAutoDelivery({ store, token, port, readHead, resolveIdentity, generatePr } = {}) {
   if (token === undefined || token === null || token.actor !== AUTO_DELIVERY_TIER || typeof token.head !== 'string') {
     throw new Error('自动交付缺少专用 arm 令牌；拒绝执行')
   }
@@ -171,12 +171,27 @@ export async function executeAutoDelivery({ store, token, port, readHead, resolv
       port.push(card.worktreePath, card.branch)
       audit(store, cardId, 'pushed', `branch ${card.branch} @ ${token.head}`, { head: token.head })
     }
+    // First PR only. Copy drafting is best-effort and never changes the
+    // delivery gates; a failure keeps the card's original title/body.
+    let prTitle = card.title
+    let prBody = card.body || ''
+    let copySource = 'default'
+    if (typeof generatePr === 'function') {
+      try {
+        const draft = await generatePr({ store, card, fallbackTitle: prTitle, fallbackBody: prBody })
+        if (typeof draft?.title === 'string' && draft.title.trim() !== '') {
+          prTitle = draft.title
+          prBody = typeof draft.body === 'string' ? draft.body : ''
+          if (draft.generated === true) copySource = 'ai'
+        }
+      } catch { /* drafting is best-effort; delivery continues with card copy */ }
+    }
     const url = port.createPr(card.worktreePath, {
-      title: card.title, body: card.body || '', branch: card.branch, draft: true,
+      title: prTitle, body: prBody, branch: card.branch, draft: true,
     })
     store.setPrUrl(cardId, url, AUTO_DELIVERY_TIER)
     store.recordPushUpdate(cardId, { prUrl: url, sha: token.head, actor: AUTO_DELIVERY_TIER })
-    audit(store, cardId, 'draft-pr', `${url} @ ${token.head}`, { head: token.head, url })
+    audit(store, cardId, 'draft-pr', `${url} @ ${token.head}`, { head: token.head, url, copySource })
   }
   store.setAutoDelivery(cardId, { head: token.head, state: 'delivered', actor: AUTO_DELIVERY_TIER })
   audit(store, cardId, 'delivered', `head ${token.head}`, { head: token.head })
@@ -212,7 +227,7 @@ function markStaleIfVerdictOld(store, cardId, card, newHead) {
  * ok === true, so a failed commit never produces an unreviewed verdict.
  */
 export async function ensureCommittedForAutoDelivery({
-  store, cardId, port, readHead,
+  store, cardId, port, readHead, generateMessage,
   protectedBranches = DEFAULT_PROTECTED_BRANCHES,
 } = {}) {
   const card = store.getCard(cardId)
@@ -269,15 +284,28 @@ export async function ensureCommittedForAutoDelivery({
   }
   // Dirty tree: add + commit to the card branch. sha is the POST-commit HEAD;
   // it differs from the pre-commit head by design — never compare the two.
+  // Copy drafting happens ONLY here (diff is non-zero). A missing/failing
+  // generator never blocks the pre-authorized auto commit: use the old default.
   const shortId = String(cardId).slice(0, 8)
-  const message = `factory: auto-delivery ${shortId}`
+  const fallbackMessage = `factory: auto-delivery ${shortId}`
+  let message = fallbackMessage
+  let copySource = 'default'
+  if (typeof generateMessage === 'function') {
+    try {
+      const draft = await generateMessage({ store, card, fallback: fallbackMessage })
+      if (typeof draft?.text === 'string' && draft.text.trim() !== '') {
+        message = draft.text.trim()
+        if (draft.generated === true) copySource = 'ai'
+      }
+    } catch { /* drafting is best-effort; the gate and commit remain unchanged */ }
+  }
   try {
     port.add(card.worktreePath)
     const sha = port.commit(card.worktreePath, message)
     if (!isFullSha(sha)) throw new Error(`提交返回的 sha 不是完整 SHA：${sha}`)
     store.recordCommit(cardId, { sha, message, actor: AUTO_DELIVERY_TIER })
     store.clearCommitFailures(cardId)
-    audit(store, cardId, 'committed', `head ${sha}`, { head: sha })
+    audit(store, cardId, 'committed', `head ${sha}`, { head: sha, copySource })
     markStaleIfVerdictOld(store, cardId, card, sha)
     return { ok: true, committed: true, sha, head: sha }
   } catch (error) {
@@ -290,11 +318,11 @@ export async function ensureCommittedForAutoDelivery({
 }
 
 /** Engine entry point: arm + execute with a readable failure fallback. */
-export async function runAutoDelivery({ store, cardId, readHead, resolveIdentity, port } = {}) {
+export async function runAutoDelivery({ store, cardId, readHead, resolveIdentity, port, generatePr } = {}) {
   const arm = await armAutoDelivery({ store, cardId, readHead, resolveIdentity, port })
   if (arm.ok !== true) return { delivered: false, reason: arm.reason, alreadyDelivered: arm.alreadyDelivered === true }
   try {
-    const result = await executeAutoDelivery({ store, token: arm.token, port, readHead, resolveIdentity })
+    const result = await executeAutoDelivery({ store, token: arm.token, port, readHead, resolveIdentity, generatePr })
     return { delivered: true, ...result }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

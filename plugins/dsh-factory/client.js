@@ -158,6 +158,13 @@ window.__ModuleLoader__.load({
       notePreviousReason: "上次退回原因：",
       noteResupplyGuidance: "本次请补充新的说明后提交。",
       actCommitExisting: "确认提交（回炉）", actPushExisting: "推送更新草稿 PR",
+      commitMsgGenerating: "正在生成提交信息…", commitMsgHint: "AI 已起草，确认前可修改。", commitMsgLabel: "提交信息",
+      commitMsgFallback: "生成失败，已填入默认文案；可直接修改。", commitMsgTimeout: "生成超时，已填入默认文案；可直接修改。",
+      commitMsgEmpty: "提交信息不能为空", commitSubmitting: "提交中…",
+      prDraftGenerating: "正在生成 PR 标题和正文…", prTitleLabel: "PR 标题", prBodyLabel: "PR 正文",
+      prDraftHint: "AI 已起草，确认前可修改。", prDraftFallback: "生成失败，已填入卡片原文；可修改。",
+      prDraftTimeout: "生成超时，已填入卡片原文；可修改。", prBodyEmpty: "原卡片没有正文，可留空或自行填写。",
+      prTitleEmpty: "PR 标题不能为空", prSubmitting: "创建中…",
       axisTitle: "自动化程度", axisHint: "越往右机器走得越远；自动化停在哪一步见下方。",
       currentLevel: "当前：L{level}", ariaLevel: "L{n}，五档中的第 {ordinal} 档",
       autoEndLabel: "自动化终点", machineLabel: "机器", youLabel: "你",
@@ -535,6 +542,13 @@ window.__ModuleLoader__.load({
       notePreviousReason: "Previous return reason: ",
       noteResupplyGuidance: "Add your update below and submit.",
       actCommitExisting: "Confirm commit (rework)", actPushExisting: "Push update to draft PR",
+      commitMsgGenerating: "Generating commit message…", commitMsgHint: "Drafted by AI — edit it before confirming.", commitMsgLabel: "Commit message",
+      commitMsgFallback: "Generation failed; the default message was filled in. You can edit it.", commitMsgTimeout: "Generation timed out; the default message was filled in. You can edit it.",
+      commitMsgEmpty: "Commit message cannot be empty", commitSubmitting: "Committing…",
+      prDraftGenerating: "Generating PR title and description…", prTitleLabel: "PR title", prBodyLabel: "PR description",
+      prDraftHint: "Drafted by AI — edit both before confirming.", prDraftFallback: "Generation failed; the card's original title and description were filled in. You can edit them.",
+      prDraftTimeout: "Generation timed out; the card's original title and description were filled in. You can edit them.", prBodyEmpty: "The card has no description. Leave it empty or write one.",
+      prTitleEmpty: "PR title cannot be empty", prSubmitting: "Creating…",
       axisTitle: "Automation level", axisHint: "Further right, the machine goes further; see below for where it stops.",
       currentLevel: "Current: L{level}", ariaLevel: "L{n}, level {ordinal} of 5",
       autoEndLabel: "Stops at", machineLabel: "Machine", youLabel: "You",
@@ -1248,6 +1262,25 @@ window.__ModuleLoader__.load({
           onCancel: () => { onModal(null); resolve(null) },
         }))
       })
+      // Open the draft editor and resolve only after the user confirms the
+      // edited copy (or null on cancel). `run()` therefore keeps the card busy
+      // for the whole generate→edit→write chain, and the modal owns its own
+      // submitting state. A late generation result after cancel is discarded
+      // inside DraftModal's effect cleanup.
+      const askDraft = (kind, confirmLabel) => new Promise((resolve) => {
+        if (typeof onModal !== 'function') { resolve(null); return }
+        onModal(h(DraftModal, {
+          kind, card, confirmLabel, t,
+          onCancel: () => { onModal(null); resolve(null) },
+          onConfirm: async (copy) => {
+            const isPr = kind === 'pr'
+            await callApi('POST', `/cards/${card.id}/authorize`, { action: isPr ? 'create-pr' : 'confirm-commit' })
+            await callApi('POST', `/cards/${card.id}/${isPr ? 'create-pr' : (card.prUrl ? 'commit-existing' : 'commit')}`, copy)
+            onModal(null)
+            resolve(copy)
+          },
+        }))
+      })
       // An orphan's session is gone and the engine will not rebuild it. Collapse
       // its actions to a single cancel; the badge/modal explain the situation.
       // Reports history stays reachable in CardExtras.
@@ -1378,12 +1411,13 @@ window.__ModuleLoader__.load({
           await callApi('POST', `/cards/${card.id}/return-to-build`, { note })
         }, reviewActionGuard)
         if (!card.commitSha) add(t('actConfirmCommit'), async () => {
-          await callApi('POST', `/cards/${card.id}/authorize`, { action: 'confirm-commit' })
-          await callApi('POST', card.prUrl ? `/cards/${card.id}/commit-existing` : `/cards/${card.id}/commit`)
+          await askDraft('commit', t('actConfirmCommit'))
+        }, writeGuard)
+        if (card.commitSha && card.prUrl) add(t('actCommitExisting'), async () => {
+          await askDraft('commit', t('actCommitExisting'))
         }, writeGuard)
         if (card.commitSha && !card.prUrl) add(t('actCreatePr'), async () => {
-          await callApi('POST', `/cards/${card.id}/authorize`, { action: 'create-pr' })
-          await callApi('POST', `/cards/${card.id}/create-pr`)
+          await askDraft('pr', t('actCreatePr'))
         }, writeGuard)
         if (card.commitSha && card.prUrl) add(t('actPushExisting'), async () => {
           await callApi('POST', `/cards/${card.id}/authorize`, { action: 'push-existing' })
@@ -1804,6 +1838,132 @@ window.__ModuleLoader__.load({
           style: { width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, lineHeight: 1.55, fontFamily: 'inherit', resize: 'vertical' },
         }),
       ])
+    }
+
+    /**
+     * AI-drafted delivery copy. Four mutually exclusive states: generating,
+     * editable draft, fallback draft after failure/timeout, submitting. The
+     * generation call is read-only; writes happen only in onConfirm after the
+     * user edits. A cancelled modal sets `cancelled`, so a late response can
+     * neither repopulate it nor trigger a write.
+     */
+    function DraftModal({ kind, card, confirmLabel, t, onCancel, onConfirm }) {
+      const isPr = kind === 'pr'
+      const [phase, setPhase] = useState('generating')
+      const [message, setMessage] = useState('')
+      const [prTitle, setPrTitle] = useState('')
+      const [prBody, setPrBody] = useState('')
+      const [reason, setReason] = useState('error')
+      const [bodyEmpty, setBodyEmpty] = useState(false)
+      const [submitting, setSubmitting] = useState(false)
+      const [error, setError] = useState('')
+
+      const fillFallback = (why) => {
+        if (isPr) {
+          setPrTitle(card.title || '')
+          setPrBody(card.body || '')
+          setBodyEmpty((card.body || '').trim() === '')
+        } else {
+          setMessage(card.commitSha ? 'factory: address review feedback' : 'factory: implement card')
+        }
+        setReason(why)
+        setPhase('ready')
+      }
+
+      useEffect(() => {
+        let cancelled = false
+        let timer = null
+        const fallback = (why) => { if (!cancelled) fillFallback(why) }
+        // Local safety net; the backend also bounds the model call to 15s.
+        timer = setTimeout(() => fallback('timeout'), 18000)
+        callApi('POST', `/cards/${card.id}/${isPr ? 'draft-pr' : 'draft-commit'}`)
+          .then((draft) => {
+            if (cancelled) return
+            if (timer !== null) clearTimeout(timer)
+            if (draft.generated === true) {
+              if (isPr) {
+                setPrTitle(draft.title || '')
+                setPrBody(draft.body || '')
+                setBodyEmpty(draft.bodyEmpty === true)
+              } else setMessage(draft.message || '')
+              setReason('generated')
+              setPhase('ready')
+            } else fallback(draft.reason === 'timeout' ? 'timeout' : 'error')
+          })
+          .catch(() => { if (!cancelled) { if (timer !== null) clearTimeout(timer); fallback('error') } })
+        return () => { cancelled = true; if (timer !== null) clearTimeout(timer) }
+      }, [card.id, isPr])
+
+      const empty = isPr ? prTitle.trim() === '' : message.trim() === ''
+      const confirmDisabled = phase !== 'ready' || submitting || empty
+      const submit = async () => {
+        if (confirmDisabled) return
+        setSubmitting(true)
+        setError('')
+        try {
+          await onConfirm(isPr ? { title: prTitle, body: prBody } : { message })
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err))
+          setSubmitting(false)
+        }
+      }
+      const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.card, color: T.ink, fontSize: 13, lineHeight: 1.55, fontFamily: 'inherit' }
+      const warningKey = isPr
+        ? (reason === 'timeout' ? 'prDraftTimeout' : 'prDraftFallback')
+        : (reason === 'timeout' ? 'commitMsgTimeout' : 'commitMsgFallback')
+
+      const body = []
+      if (phase === 'generating') {
+        body.push(h('div', {
+          key: 'generating', role: 'status', 'aria-live': 'polite',
+          style: { display: 'flex', alignItems: 'center', gap: 10, color: T.mutedInk, fontSize: 13, minHeight: 44 },
+        }, [
+          h('span', { key: 'spinner', className: 'df-spinner', 'aria-hidden': 'true' }),
+          h('span', { key: 'label' }, t(isPr ? 'prDraftGenerating' : 'commitMsgGenerating')),
+        ]))
+      } else {
+        if (reason === 'generated') {
+          body.push(h('div', { key: 'hint', style: { fontSize: 12, color: T.mutedInk, marginBottom: 8 } }, t(isPr ? 'prDraftHint' : 'commitMsgHint')))
+        } else {
+          body.push(h('div', {
+            key: 'warning',
+            style: { boxSizing: 'border-box', border: `1px solid ${T.warning}`, borderRadius: T.radiusSm, background: T.warningWash, color: T.warningInk, fontSize: 12, lineHeight: 1.6, padding: '8px 10px', marginBottom: 10 },
+          }, t(warningKey)))
+          if (isPr && bodyEmpty) {
+            body.push(h('div', { key: 'bodyEmpty', style: { fontSize: 12, color: T.mutedInk, marginBottom: 8 } }, t('prBodyEmpty')))
+          }
+        }
+        if (isPr) {
+          body.push(h('div', { key: 'titleField', style: { marginBottom: 10 } }, [
+            h('div', { key: 'label', style: { fontSize: 12, color: T.mutedInk, marginBottom: 4 } }, t('prTitleLabel')),
+            h('input', { key: 'input', value: prTitle, onChange: (event) => setPrTitle(event.target.value), style: inputStyle }),
+            empty ? h('div', { key: 'empty', style: { fontSize: 12, color: T.dangerInk, marginTop: 4 } }, t('prTitleEmpty')) : null,
+          ]))
+          body.push(h('div', { key: 'bodyField' }, [
+            h('div', { key: 'label', style: { fontSize: 12, color: T.mutedInk, marginBottom: 4 } }, t('prBodyLabel')),
+            h('textarea', { key: 'textarea', value: prBody, rows: 7, onChange: (event) => setPrBody(event.target.value), style: { ...inputStyle, resize: 'vertical', minHeight: 110 } }),
+          ]))
+        } else {
+          body.push(h('div', { key: 'messageField' }, [
+            h('div', { key: 'label', style: { fontSize: 12, color: T.mutedInk, marginBottom: 4 } }, t('commitMsgLabel')),
+            h('input', { key: 'input', value: message, onChange: (event) => setMessage(event.target.value), style: inputStyle }),
+            empty ? h('div', { key: 'empty', style: { fontSize: 12, color: T.dangerInk, marginTop: 4 } }, t('commitMsgEmpty')) : null,
+          ]))
+        }
+      }
+      if (error !== '') {
+        body.push(h('div', { key: 'error', style: { fontSize: 12, color: T.dangerInk, marginTop: 8 } }, error))
+      }
+
+      return h(Modal, {
+        title: confirmLabel,
+        confirmLabel: submitting ? t(isPr ? 'prSubmitting' : 'commitSubmitting') : confirmLabel,
+        onCancel,
+        onConfirm: () => void submit(),
+        confirmDisabled,
+        busy: submitting,
+        t,
+      }, body)
     }
 
     /**
@@ -2805,7 +2965,7 @@ window.__ModuleLoader__.load({
         '@keyframes df-spin{to{transform:rotate(360deg)}}',
         '[data-dsh-factory-p4][data-view="tabs"] .df-rail{display:none}',
         '[data-dsh-factory-p4] .df-tabs{display:none}',
-        '[data-dsh-factory-p4][data-view="tabs"] .df-tabs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin}',
+        '[data-dsh-factory-p4][data-view="tabs"] .df-tabs{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;position:sticky;top:56px;z-index:29;background:var(--dsw-alias-bg,#fff);min-height:44px;padding:2px 0 6px;scrollbar-width:thin}',
         // Toast feedback: success/failure are distinguishable and auto-dismissed.
         '[data-dsh-factory-p4] .df-toast{position:fixed;right:20px;bottom:20px;z-index:70;max-width:min(360px,calc(100vw - 32px));background:#20272f;color:#fff;border-radius:9px;padding:11px 15px;font-size:12.5px;line-height:1.5;white-space:pre-line;box-shadow:0 12px 34px rgba(0,0,0,.25);pointer-events:none;animation:df-toast-in .2s ease-out}',
         '[data-dsh-factory-p4] .df-toast[data-kind="ok"]{background:#166b4b}',
@@ -3155,7 +3315,7 @@ window.__ModuleLoader__.load({
       // Shared page shell: every branch (empty / no-board / full) gets the config
       // drawer, its scrim and the mobile action bar. Keeps the board the first-class
       // citizen while config lives off-canvas (P4-0).
-      const renderPage = () => h('div', { 'data-dsh-factory-p4': '1', 'data-view': viewMode, style: { display: 'flex', flexDirection: 'column', gap: 16, position: 'relative' } }, [
+      const renderPage = () => h('div', { 'data-dsh-factory-p4': '1', 'data-view': viewMode, style: { display: 'flex', flexDirection: 'column', position: 'relative' } }, [
         h('header', { key: 'topbar', className: 'df-topbar' }, [
           h('div', { key: 'brand', className: 'df-brand' }, [
             h('span', { key: 'mark', className: 'df-brand-mark', dangerouslySetInnerHTML: { __html: navIconSvg(20) } }),

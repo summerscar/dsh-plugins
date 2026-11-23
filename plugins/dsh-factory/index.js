@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
 import { createEngineStatus, defaultEngineDeps, startEngine } from './autonomy.js'
+import { createDeliveryCopyGenerator } from './ai-copy.js'
 import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
 import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview } from './dispatch.js'
@@ -25,6 +26,7 @@ import { commitCard, commitForExistingPr, createGitPort, createPrForCard, pushEx
 import { runAutoDelivery, ensureCommittedForAutoDelivery } from './delivery.js'
 import { localeFromContext } from './session-context.js'
 import { assertNoActiveSession, sessionActiveFor } from './session-guard.js'
+import { assertApprovedVerdict } from './verdict-guard.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
 import { registerFactorySkills } from './skills.js'
@@ -60,7 +62,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.39'
+export const BUILD = 'factory-2026-11-20.41'
 
 export const name = 'dsh-factory'
 
@@ -122,6 +124,7 @@ export function apply(ctx, config = {}) {
   // One liveness reader for the whole write boundary: the UI hides actions
   // while a session runs, and these routes refuse the same direct requests.
   const isSessionActive = (sessionId) => sessionActiveFor(ctx, sessionId)
+  const deliveryCopy = createDeliveryCopyGenerator({ ctx })
   const handleApi = createApi({ store, build: BUILD, runtime, engineConfig: config.engine ?? {}, workModeAvailability: () => runtime.engine?.autoReviewPluginState, isSessionActive, requireApprovedVerdict: true })
 
   // The HTTP-written githubClientId (NON-secret) lives in store.settings; the
@@ -193,7 +196,13 @@ export function apply(ctx, config = {}) {
         const card = s.getCard(cardId)
         const project = card?.projectId ? s.getProject(card.projectId) : undefined
         const identity = await resolveIdentity(project)
-        return ensureCommittedForAutoDelivery({ store: s, cardId, port: createGitPort(identity.git) })
+        return ensureCommittedForAutoDelivery({
+          store: s, cardId, port: createGitPort(identity.git),
+          generateMessage: ({ store: copyStore, card: copyCard, fallback }) =>
+            deliveryCopy.commit({ card: copyCard, fallback, mode: 'worktree' }).then((draft) => ({
+              text: draft.text, generated: draft.generated, reason: draft.reason,
+            })),
+        })
       },
       deliver: async ({ store: s, cardId }) => {
         const card = s.getCard(cardId)
@@ -203,6 +212,8 @@ export function apply(ctx, config = {}) {
           store: s, cardId,
           port: createGitPort(identity.git),
           resolveIdentity: async () => identity,
+          generatePr: ({ store: copyStore, card: copyCard, fallbackTitle, fallbackBody }) =>
+            deliveryCopy.pr({ card: copyCard, fallbackTitle, fallbackBody, mode: 'branch' }),
         })
       },
     }),
@@ -574,6 +585,43 @@ export function apply(ctx, config = {}) {
         sendJson(res, 200, { dispatched, card: updated })
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error), retryable: true })
+      }
+      return
+    }
+
+    // Draft-only endpoints. They never authorize or write git/gh: the UI opens
+    // its editor from these, then posts the edited text to the existing write
+    // routes. The same session/verdict gates as the write routes are enforced
+    // here so a direct request cannot generate around the board's write guard.
+    const draftCommit = /^\/cards\/([^/?]+)\/draft-commit(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && draftCommit !== null) {
+      try {
+        const cardId = decodeURIComponent(draftCommit[1])
+        const card = store.getCard(cardId)
+        if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
+        assertNoActiveSession({ card, isSessionActive, action: '生成提交信息' })
+        assertApprovedVerdict({ card, action: '生成提交信息' })
+        const fallback = card.commitSha ? 'factory: address review feedback' : 'factory: implement card'
+        const draft = await deliveryCopy.commit({ card, fallback, mode: 'worktree' })
+        sendJson(res, 200, { message: draft.text, generated: draft.generated, reason: draft.reason })
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+    const draftPr = /^\/cards\/([^/?]+)\/draft-pr(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && draftPr !== null) {
+      try {
+        const cardId = decodeURIComponent(draftPr[1])
+        const card = store.getCard(cardId)
+        if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
+        assertNoActiveSession({ card, isSessionActive, action: '生成 PR 文案' })
+        assertApprovedVerdict({ card, action: '生成 PR 文案' })
+        if (!card.commitSha || card.prUrl) throw new Error('仅首次建 PR 可生成 PR 文案')
+        const draft = await deliveryCopy.pr({ card, fallbackTitle: card.title, fallbackBody: card.body || '', mode: 'branch' })
+        sendJson(res, 200, { ...draft, bodyEmpty: (card.body || '').trim() === '' })
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
       }
       return
     }

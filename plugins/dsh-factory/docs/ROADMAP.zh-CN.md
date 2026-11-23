@@ -100,6 +100,8 @@
 - **运行时文案只有一个来源。** 所有 `t()` 字符串来自向 locale 服务注册的 zh/en 内联字典。包内 locale JSON 保留宿主需要的 `meta` 并镜像同一套 UI key：四处（内联 zh/en 与 locale zh/en）重叠 key 逐字一致、每个 key 的占位符 token 集合相同（8 个 key 带占位符），只有 locale 多一个 `meta`，`meta` 不进 UI 字典。UI key 总数随迭代增长，文档不写死，由自足断言在运行时核对。GitHub Token、gh CLI、GitHub OAuth App、Client ID、worktree、commit、PR 等专有名词两种语言都原样保留。旧的「无法识别账号」通用说法不再用于已连接的身份：账号解析不到时退回来源表述。
 - **窄屏看板。** 在 760px 断点下看板变成横向 scroll-snap 条：列宽为视口的 84%，列头 sticky，看板高度上限 56vh，阶段指示按真实渲染列宽算出「当前列 / 5」。QA 在 390px 真机复测确认每屏一列、吸附正常、页面无横向溢出；列外宽最初因 `content-box` padding 略高于 84vw，已用 `box-sizing:border-box` 修掉（见 §5.2）。宽视口（包括主内容列很窄的宿主容器）仍是普通横向滚动，各列可达。
 
+- **滚动时标签栏仍可见。** 标签视图下项目标签钉在 56px 顶栏正下方，背景不透明并带最小高度；展开收件箱卡或向下滚页面都不会把标签吞掉，标签自身的横向滚动不变。页面根节点不再有 header 与内容之间的 `gap`。
+
 ### 2.10 卡片正文（任务描述）
 
 - **建卡可写正文。** 页根新建卡片弹窗除标题外还有一个「任务描述」textarea（占位文案写明背景 / 目标 / 验收标准），`POST /cards` 带 `body` 字段；正文可空，禁用创建只看标题与看板，不要求正文。
@@ -127,7 +129,7 @@
 - 报告编号固定按这张卡的时间正序（最早 = 1）；排序开关只改显示顺序。Markdown 用宿主自带 `MarkdownText`，原始 HTML 不执行，插件不额外引入运行时依赖。
 - 客户端把最终生效的显示语言（例如 DSH 跟随浏览器解析出的 `fr`）回传并存在宿主侧；派发会话优先用它，其次用宿主显式的 `locale.preference`，再回退中文。指令按语言 id 动态生成，要求回复和 `factory_report` 正文使用该语言；代码、命令、路径和专有名词保留原文。
 - 「批准计划」要求 `plan-review` + 会话已跑完 + 卡片至少有一份报告，否则按钮禁用并说明原因。「标记完成」在 `review` 阶段一直可用，何时算完成由人判断。
-- **评审在独立的只读会话里进行，产出结构化 verdict。** 评理会话记在 `card.reviewSessionId`（永不覆盖 builder 的 `sessionId`）；其 verdict——结论值、阻断项与 follow-up 分列、实际跑过的检查——经 `factory_report` 写入，head 由后端从 git 计算，绝不取自评审者。`review -> build` 回退后的复评复用仍活着的评理会话并重读上一轮 verdict。`review -> build` 与标记完成仍是人的决定；「自动交付」档下，卡片还带着机器闸门的审计记录（`auto-delivery` 历史条目：armed / commit-skipped / pushed / draft-pr / delivered / failed），交付失败时卡片留在 `review`，下一 tick 可重试。
+- **评审在独立会话里进行，产出结构化 verdict。** 评理会话记在 `card.reviewSessionId`（永不覆盖 builder 的 `sessionId`），与构建会话一样跟随项目配置的工作模式，评审者因此能执行命令；角色边界写在提示词里：不移卡、不授权 git 动作、不 commit / push / 开 PR，结论由人读后决定。其 verdict——结论值、阻断项与 follow-up 分列、实际跑过的检查——经 `factory_report` 写入，head 由后端从 git 计算，绝不取自评审者。`review -> build` 回退后的复评复用仍活着的评理会话并重读上一轮 verdict。`review -> build` 与标记完成仍是人的决定；「自动交付」档下，卡片还带着机器闸门的审计记录（`auto-delivery` 历史条目：armed / commit-skipped / pushed / draft-pr / delivered / failed），交付失败时卡片留在 `review`，下一 tick 可重试。
 
 上一轮认证的 head 作为一等字段 `previousReviewedHead` 显式注入评审上下文（唯一来源是上一轮 verdict 的 `reviewedHead`，不接受模型传参；无上轮结论时为 `—`），后端据此生成两种范围行：上轮有阻断项则逐项在新 head 上核对是否解决、只看差量找回归；上轮 approved 则只看差量找新问题——两者最后都整体重看一遍。`—` 或与当前 head 相等时不走增量，按全量评审；skill 判据为「有回退转移或有 head 差量」即挂 `factory-rereview`。引擎对「review 内自动提交导致 verdict 过期（`reviewStale`）」的 L4 卡自动复评（走 `followupReview` 三级回退，旧 verdict 留作上下文、不清），每卡一生最多 3 次（`AUTO_REREVIEW_LIMIT`），只在引擎自动发起时计数、人手动重派不计数、不重置；用尽后转全人工，但过期提示与重派按钮仍在。卡片提示优先级：复评额度用尽 > 评审过期 > 通用交付失败 > 无结论。
 
@@ -137,6 +139,13 @@
 - **优先级放在纯函数里。** `cardFlowHintKey(ctx)` 按序只选一个 key：孤儿卡复用 `orphanWhy`；已有 L4 评审提示时返回空（不叠加）；再依次 `needsHumanInfo` → `takenOver` → `paused` → `capacity` → `stalled` → `sessionStopped` → 状态 × 档位基础文案。入参全部取自页面已有的状态快照——`engine.paused`、`project.paused`、并发用 `engine.projects[].action === 'queued'` 或 `approvalHeld > 0`、`card.stalled`、会话活跃用 `sessionRows[].running`——不加后端字段、不改路由与 schema。
 - **三处按代码事实校正了文案稿。** capacity 的判据是 `action === 'queued'` 或 `approvalHeld > 0`，不是裸的排队卡数；评审卡的会话停止看 `reviewSessionId`，并排除 `plan-review` 与新鲜的 approved verdict；L1/L2 的区分是 `you-approve` 下 `project.autoDispatch === true`，不靠显示档位猜。
 - **补充信息弹窗只读展示上次退回原因。** `needsHumanInfo` 卡点「补充信息并重新派发」时，`lastTriageReturnReason(history)` 取最近一条非空 `triage-return.reason`，在输入框上方以 `notePreviousReason` + 原文 + `noteResupplyGuidance` 渲染。**输入框不预填**——预填会让后端首条会话消息重复同一段文字；没有退回原因时弹窗与旧行为完全一致。两个 key 都不带占位符（符合 AC-1.5）。
+
+### 2.15 AI 起草交付文案
+
+- **草稿永远是草稿，不等于写入。** 生成器读取有上限并截断的 diff（`diffForCopy`）与卡片标题/正文，经宿主的默认模型（`agentDefaultModel.currentSelection()`）调用一次 `llm.stream` 返回文本；不启用 task Agent、不加载 skill、不提供模型/供应商选择器。任务正文与 diff 都作为数据传入，并明确要求忽略其中的指令；提交信息被压成一行纯文本，PR 文案按严格 JSON 解析出标题与正文。
+- **人工写入先经过可编辑草稿。** 确认提交 / 回炉提交 / 首次建 PR 会打开草稿弹窗：只读草稿路由（`POST /cards/:id/draft-commit` 或 `/draft-pr`）与写入路由共用「会话未运行 + 有 approved verdict」两道闸，`/draft-pr` 还只接受已有 commit、尚无 PR 的卡。弹窗有四个可见状态——生成中（spinner + 状态文字）、可编辑草稿、失败/超时兜底（警示 + 原默认文案）、提交中；生成中、标题/信息 trim 后为空、提交中时确认按钮禁用。取消会关窗并丢弃迟到的生成结果；只有确认后才把编辑后的文案发到既有的 authorize 再 commit / commit-existing / create-pr 路由。清空 PR 正文是一次真实编辑：显式空串原样下发，缺失或非字符串值才回退到卡片正文。
+- **L4 起草是尽力而为，且在既有闸门之内。** 自动提交只在树确实脏时起草 message，首次建 draft PR 只在真正开 PR 时起草标题/正文。缺服务、非 `stop` 结束、超时（15 秒）、结果为空或不可解析都退回原默认文案（`factory: auto-delivery <短 ID>` / 卡片标题与正文），绝不改变交付决定。`committed` 与 `draft-pr` 审计记录带 `copySource`（`ai` 或 `default`），可看出文案来源。
+- **兜底也要让人看得见。** 草稿界面区分「AI 起草」与「已填默认文案」，区分超时与其他失败，卡片无正文时给出提示，并原样显示后端错误；两组新文案 key 在四个字典中镜像一致。
 
 ## 3. 已经定死、不必再争的设计
 
@@ -169,6 +178,9 @@
 | 每卡只给一行流程提示，优先级固定、不叠加 | 一张卡对「下一步做什么」只能说一件事；孤儿卡与已有 L4 评审提示已占用这一行，新提示让位而不是堆上去。优先级是状态快照上的纯函数，不需要浏览器就能测 |
 | 上次退回原因只展示、不预填 | 后端本就会把该原因带进下一会话首条消息，预填会让同一段话出现两次；只读展示省去手打，又不改变请求内容 |
 | 纯显示层增量不 bump `BUILD` | 提示与弹窗复用的都是页面已有的数据与路由，没有改 Host 侧代码、导出面、路由或 schema。`BUILD` 标记的是必须重载才能相信新读数的 Host 侧改动；既有状态契约下的纯客户端改动保持原值 |
+| 交付文案由宿主的轻量模型调用起草，人工写入前一定要本人编辑确认 | 既有写入闸门才是权威：生成文案的草稿路由要带同样的会话/verdict 校验，只有确认这一步才授权并写入。失败、超时或拿不到模型时退回原文案，不阻塞交付 |
+| 评理会话跟随项目工作模式，不写死只读沙箱 | 评审者要能执行命令验证改动。独立性靠会话字段和 head 保证；「不移卡、不写 git」的边界写在提示词里，verdict 与授权闸门保持不变 |
+| 显式空串是用户编辑，不是缺值 | 清空 PR 正文是有意操作；`||` 回退会把卡片正文悄悄填回来，让编辑器看起来失灵 |
 
 ## 4. 后续计划（按优先级）
 
@@ -269,11 +281,11 @@
 
 ### P8 — 评审与自动交付迭代（**已完成**；迭代自有的 P0–P3 子阶段）
 
-这一轮把「机器建造」与「人可以放心放手交付」之间的缺口补上了：结构化评审 verdict、独立只读评理会话、以及一个可选的、止于 draft PR 的机器交付。子阶段按迭代自己的编号：
+这一轮把「机器建造」与「人可以放心放手交付」之间的缺口补上了：结构化评审 verdict、独立评理会话、以及一个可选的、止于 draft PR 的机器交付。会话最初是只读的，后来改为跟随项目工作模式（见 P10），verdict 与写入闸门始终没变。子阶段按迭代自己的编号：
 
 - **P0 — 沙箱与权限状态真实化。** 解除了固定沙箱闸：所需沙箱档位改为 create / followup / resume 三条链共用，`permissionEnforced` 按 tick 读真实沙箱投影而不是宣称上限，实验性 auto-review 插件的状态可从状态接口读到。
 - **P1 — 结构化 verdict。** `factory_report` 接受封闭的 verdict 形状（`source` / `verdict` / `blocking` / `followUps` / `checks` / `reviewerSessionId`）；`reviewedHead` 由后端从 git 计算，模型自报的 head 一律忽略；同一 head 幂等（不产生第二条 verdict，报告仍追加）；残缺 verdict 拒收而非半写；评理会话上下文隔离——无推进/移卡措辞、注入评审字段、attach 失败即 fail-closed。
-- **P2a — 独立评理会话与工作模式。** 每卡一个只读评理会话，记在 `card.reviewSessionId`；复评复用活会话并重读上一轮 verdict；`reviewMode` 接入真实派发链并回读宿主沙箱；三种工作模式（`workspace-write` 默认 / `full-access` / `auto-review`）持久化并有 API 写入口——`auto` 是权限预设、绝不写进沙箱 mode；评理会话无论工作模式如何都保持只读。
+- **P2a — 独立评理会话与工作模式。** 每卡一个独立评理会话，记在 `card.reviewSessionId`；复评复用活会话并重读上一轮 verdict；`reviewMode` 接入真实派发链并回读宿主沙箱；三种工作模式（`workspace-write` 默认 / `full-access` / `auto-review`）持久化并有 API 写入口——`auto` 是权限预设、绝不写进沙箱 mode。此时会话仍是只读；后来改为跟随项目工作模式，见 P10。
 - **P2b — 三条人工退回。** `return-to-build` / `return-to-plan` / `return-to-inbox`，Inbox 补料开新会话重派，以及 `push-existing`：已有 PR 的卡只在原分支上推、更新同一个 PR 并保持 draft。
 - **P3 — 五档与 L4 闸门。** 四个存储档在单个滑杆上呈现为 L0–L4（§2.8）；`auto-delivery` 继承 `machine-approve` 并加上代码闸控的交付：§2.5 的条件、按 head 幂等、认证树规则、止于 draft PR。
 
@@ -288,6 +300,15 @@ P8 之后的纯显示层增量，在单文件客户端里完成，未改后端�
 - **一行优先。** `cardFlowHintKey(ctx)` 从 17 个新 key 中选一个：孤儿卡复用 `orphanWhy`，已有 L4 评审提示时不出提示，再依次 待补充信息 > 已接管 > 暂停 > 并发排队 > 卡住 > 会话停止 > 状态 × 档位。capacity、评审会话停止、L1/L2 按 `autoDispatch` 区分这三处按代码事实校正文案稿，没有为迁就文案改引擎行为。
 - **上次退回原因只读。** `lastTriageReturnReason(history)` 提供输入框上方的信息块，textarea 保持空；后端首条会话消息里只出现一次该原因。没有退回原因时弹窗保持旧行为。
 - **验证如实记录。** Dev 新增 `dev-flow-hint` 与 `dev-resupply-hint`，并更新自有 dev 测试的签名；去掉 paused 优先级、去掉「已有评审提示压制」、去掉 context 信息块的变异各自让对应断言变红，还原后一致。整包、i18n parity 与 lint 均报告全绿，`git diff --check` 干净；测试数字以实际运行为准，这里不记。QA 用 DOM 证据在真机核过流程提示：基础文案随状态/档位、每卡唯一且单行位于按钮前、needsHumanInfo/takenOver/paused 优先级、L4 既有提示不叠加、review 场景会话停止。`done`、capacity、triage/plan/build 会话停止三处**未做真机验证**（造不出或没抓到样本），由纯函数测试与代码复核覆盖，Chief 已认可。补充信息弹窗只过 Dev 离线测试与变异验证，**未做真机眼见**，用户选择不补验直接提交。
+
+### P10 — AI 起草交付文案、评理会话工作模式与界面回归修复（**已完成**）
+
+本轮两条线一起收尾；以下行为均从当前源码逐条复核。
+
+- **评理会话跟随工作模式。** `dispatchReview` / `followupReview` 解析项目生效的工作模式（含 `auto-review`）并传给 create / followup / resume；`auto-review` 选 `auto` 预设，其他模式选带名字的预设，让宿主的访问档选择器显示同一档。setup 只展开一次，不再作为以 `read-only` 为键的工厂传入；attach 时不再要求只读沙箱。verdict、`reviewedHead`、head 从 git 取、写入授权等闸门不变，提示词仍禁止移卡与写 git。
+- **先起草再确认。** `ai-copy.js` 持有有界的一次性生成器；`index.js` 把它接进两条草稿路由、L4 自动提交与 L4 首次建 PR。客户端草稿弹窗覆盖生成中 / 可编辑 / 兜底 / 提交中四态，取消干净，只有用户确认编辑后的文案才写入。`git-exec.js` 现在区分空串与缺值。新增 16 个文案 key，四个字典镜像一致。
+- **同一视图里的两处回归。** 草稿弹窗漏传 `title` 会让三个提交入口一点就整页崩；现在用按钮文案 `confirmLabel` 当标题。标签栏原本没有 sticky，被不透明顶栏吞掉；现在钉在顶栏下、背景不透明、`overflow-y:hidden` 且有最小高度，根节点同时去掉大 `gap`。崩溃修复改到 Host 加载的状态，需要 bump build；随后两条纯 CSS 微调不需要。
+- **验证如实记录。** Dev 为目标行为补测试，并对客户端回归做了变异（改回裸 `title`、去掉 sticky/min-height、把根 `gap` 加回去各让对应断言变红，还原后恢复），报告整包、字典一致、lint 与 `git diff --check` 全绿；Chief 独立复核数字与 build。QA 的正式结论覆盖三个不再崩的入口与手动提交四态（生成中只发草稿请求、取消不回填、预填可编辑且 trim 空禁用、注入 fetch reject 得默认文案、确认后把编辑的 `message` 经 authorize 送 commit / commit-existing）。真机还确认 L4 首次草稿 PR 带上了生成文案、PR 正文清空后确实为空、标签栏计算样式与钉住位置符合预期。PR 双字段 UI 路径与「生成请求重复次数」**没有**拿到 QA 的正式结论；后端失败/超时兜底只做过离线验证，未在真机制造失败。见 §5.1。
 
 ### TODO — 候选下一轮（**仅记录，未排期**）
 
@@ -363,6 +384,9 @@ P8 之后的纯显示层增量，在单文件客户端里完成，未改后端�
 | ~~**`/factory` 帮助文本：「commit / push / PR 仍需人工批准」**~~ | `plugins/dsh-factory/commands.js` 的产品可见文案在「自动交付」档下已不准确——该档机器会 commit、push、开 draft PR，而 merge 与标完成仍留给人。 | **已完成**：文案改为写明 L4 会自己 commit / push / 开 draft PR，merge 与标完成始终需要人；锁旧文案的两条正则断言（Dev 与 QA 各一条）已同步更新为锁新文案的关键片段，旧措辞在代码与测试里已无残留。 |
 | **流程提示三处场景未在真机验到** | `done`、capacity（`action==='queued'` / `approvalHeld>0`）与 triage/plan/build 的会话停止在造数据里造不出样本，QA 如实报「未验」；基础文案、单行唯一、覆盖优先、不叠加与 review 会话停止已用 DOM 证据验过 | 由纯函数测试与源码复核覆盖，Chief 认可这三处未验；不伪造样本 |
 | **补充信息弹窗未做真机眼见** | `lastTriageReturnReason` 的 context 展示与空输入框只过 Dev 离线测试与变异验证，没有真机视觉检查 | 用户选择不补验直接提交；仍欠一次真机点击验证 |
+| **PR 双字段编辑器没有 QA 正式结论** | 标题 input、正文 textarea、清空正文路径与空正文提示都过 Dev 自测和真机核对，但 QA 的回复停在手动提交那一半，没有给正式的 C 段结论 | 仍欠 QA 对这条路径的一小段确认；没有报功能缺陷 |
+| **开发态观察到生成请求重复** | 点一次会发出多次 `/draft-commit` 或 `/draft-pr`；写请求仍只在确认后发生，闸门没被绕过 | 次数与生产构建表现没有正式结论。影响的是请求成本、不是写入边界；本轮未修 |
+| **L4 起草失败/超时未在真机复现** | 兜底路径由注入端口测试与变异覆盖，未在真机制造模型失败或超时 | 离线已覆盖；真机失败场景需要受控的供应商故障 |
 
 ### 5.2 本轮 UI/UX 明确不做的
 
@@ -391,7 +415,7 @@ P8 之后的纯显示层增量，在单文件客户端里完成，未改后端�
 ## 7. 怎么参与
 
 - 先读仓库根与插件目录下的约定文件，再动代码。
-- 改动前先确认它属于哪个优先级。§4 里的 P1–P8 均已完成；按 §4 当前状态重新排期，不要依据更旧的状态。
+- 改动前先确认它属于哪个优先级。§4 里的 P1–P10 均已完成；按 §4 当前状态重新排期，不要依据更旧的状态。
 - **验收断言写自足的**：断言本轮新增内容、跨副本逐字一致、占位符集合与真实 API 读回，不写死总数，也不拿提交前的文件内容当基线——测试一提交基线就翻转，提交闸门必红。
 - 任何涉及 git 写的改动都必须经过人工授权闸门，测试不得绕过。
 - 测试由专人维护，不通过自证；数字以实际运行结果为准，不接受「看起来能跑」。

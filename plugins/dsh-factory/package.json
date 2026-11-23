@@ -28,6 +28,7 @@
     "delivery.js",
     "dispatch.js",
     "autonomy.js",
+    "ai-copy.js",
     "skills.js",
     "git-exec.js",
     "git-env.js",

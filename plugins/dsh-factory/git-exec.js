@@ -111,9 +111,11 @@ export async function createPrForCard({ store, cardId, port, title, body, protec
   // No force push, ever. A push/PR failure leaves the card in Review with its
   // worktree intact so a human can inspect and retry.
   port.push(card.worktreePath, card.branch)
+  // An explicitly supplied empty string is a real edit (clearing the field),
+  // not a missing value. Only absent/non-string inputs fall back to the card.
   const url = port.createPr(card.worktreePath, {
-    title: title || card.title,
-    body: body || card.body || '',
+    title: typeof title === 'string' ? title : card.title,
+    body: typeof body === 'string' ? body : (card.body || ''),
     branch: card.branch,
     draft: draft === true,
   })
