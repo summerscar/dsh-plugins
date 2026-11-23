@@ -391,6 +391,8 @@
   "toastReviewRedispatched": "已重新派发评审",
   "toastReviewDispatched": "评审已派出",
   "autoDeliveryFailedNotice": "自动交付失败：{reason}。需人工处理。",
+  "actRetryAutoDelivery": "重试自动交付",
+  "toastAutoDeliveryRetried": "已重置失败状态，修正工作树后引擎下次轮询会重试。",
   "sessionUnavailable": "会话已不可用",
   "viewReports": "查看报告",
   "reportsTitle": "阶段报告",

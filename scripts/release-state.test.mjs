@@ -18,6 +18,13 @@ const integrity = 'sha512-' + createHash('sha512').update(archive).digest('base6
 const publication = { version: '1.2.3', publishedAt: '2026-10-01T00:00:00.000Z', integrity };
 const reason = { zh: '夹具', en: 'Fixture' };
 const table = 'Original prose.\n<!-- plugin-release-states:start -->\n<!-- plugin-release-states:end -->\nTrailing prose.\n';
+
+// A pre-commit hook runs with Git's own environment (GIT_DIR / GIT_INDEX_FILE /
+// GIT_WORK_TREE ...). If fixture subprocesses inherit those, `git init` and
+// `git commit` in a fixture silently operate on the REAL repository being
+// committed — injecting a fixture tree into the card branch. Strip every
+// GIT_* variable so each fixture owns its own git directory.
+const testEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
 function fixture(t, overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), 'dsh-release-states-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -104,7 +111,7 @@ test('retiring source removes build and release membership while retaining immut
 
 test('Git history checks working tree and the complete supplied push baseline', t => {
   const root = fixture(t);
-  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore','pipe','pipe'] }).trim();
+  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore','pipe','pipe'], env: testEnv }).trim();
   git(['init']); git(['config','user.email','fixture@example.invalid']); git(['config','user.name','Fixture']);
   git(['add','.']); git(['commit','-m','Published baseline']); const base = git(['rev-parse','HEAD']);
   update(root, d => { stage(d.packages[0], 'testing'); });
@@ -120,7 +127,7 @@ test('Git history checks working tree and the complete supplied push baseline', 
     const root = process.cwd(), states = readReleaseStates(root);
     assert.doesNotThrow(() => checkLifecycleHistory(root, states, 'HEAD'));
     assert.throws(() => checkLifecycleHistory(root, states), /backwards/);
-  `], { cwd: root, env: { ...process.env, RELEASE_STATE_BASE: base }, stdio: 'pipe' });
+  `], { cwd: root, env: { ...testEnv, RELEASE_STATE_BASE: base }, stdio: 'pipe' });
 });
 
 test('ordinary source updates remain Published and can prepare a new version without re-acceptance', async t => {

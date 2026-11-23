@@ -62,7 +62,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.41'
+export const BUILD = 'factory-2026-11-20.46'
 
 export const name = 'dsh-factory'
 
@@ -197,7 +197,7 @@ export function apply(ctx, config = {}) {
         const project = card?.projectId ? s.getProject(card.projectId) : undefined
         const identity = await resolveIdentity(project)
         return ensureCommittedForAutoDelivery({
-          store: s, cardId, port: createGitPort(identity.git),
+          store: s, cardId, port: createGitPort(identity.git), isSessionActive,
           generateMessage: ({ store: copyStore, card: copyCard, fallback }) =>
             deliveryCopy.commit({ card: copyCard, fallback, mode: 'worktree' }).then((draft) => ({
               text: draft.text, generated: draft.generated, reason: draft.reason,

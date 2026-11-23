@@ -391,6 +391,8 @@
   "toastReviewRedispatched": "Reviewer redispatched",
   "toastReviewDispatched": "Reviewer dispatched",
   "autoDeliveryFailedNotice": "Auto-delivery failed: {reason}. Manual action is needed.",
+  "actRetryAutoDelivery": "Retry auto-delivery",
+  "toastAutoDeliveryRetried": "Failure state cleared; the engine will retry after the worktree is corrected.",
   "sessionUnavailable": "Session unavailable",
   "viewReports": "View reports",
   "reportsTitle": "Stage reports",

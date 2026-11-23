@@ -479,6 +479,8 @@ window.__ModuleLoader__.load({
       toastReviewRedispatched: "已重新派发评审",
       toastReviewDispatched: "评审已派出",
       autoDeliveryFailedNotice: "自动交付失败：{reason}。需人工处理。",
+      actRetryAutoDelivery: "重试自动交付",
+      toastAutoDeliveryRetried: "已重置失败状态，修正工作树后引擎下次轮询会重试。",
       sessionUnavailable: "会话已不可用",
       viewReports: "查看报告",
       reportsTitle: "阶段报告",
@@ -863,6 +865,8 @@ window.__ModuleLoader__.load({
       toastReviewRedispatched: "Reviewer redispatched",
       toastReviewDispatched: "Reviewer dispatched",
       autoDeliveryFailedNotice: "Auto-delivery failed: {reason}. Manual action is needed.",
+      actRetryAutoDelivery: "Retry auto-delivery",
+      toastAutoDeliveryRetried: "Failure state cleared; the engine will retry after the worktree is corrected.",
       sessionUnavailable: "Session unavailable",
       viewReports: "View reports",
       reportsTitle: "Stage reports",
@@ -1410,6 +1414,18 @@ window.__ModuleLoader__.load({
           if (note === null) return
           await callApi('POST', `/cards/${card.id}/return-to-build`, { note })
         }, reviewActionGuard)
+        // L4 commit failures latch a stall. Once the human has corrected the
+        // worktree, this is the explicit recovery entry that re-arms the
+        // engine; it is still blocked while either session is running.
+        const retryableDelivery = tier === 'auto-delivery' && card.takenOver !== true
+          && card.needsHumanInfo !== true && (card.commitStalled === true
+            || (typeof card.autoDelivery?.error === 'string' && card.autoDelivery.error.trim() !== ''))
+        if (retryableDelivery) {
+          add(t('actRetryAutoDelivery'), async () => {
+            await callApi('POST', `/cards/${card.id}/retry-auto-delivery`, { actor: 'human' })
+            if (onToast) onToast(t('toastAutoDeliveryRetried'), 'ok')
+          }, reviewActionGuard)
+        }
         if (!card.commitSha) add(t('actConfirmCommit'), async () => {
           await askDraft('commit', t('actConfirmCommit'))
         }, writeGuard)

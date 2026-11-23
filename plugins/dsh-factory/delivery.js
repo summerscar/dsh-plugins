@@ -14,6 +14,7 @@ import { reviewedHeadFor, isFullSha } from './verdict.js'
 import { AUTO_DELIVERY_TIER, RULE_DELIVER } from './autonomy.js'
 import { DEFAULT_PROTECTED_BRANCHES, isProtectedBranch } from './git-exec.js'
 import { STATUS } from './state.js'
+import { assertNoActiveSession } from './session-guard.js'
 
 export { AUTO_DELIVERY_TIER, RULE_DELIVER }
 
@@ -227,7 +228,7 @@ function markStaleIfVerdictOld(store, cardId, card, newHead) {
  * ok === true, so a failed commit never produces an unreviewed verdict.
  */
 export async function ensureCommittedForAutoDelivery({
-  store, cardId, port, readHead, generateMessage,
+  store, cardId, port, readHead, generateMessage, isSessionActive,
   protectedBranches = DEFAULT_PROTECTED_BRANCHES,
 } = {}) {
   const card = store.getCard(cardId)
@@ -238,6 +239,14 @@ export async function ensureCommittedForAutoDelivery({
   if (card.status !== STATUS.REVIEW) return { ok: false, reason: `仅 Review 卡片自动提交（当前 ${card.status}）` }
   if (card.takenOver === true) return { ok: false, reason: '卡片已被人接管，不自动提交' }
   if (card.needsHumanInfo === true) return { ok: false, reason: '卡片待补充信息，不自动提交' }
+  // Never race a live builder/reviewer session. A human returning the card to
+  // the engine does not prove the agent turn has ended; committing mid-turn can
+  // capture half-written fixtures or unfinished edits.
+  try {
+    assertNoActiveSession({ card, isSessionActive, action: 'L4 自动提交' })
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  }
   // Branch safety is the SAME gate as delivery — never bypass it here.
   if (isProtectedBranch(card.branch, protectedBranches)) {
     const reason = `拒绝向受保护分支「${card.branch}」自动提交`
@@ -265,6 +274,43 @@ export async function ensureCommittedForAutoDelivery({
     head = reviewedHeadFor({ worktreePath: card.worktreePath, readHead })
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+  // A review card that has never been committed by this card must still sit on
+  // its base tip. A stray/fixture commit on the branch is NOT a delivery head:
+  // committing it would sweep unrelated trees into the PR and can fail the
+  // release-state hook against a fake baseline. Fail closed before any write.
+  if (typeof port?.headOf === 'function' && !card.commitSha) {
+    const baseRef = card.baseBranch || 'main'
+    let baseHead = ''
+    try {
+      baseHead = String(port.headOf(card.worktreePath, baseRef) ?? '').trim()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      const reason = `无法读取基线 ${baseRef} 的 HEAD（${detail}），拒绝自动提交`
+      audit(store, cardId, 'commit-refused', reason)
+      return { ok: false, reason }
+    }
+    if (!isFullSha(baseHead)) {
+      const reason = `基线 ${baseRef} 返回的不是完整 SHA（${baseHead || '空值'}），拒绝自动提交`
+      audit(store, cardId, 'commit-refused', reason)
+      return { ok: false, reason }
+    }
+    if (head !== baseHead) {
+      const reason = `HEAD ${head} 与基线 ${baseRef} ${baseHead} 不一致且无已记录提交，拒绝自动提交`
+      audit(store, cardId, 'commit-refused', reason)
+      return { ok: false, reason }
+    }
+  }
+  // A worktree that suddenly deletes most tracked files is not a delivery
+  // change — it is a fixture/swap or a catastrophic mistake. Refuse before
+  // staging; a human must inspect and use the explicit retry route.
+  if (typeof port.deletedCount === 'function') {
+    const deleted = port.deletedCount(card.worktreePath, head)
+    if (deleted > 20) {
+      const reason = `工作树相对 HEAD 删除了 ${deleted} 个已跟踪文件，疑似临时夹具或误操作，拒绝自动提交`
+      audit(store, cardId, 'commit-refused', reason)
+      return { ok: false, reason }
+    }
   }
   const clean = port.isWorktreeClean(card.worktreePath) === true
   // Idempotency is a DOUBLE condition: clean tree AND commitSha === HEAD.
@@ -299,9 +345,12 @@ export async function ensureCommittedForAutoDelivery({
       }
     } catch { /* drafting is best-effort; the gate and commit remain unchanged */ }
   }
+  // Freeze the dirty path list BEFORE the commit hook runs. Explicit --only
+  // paths stop a hook-created fixture/untracked file from entering the commit.
+  const paths = typeof port.changedPaths === 'function' ? port.changedPaths(card.worktreePath) : undefined
   try {
-    port.add(card.worktreePath)
-    const sha = port.commit(card.worktreePath, message)
+    port.add(card.worktreePath, paths)
+    const sha = port.commit(card.worktreePath, message, paths)
     if (!isFullSha(sha)) throw new Error(`提交返回的 sha 不是完整 SHA：${sha}`)
     store.recordCommit(cardId, { sha, message, actor: AUTO_DELIVERY_TIER })
     store.clearCommitFailures(cardId)

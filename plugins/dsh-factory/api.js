@@ -20,9 +20,10 @@ import { collectAudit } from './audit.js'
 import { inspectRepo } from './project-proposal.js'
 import { applyRemoteSync } from './sync.js'
 import { assertWorktreeRoot, isPathInside, removeWorktree, worktreeRootOf } from './worktree.js'
-import { DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
+import { AUTO_DELIVERY_TIER, DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
 import { assertNoActiveSession } from './session-guard.js'
 import { assertApprovedVerdict } from './verdict-guard.js'
+import { isFullSha, readHeadFromGit } from './verdict.js'
 
 /**
  * Delete a project and really remove its worktrees (P4 §4 — the one sanctioned
@@ -250,6 +251,50 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         }
         if (method === 'POST' && seg.length === 1) return ok({ card: store.createCard(body) }, 201)
         if (method === 'GET' && seg.length === 2) return ok({ card: store.getCard(seg[1]) })
+        // Human recovery for a latched L4 commit stall. The engine stops after
+        // three failed commit attempts; without this route a corrected worktree
+        // could never re-enter the pipeline. Explicit actor + session gate keep
+        // this from racing an agent or being triggered by an accidental caller.
+        if (method === 'POST' && seg.length === 3 && seg[2] === 'retry-auto-delivery') {
+          if (body.actor !== 'human') return { status: 400, body: { error: '重试自动交付必须由人工显式触发' } }
+          const card = store.getCard(seg[1])
+          if (card === undefined || card === null) return { status: 400, body: { error: '卡片不存在' } }
+          if (card.status !== 'review') return { status: 400, body: { error: '只有 Review 卡片能重试自动交付' } }
+          if (card.takenOver === true || card.needsHumanInfo === true) {
+            return { status: 400, body: { error: '接管中或待补信息的卡片不能重试自动交付' } }
+          }
+          const project = store.getProject(card.projectId)
+          if (project?.autonomy !== AUTO_DELIVERY_TIER) {
+            return { status: 400, body: { error: '只有 L4 自动交付档能重试自动交付' } }
+          }
+          if (card.commitStalled !== true && card.autoDelivery?.state !== 'failed'
+            && typeof body.commitSha !== 'string') {
+            return { status: 400, body: { error: '当前没有可重试的自动交付失败' } }
+          }
+          try {
+            assertNoActiveSession({ card, isSessionActive, action: '重试自动交付' })
+            const head = readHeadFromGit({ worktreePath: card.worktreePath })
+            // Optional after a human repaired the worktree and committed with
+            // the real hook: sync that head into the live store so the engine
+            // stops trying to re-commit a now-clean tree.
+            if (typeof body.commitSha === 'string' && isFullSha(body.commitSha)) {
+              store.recordCommit(card.id, {
+                sha: body.commitSha.trim(),
+                message: typeof body.message === 'string' ? body.message : 'recovery commit',
+                actor: 'human',
+              })
+            }
+            store.clearCommitFailures(card.id)
+            store.setAutoDelivery(card.id, { head, state: 'retry', actor: 'human' })
+            store.recordEvent({
+              type: 'auto-delivery-retry', scope: 'card', targetId: card.id,
+              actor: 'human', decision: 'retried', note: `head ${head}`,
+            })
+            return ok({ card: store.getCard(card.id) })
+          } catch (error) {
+            return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } }
+          }
+        }
         if (method === 'POST' && seg.length === 3 && seg[2] === 'transition') {
           // Backend fallback: the UI hides these actions while a session runs,
           // so a direct request must fail the same way instead of racing it.

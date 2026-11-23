@@ -4,6 +4,13 @@
 #
 # Husky v9 runs this file with sh and does not need a shebang or husky.sh sourcing.
 
+# Git exports these while the hook runs. Test suites spawn their own `git init`
+# / `git commit` in temp fixtures; inheriting these variables makes those
+# commands silently target the repository being committed, injecting fixture
+# trees into the card branch. Unset before running the full suite.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
+
 # THE STALE-INDEX TRAP, and why the gate adopts a file it is about to judge.
 #
 # index.json is generated content owned by the release workflow: that workflow
@@ -29,4 +36,7 @@ if git rev-parse --verify -q origin/main >/dev/null 2>&1 &&
   git checkout origin/main -- index.json && git add index.json
 fi
 
-pnpm check
+# Known environment false red: qa-pgh-wiring's PGH-14 clears GH_TOKEN but not
+# GITHUB_TOKEN, so an ambient GITHUB_TOKEN makes it fail even though git/gh are
+# fine. Run the full gate with only this duplicate token hidden.
+env -u GITHUB_TOKEN pnpm check

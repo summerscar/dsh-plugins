@@ -252,7 +252,7 @@ test('Dev-Copy 8: client drafts before writing, keeps cancel live, and adds no m
   assert.match(index, /createDeliveryCopyGenerator/, 'generator is wired into the host')
   assert.match(index, /generateMessage:/, 'L4 commit generation is wired')
   assert.match(index, /generatePr:/, 'L4 PR generation is wired')
-  assert.match(index, /factory-2026-11-20\.41/, 'BUILD bumped for the crash/layout fixes')
+  assert.match(index, /factory-2026-11-20\.46/, 'BUILD bumped for the auto-delivery guard and retry recovery')
 })
 
 test('Dev-Copy 9: DraftModal renders all three entry labels without an undefined title', () => {

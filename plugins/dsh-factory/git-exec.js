@@ -287,9 +287,17 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
     return (result.stdout || '').trim()
   }
   return {
-    add(cwd) { run('git', ['add', '-A'], cwd) },
-    commit(cwd, message) {
-      run('git', ['-c', 'user.email=factory@localhost', '-c', 'user.name=dsh-factory', 'commit', '-m', message], cwd)
+    /** Paths dirty at decision time, so a hook cannot inject extra files. */
+    changedPaths(cwd) {
+      const out = run('git', ['status', '--porcelain'], cwd)
+      return out === '' ? [] : out.split(/\r?\n/).map((line) => line.slice(3).split(' -> ').pop()).filter(Boolean)
+    },
+    add(cwd, paths) {
+      run('git', Array.isArray(paths) && paths.length > 0 ? ['add', '--', ...paths] : ['add', '-A'], cwd)
+    },
+    commit(cwd, message, paths) {
+      const only = Array.isArray(paths) && paths.length > 0 ? ['--only', '--', ...paths] : []
+      run('git', ['-c', 'user.email=factory@localhost', '-c', 'user.name=dsh-factory', 'commit', '-m', message, ...only], cwd)
       return run('git', ['rev-parse', 'HEAD'], cwd)
     },
     reset(cwd) { run('git', ['reset'], cwd) },
@@ -297,6 +305,19 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
     hasDiff(cwd, base) {
       const count = Number.parseInt(run('git', ['rev-list', '--count', `${base}..HEAD`], cwd), 10)
       return Number.isFinite(count) && count > 0
+    },
+    /**
+     * Resolve a ref to a full commit SHA inside this worktree. L4 auto-commit
+     * uses it to confirm an unrecorded HEAD is still the card's base tip;
+     * a fixture/stray commit must never be silently committed as delivery.
+     */
+    headOf(cwd, ref) {
+      return run('git', ['rev-parse', '--verify', `${ref}^{commit}`], cwd)
+    },
+    /** Count tracked files deleted relative to `ref` in the working tree. */
+    deletedCount(cwd, ref = 'HEAD') {
+      const out = run('git', ['diff', '--name-status', '--diff-filter=D', ref, '--'], cwd)
+      return out === '' ? 0 : out.split(/\r?\n/).length
     },
     /**
      * True only when the worktree has NO uncommitted changes. hasDiff() above

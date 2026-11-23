@@ -4,6 +4,11 @@ import semver from 'semver';
 import { join, resolve, sep } from 'node:path';
 import { discoverPackages } from './release-target.mjs';
 
+// When called from a pre-commit hook, Git exports GIT_DIR / GIT_INDEX_FILE /
+// GIT_WORK_TREE. Child git commands must see the target root's repository, not
+// the repository currently being committed.
+const childGitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+
 export const releaseStateFile = 'scripts/plugin-release-states.json';
 export const dependencyFields = ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies'];
 export const stateLabels = {
@@ -82,7 +87,7 @@ export function validateLifecycleTransition(previous, current) {
 export function checkLifecycleHistory(root, states, base = process.env.RELEASE_STATE_BASE || 'HEAD') {
   if (!existsSync(join(root, '.git'))) return;
   if (/^0+$/.test(base)) return; // First push has no previous commit.
-  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: childGitEnv });
   git(['rev-parse', '--verify', `${base}^{commit}`]);
   if (!git(['ls-tree', '--name-only', base, '--', releaseStateFile]).trim()) return;
   validateLifecycleTransition(JSON.parse(git(['show', `${base}:${releaseStateFile}`])), states);
