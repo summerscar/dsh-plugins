@@ -29,10 +29,15 @@
     },
     {
       "name": "@summerscar/dsh-factory",
-      "state": "testing",
+      "state": "published",
       "reason": {
-        "zh": "首次交付验收中；等待 Trusted Publisher 绑定与明确授权后执行首发。",
-        "en": "First-release acceptance in progress; publishing awaits Trusted Publisher setup and explicit authorization."
+        "zh": "npm 首发已由 Trusted Publisher（OIDC）完成；后续版本按正常更新流程维护。",
+        "en": "First npm release completed via Trusted Publishing (OIDC); subsequent versions follow the normal update workflow."
+      },
+      "publication": {
+        "version": "0.0.1",
+        "publishedAt": "2026-11-23T17:51:05.734Z",
+        "integrity": "sha512-FH6v2n6kxoqpF06559NOzETKStN6IK/I6qjz1vlr2xjynFet09Ud9lopNPyLZEohENGfCnbw8mEKsFpCtTd4lg=="
       }
     }
   ]

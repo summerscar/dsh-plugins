@@ -47,7 +47,7 @@ pnpm check
 | 包 | 生命周期 | 说明 |
 | --- | --- | --- |
 | [@summerscar/dsh-connect-agentscope-platform](plugins/dsh-connect-agentscope-platform/README.md) | 已发布 (`published`) | 已有 npm 发布记录；后续版本按正常更新流程维护。 |
-| [@summerscar/dsh-factory](plugins/dsh-factory/README.md) | 测试中 (`testing`) | 首次交付验收中；等待 Trusted Publisher 绑定与明确授权后执行首发。 |
+| [@summerscar/dsh-factory](plugins/dsh-factory/README.md) | 已发布 (`published`) | npm 首发已由 Trusted Publisher（OIDC）完成；后续版本按正常更新流程维护。 |
 | [@summerscar/dsh-mnemon-sync](plugins/dsh-mnemon-sync/README.md) | 已发布 (`published`) | 已有 npm 发布记录；后续版本按正常更新流程维护。 |
 <!-- plugin-release-states:end -->
 

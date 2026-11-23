@@ -14,7 +14,9 @@
 
 ## 当前状态
 
-`@summerscar/dsh-mnemon-sync` 为 `published`，npm 上已有 `0.1.11`（发布时间 `2026-11-09T11:21:23.618Z`，带已核验的归档完整性）。`publication` 记录是不可变的历史凭据，禁止编辑或删除。后续版本走正常更新流程，不需要 `first_release` 选择。
+- `@summerscar/dsh-mnemon-sync` 为 `published`，npm 上已有 `0.1.11`（发布时间 `2026-11-09T11:21:23.618Z`，带已核验的归档完整性）。`publication` 记录是不可变的历史凭据，禁止编辑或删除。后续版本走正常更新流程，不需要 `first_release` 选择。
+- `@summerscar/dsh-factory` 为 `published`，npm 上已有 `0.0.1`（Trusted Publisher 首发，发布时间 `2026-11-23T17:51:05.734Z`）。为解开首次发布的「包必须先存在」死锁，先用已登录 npm 的机器手工发占位版本 `0.0.0-stage` 以便绑定 Trusted Publisher；真实归档没有 `dshRelease` provenance 字段，也没有 `next` dist-tag。后续版本走正常更新流程，不需要 `first_release` 选择。
+- `@summerscar/dsh-connect-agentscope-platform` 为 `published`，npm 上已有 `0.1.1`（发布时间 `2026-11-13T22:02:00.760Z`）。后续版本走正常更新流程，不需要 `first_release` 选择。
 
 ## 日常维护
 
@@ -26,7 +28,11 @@
 
 ## 首次发布（供将来新增包使用）
 
-新包登记为 `draft`，准备好后手动推进到 `testing` 并同步文档。首次发布前检查最终归档、许可证、依赖、入口、相关测试与目标宿主场景。经明确授权后，在 Actions 手动运行 **Publish npm plugins**，在 `first_release` 里填完整包名。归档能匿名下载且完整性匹配后，生命周期才推进为 `published`。
+新包登记为 `draft`，准备好后手动推进到 `testing` 并同步文档。首次发布前检查最终归档、许可证、依赖、入口、相关测试与目标宿主场景。
+
+Trusted Publisher 只能配在「npm 上已存在的包」上，而本仓只走 OIDC、没有 token 兜底，所以新包需要一个一次性的破局动作：在已登录 npm 的维护者机器上手工发一个占位版本（如 `0.0.0-stage`），绑定 Trusted Publisher，然后在 **2 天内** 用完整包名在 `first_release` 里触发 **Publish npm plugins**，让 OIDC 首发完成、配置不失效。占位版本永久留在 npm 历史里；`selectRelease()` 会把首个真实版本推到它之上，手工归档没有 `dshRelease` provenance 字段，发布器的匿名复核因此比对的是已发布内容而不是 provenance 标记。
+
+首发完成后：核对归档能匿名下载且完整性匹配，把 `publication` 凭据写进 `scripts/plugin-release-states.json`，并跑 `pnpm release:docs` + `pnpm release:check`。
 
 ## 生命周期校验
 

@@ -13,7 +13,9 @@ Fixes, README changes, new-feature testing, and version updates keep a published
 
 ## Current state
 
-`@summerscar/dsh-mnemon-sync` is `published` with version `0.1.11` on npm (published at `2026-11-09T11:21:23.618Z`, with a verified archive integrity). Its `publication` record is immutable historical proof: never edit or remove it. Subsequent versions follow the normal update workflow — no `first_release` selection is needed.
+- `@summerscar/dsh-mnemon-sync` is `published` with version `0.1.11` on npm (published at `2026-11-09T11:21:23.618Z`, with a verified archive integrity). Its `publication` record is immutable historical proof: never edit or remove it. Subsequent versions follow the normal update workflow — no `first_release` selection is needed.
+- `@summerscar/dsh-factory` is `published` with version `0.0.1` on npm (first release via the Trusted Publisher, published at `2026-11-23T17:51:05.734Z`). It was broken out of the first-release deadlock with a manually published placeholder version `0.0.0-stage` that exists only to allow the Trusted Publisher binding; the real archive has no `dshRelease` provenance fields and no `next` dist-tag. Subsequent versions follow the normal update workflow — no `first_release` selection is needed.
+- `@summerscar/dsh-connect-agentscope-platform` is `published` with version `0.1.1` on npm (published at `2026-11-13T22:02:00.760Z`). Subsequent versions follow the normal update workflow — no `first_release` selection is needed.
 
 ## Normal maintenance
 
@@ -25,7 +27,11 @@ Release holds live in `scripts/npm-release-holds.json` and are cleared once thei
 
 ## First publication (for future packages)
 
-Register a new package as `draft`, advance it manually to `testing` when ready, and sync documentation. Before its first release, inspect the final archive, license, dependencies, entrypoints, relevant tests, and target-host user scenarios. After explicit authorization, manually run **Publish npm plugins** in Actions and enter full package names in `first_release`. Lifecycle promotion to `published` happens once the npm archive downloads anonymously with matching integrity.
+Register a new package as `draft`, advance it manually to `testing` when ready, and sync documentation. Before its first release, inspect the final archive, license, dependencies, entrypoints, relevant tests, and target-host user scenarios.
+
+The Trusted Publisher can only be configured on a package that already exists on npm, and this repository publishes through OIDC only, so a brand-new package needs a one-time break-out: publish a manual placeholder version (for example `0.0.0-stage`) with a logged-in npm CLI on the maintainer's machine, bind the Trusted Publisher, then trigger **Publish npm plugins** with `first_release` filled with the full package name within 2 days so the OIDC publish completes and the configuration survives. The placeholder stays in the npm history permanently; `selectRelease()` bumps the first real version above it, and any manual archive skips the `dshRelease` provenance fields, so the publisher's anonymous re-verification falls back to comparing published content instead of a provenance marker.
+
+After the first release: verify the archive downloads anonymously with matching integrity, record the `publication` credentials in `scripts/plugin-release-states.json`, and run `pnpm release:docs` + `pnpm release:check`.
 
 ## Lifecycle validation
 

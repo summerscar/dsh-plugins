@@ -47,7 +47,7 @@ The code is the developer documentation. Releases follow the [release guide](REL
 | Package | Lifecycle | Notes |
 | --- | --- | --- |
 | [@summerscar/dsh-connect-agentscope-platform](plugins/dsh-connect-agentscope-platform/README.md) | Published (`published`) | Published on npm; subsequent versions follow the normal update workflow. |
-| [@summerscar/dsh-factory](plugins/dsh-factory/README.md) | Testing (`testing`) | First-release acceptance in progress; publishing awaits Trusted Publisher setup and explicit authorization. |
+| [@summerscar/dsh-factory](plugins/dsh-factory/README.md) | Published (`published`) | First npm release completed via Trusted Publishing (OIDC); subsequent versions follow the normal update workflow. |
 | [@summerscar/dsh-mnemon-sync](plugins/dsh-mnemon-sync/README.md) | Published (`published`) | Published on npm; subsequent versions follow the normal update workflow. |
 <!-- plugin-release-states:end -->
 
