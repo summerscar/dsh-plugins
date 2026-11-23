@@ -20,12 +20,14 @@ assert.ok(source.startsWith('function CardActions('), 'CardActions source found'
 
 const T = { card: '#fff', line: '#ddd', panel: '#fff', mutedInk: '#888', dangerInk: '#c00', accent: '#00f', accentWash: '#eef', accentInk: '#00c' }
 const h = (tag, props, ...children) => ({ tag, props: props || {}, children })
+const apiCalls = []
 const cardActions = new Function(
   'h', 'Button', 'callApi', 'T', 'NoteModal', 'Modal', 'needsAutoApproveNotice',
   `${source}\nreturn CardActions`,
-)(h, 'button', async () => ({}), T, 'note-modal', 'modal', () => false)
+)(h, 'button', async (...args) => { apiCalls.push(args); return {} }, T, 'note-modal', 'modal', () => false)
 
 function render(card, { working = false, reviewWorking = false, tier = 'manual', busy = false } = {}) {
+  apiCalls.length = 0
   const view = cardActions({
     card, run: async (fn) => fn(), t: (key) => key, busy, working, reviewWorking,
     onToast: () => {}, onModal: () => {}, tier, orphan: undefined,
@@ -132,6 +134,53 @@ test('Dev-Session: an approved verdict restores every review write button', () =
     assert.ok(button, `${key} rendered`)
     assert.notEqual(button.props.disabled, true, `${key} enabled with approval`)
   }
+})
+
+test('Dev-ReviewEntry: L0/L2/L3 review cards can dispatch the first review through the existing route', async () => {
+  for (const tier of ['manual', 'you-approve', 'machine-approve']) {
+    const card = { id: 'review-entry', status: 'review', history: [report], takenOver: false }
+    const buttons = render(card, { tier })
+    const dispatch = buttonOf(buttons, 'actDispatchReview')
+    assert.ok(dispatch, `${tier}: first-review button rendered`)
+    assert.notEqual(dispatch.props.disabled, true, `${tier}: first-review button is clickable when idle`)
+    dispatch.props.onClick()
+    await new Promise(setImmediate)
+    assert.deepEqual(apiCalls.at(-1), ['POST', '/cards/review-entry/review-dispatch'], `${tier}: uses the existing route`)
+  }
+})
+
+test('Dev-ReviewEntry: L4 keeps its redispatch semantics and gains no new button', () => {
+  const withSession = { id: 'l4-review', status: 'review', history: [report], takenOver: false, reviewSessionId: 'r1' }
+  const buttons = render(withSession, { tier: 'auto-delivery' })
+  assert.ok(buttonOf(buttons, 'actRedispatchReview'), 'L4 existing redispatch still rendered')
+  assert.equal(buttonOf(buttons, 'actDispatchReview'), undefined, 'L4 does not get the first-review button')
+  const noSession = render({ ...withSession, reviewSessionId: undefined }, { tier: 'auto-delivery' })
+  assert.equal(buttonOf(noSession, 'actDispatchReview'), undefined, 'L4 without a session keeps its old behaviour')
+  assert.equal(buttonOf(noSession, 'actRedispatchReview'), undefined, 'L4 without a session has nothing to redispatch')
+})
+
+test('Dev-ReviewEntry: a fresh approved verdict hides the review button in every tier', () => {
+  for (const tier of ['manual', 'machine-approve', 'auto-delivery']) {
+    const card = {
+      id: 'approved-review', status: 'review', history: [report], takenOver: false,
+      reviewSessionId: 'r1', reviewVerdict: { verdict: 'approved' },
+    }
+    const keys = keysOf(render(card, { tier }))
+    assert.ok(!keys.includes('actDispatchReview') && !keys.includes('actRedispatchReview'), `${tier}: no review button with a fresh approval`)
+    const stale = render({ ...card, reviewStale: true }, { tier })
+    assert.ok(keysOf(stale).includes(tier === 'auto-delivery' ? 'actRedispatchReview' : 'actDispatchReview'), `${tier}: stale verdict can be re-reviewed`)
+  }
+})
+
+test('Dev-ReviewEntry: runaway and blocked cards keep the old exclusions', () => {
+  const card = { id: 'review-entry', status: 'review', history: [report] }
+  for (const extra of [{ takenOver: true }, { needsHumanInfo: true }]) {
+    assert.equal(buttonOf(render({ ...card, ...extra }), 'actDispatchReview'), undefined, `excluded by ${Object.keys(extra)[0]}`)
+  }
+  const running = render(card, { working: true })
+  const button = buttonOf(running, 'actDispatchReview')
+  assert.equal(button.props.disabled, true, 'disabled while a session runs')
+  assert.equal(button.props.title, 'working', 'reason names the running session')
 })
 
 test('Dev-Session: plan-review running still gates approve and return-to-plan', () => {

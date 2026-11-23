@@ -449,7 +449,9 @@ window.__ModuleLoader__.load({
       reviewStaleNotice: "代码已提交，但评审结论针对旧版本；需重新评审后才会自动交付。",
       autoRereviewExhaustedNotice: "自动重评审次数已用完，需人工处理。",
       actRedispatchReview: "重新派发评审",
+      actDispatchReview: "派出评审",
       toastReviewRedispatched: "已重新派发评审",
+      toastReviewDispatched: "评审已派出",
       autoDeliveryFailedNotice: "自动交付失败：{reason}。需人工处理。",
       sessionUnavailable: "会话已不可用",
       viewReports: "查看报告",
@@ -805,7 +807,9 @@ window.__ModuleLoader__.load({
       reviewStaleNotice: "The code was committed, but the review verdict is for an older version. Delivery resumes after a new review.",
       autoRereviewExhaustedNotice: "Automatic re-review limit reached. Manual action is needed.",
       actRedispatchReview: "Redispatch reviewer",
+      actDispatchReview: "Dispatch reviewer",
       toastReviewRedispatched: "Reviewer redispatched",
+      toastReviewDispatched: "Reviewer dispatched",
       autoDeliveryFailedNotice: "Auto-delivery failed: {reason}. Manual action is needed.",
       sessionUnavailable: "Session unavailable",
       viewReports: "View reports",
@@ -1231,16 +1235,28 @@ window.__ModuleLoader__.load({
         }, t('returnToEngine')))
       }
       if (card.status === 'review') {
-        // L4 reviewer dispatched but no verdict and no delivery failure: give
-        // the user a recovery action on the existing route (no backend change).
-        const canRedispatch = tier === 'auto-delivery' && card.takenOver !== true
-          && card.needsHumanInfo !== true && typeof card.reviewSessionId === 'string'
-          && card.reviewSessionId !== '' && (card.reviewVerdict == null || card.reviewStale === true)
-          && !(card.autoDelivery && typeof card.autoDelivery.error === 'string' && card.autoDelivery.error.trim() !== '')
-        if (canRedispatch) add(t('actRedispatchReview'), async () => {
-          await callApi('POST', `/cards/${card.id}/review-dispatch`)
-          if (onToast) onToast(t('toastReviewRedispatched'), 'ok')
-        }, reviewWorking === true ? { disabled: true, title: t('reviewWorking') } : {})
+        // The engine only auto-dispatches a reviewer at L4. Lower tiers need a
+        // manual entry to the same route, otherwise a review card can never get
+        // a verdict and the human git-write gate leaves it stuck. L4 keeps its
+        // existing redispatch on an already-created session; other tiers can
+        // start one even when no reviewSessionId exists yet. A fresh approval
+        // needs no further review in any tier.
+        const hasReviewSession = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== ''
+        const needsReview = card.reviewVerdict == null || card.reviewStale === true
+        const deliveryFailed = Boolean(card.autoDelivery && typeof card.autoDelivery.error === 'string' && card.autoDelivery.error.trim() !== '')
+        const reviewEligible = card.takenOver !== true && card.needsHumanInfo !== true && needsReview && !deliveryFailed
+        const canRedispatch = tier === 'auto-delivery' && reviewEligible && hasReviewSession
+        const canDispatchReview = tier !== 'auto-delivery' && reviewEligible
+        if (canRedispatch || canDispatchReview) add(
+          canRedispatch ? t('actRedispatchReview') : t('actDispatchReview'),
+          async () => {
+            await callApi('POST', `/cards/${card.id}/review-dispatch`)
+            if (onToast) onToast(t(canRedispatch ? 'toastReviewRedispatched' : 'toastReviewDispatched'), 'ok')
+          },
+          canRedispatch
+            ? (reviewWorking === true ? { disabled: true, title: t('reviewWorking') } : {})
+            : (sessionRunning ? { disabled: true, title: sessionRunningTitle } : {}),
+        )
         // Return-to-build is the exit for a failed review, so it is gated by
         // the session only — never by the verdict. The four finishing actions
         // additionally require an approved verdict, mirrored by the API gate.
