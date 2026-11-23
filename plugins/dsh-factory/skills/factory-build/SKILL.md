@@ -35,6 +35,8 @@ Work through the plan's phases in order:
 
 Do not commit or push. Leave the worktree ready for a human to inspect the diff.
 
+Keep that diff clean: never leave temporary test output, command logs, local caches or scratch files in the worktree. Put such output outside the worktree, or confirm the target repository ignores it first (do not assume `.tmp-*` is ignored). At `auto-delivery` the engine commits the dirty tree, untracked files included, so anything you leave behind can become part of the delivered change. Before handing off, run `git status --porcelain` and remove or ignore every file that is not part of this card's change.
+
 If the plan proves wrong (a step cannot work as written, or the cause is elsewhere), stop and report what the plan got wrong; if the state machine lets you send the card back, do, otherwise leave it where it is and report.
 
 ## Hand off

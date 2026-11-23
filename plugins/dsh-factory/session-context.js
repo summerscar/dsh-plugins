@@ -302,10 +302,6 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
     if (!isFullSha(head)) {
       throw new Error('评审会话上下文缺少完整的 reviewedHead（需要 git rev-parse HEAD 的 40/64 位 SHA）；拒绝在无 head 的会话中评审')
     }
-    const sandboxMode = typeof review.readSandboxMode === 'function' ? review.readSandboxMode() : review.sandboxMode
-    if (sandboxMode !== 'read-only') {
-      throw new Error(`评审会话上下文要求只读沙箱，当前为 ${sandboxMode ?? '未知'}；拒绝以可写权限评审`)
-    }
     fields.reviewedHead = head
     fields.previousVerdict = card.reviewVerdict ?? null
     // The authoritative previous head is the one the last verdict certified.
@@ -328,7 +324,7 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       ...bodyLines,
       ...(bodyLines.length === 0 ? [] : ['']),
       ...(languageLine === '' ? [] : [languageLine, '']),
-      'You are an INDEPENDENT REVIEW session on exactly ONE factory card. You are read-only: never move the card, authorize git actions, commit, push or open a PR. The human decides after reading your verdict.',
+      'You are an INDEPENDENT REVIEW session on exactly ONE factory card. Do not move the card, authorize git actions, commit, push or open a PR — the human decides after reading your verdict.',
       `- cardId: ${fields.cardId}`,
       `- title: ${fields.title}`,
       `- phase: ${fields.phase}`,
@@ -354,7 +350,7 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `previousVerdict: ${previous}`,
       ...(scope !== null ? [scope] : []),
       `commitSha: ${show(fields.commitSha)}`,
-      `This is a read-only review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the ${fields.skill} skill and record a structured verdict with factory_report.`,
+      `This is an independent review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the ${fields.skill} skill and record a structured verdict with factory_report.`,
     ].join('\n')
     return { ...fields, sectionText, firstMessage }
   }
@@ -449,9 +445,10 @@ export function attachSessionContext({ agentCtx, store, cardId, skillsDir, readS
     return buildSessionContext({ card, project: store.getProject(card.projectId), locale, reviewMode, review, builderMode })
   }
 
-  // Review mode fails CLOSED at attach time: a missing head or a writable
-  // sandbox must abort the dispatch here, not degrade into a builder-style
-  // session that can move the card. The host setup awaits this call.
+  // Review mode fails CLOSED at attach time: a missing head must abort here,
+  // not degrade into a context-less agent. Sandbox permissions follow the
+  // project's workMode; the role boundary is enforced in the prompt instead.
+  // The host setup awaits this call.
   if (reviewMode === true) current()
 
   const disposers = []

@@ -270,7 +270,7 @@ test('P1-AC2 new commit: mirror advances, verdict history keeps both, reports ke
 const REVIEW_OPTS = (head = SHA40) => ({ reviewMode: true, review: { reviewedHead: head, sandboxMode: 'read-only' } })
 const ADVANCE_RE = /advance through|move the card yourself|factory_transition_work_item to advance/i
 
-test('P1-AC3 review context has no advance/move wording, nine fields, empty nextPhases, review skill', () => {
+test('P1-AC3 review context has no advance/move wording, nine fields, empty nextPhases, review skill; role stays explicit without read-only wording', () => {
   const f = setup({ cardStatus: 'review' })
   try {
     const built = buildSessionContext({ card: f.store.getCard(f.card.id), project: f.project, ...REVIEW_OPTS() })
@@ -282,7 +282,12 @@ test('P1-AC3 review context has no advance/move wording, nine fields, empty next
     assert.equal(built.reviewedHead, SHA40)
     assert.deepEqual(built.nextPhases, [])
     assert.equal(built.skill, 'factory-review')
-    assert.match(built.sectionText, /read-only/i)
+    // Review permission now follows the project workMode, so the prompt must
+    // not claim a read-only sandbox. The role boundary itself stays intact.
+    assert.doesNotMatch(built.sectionText, /read-only/i, 'no misleading read-only claim')
+    assert.match(built.sectionText, /independent review/i, 'independent review role stays explicit')
+    assert.match(built.sectionText, /do not move the card/i, 'reviewer must not move the card')
+    assert.match(built.sectionText, /commit, push or open a PR/i, 'reviewer must not commit, push or open a PR itself')
     assert.ok(built.sectionText.includes('factory_report'))
   } finally { f.cleanup() }
 })
@@ -299,32 +304,42 @@ test('P1-AC3 builder path stays unchanged: advance wording present, no review-on
   } finally { f.cleanup() }
 })
 
-test('P1-AC3 missing head / invalid SHA / writable sandbox fail closed at build time', () => {
+test('P1-AC3 missing head / invalid SHA fail closed; writable sandbox is valid with a full head', () => {
+  // Review sessions now follow the project work mode, so a writable sandbox
+  // is no longer a rejection reason. Only a missing/invalid reviewedHead is.
   for (const [label, opts] of [
-    ['missing head', { reviewMode: true, review: { sandboxMode: 'read-only' } }],
+    ['missing head', { reviewMode: true, review: { readHead: () => null } }],
     ['invalid SHA', REVIEW_OPTS('deadbeef')],
-    ['workspace-write sandbox', { reviewMode: true, review: { reviewedHead: SHA40, sandboxMode: 'workspace-write' } }],
   ]) {
     const f = setup({ cardStatus: 'review' })
     try {
       // A missing head with no injectable reader must fail: the fixture repo
       // exists, so supply a reader returning null to model "no readable head".
-      const review = label === 'missing head'
-        ? { sandboxMode: 'read-only', readHead: () => null }
-        : opts.review
+      const review = opts.review
       assert.throws(
         () => buildSessionContext({ card: f.store.getCard(f.card.id), project: f.project, reviewMode: true, review }),
-        /reviewedHead|只读沙箱/,
+        /reviewedHead/,
         label,
       )
     } finally { f.cleanup() }
   }
+
+  const f = setup({ cardStatus: 'review' })
+  try {
+    const built = buildSessionContext({
+      card: f.store.getCard(f.card.id), project: f.project, reviewMode: true,
+      review: { reviewedHead: SHA40, sandboxMode: 'workspace-write' },
+    })
+    assert.equal(built.reviewedHead, SHA40, 'writable sandbox builds and keeps the full reviewedHead')
+    assert.equal(built.skill, 'factory-review', 'review role is still selected')
+  } finally { f.cleanup() }
 })
 
-test('P1-AC3 attach fails before registering anything; valid attach exposes review variables', () => {
+test('P1-AC3 attach fails without a head; writable attach exposes review variables', () => {
+  // A writable review session is a valid attach now; only a missing head must
+  // fail before any variable or section is registered.
   for (const [label, review] of [
-    ['no head', { sandboxMode: 'read-only', readHead: () => null }],
-    ['writable', { reviewedHead: SHA40, sandboxMode: 'workspace-write' }],
+    ['no head', { readHead: () => null }],
   ]) {
     const f = setup({ cardStatus: 'review' })
     try {
@@ -339,7 +354,7 @@ test('P1-AC3 attach fails before registering anything; valid attach exposes revi
       }
       assert.throws(
         () => attachSessionContext({ agentCtx, store: f.store, cardId: f.card.id, reviewMode: true, review }),
-        /reviewedHead|只读沙箱/,
+        /reviewedHead/,
         label,
       )
       assert.deepEqual(Object.keys(variables), [], `${label}: no variable registered before the failure`)
@@ -359,7 +374,7 @@ test('P1-AC3 attach fails before registering anything; valid attach exposes revi
     }
     const dispose = attachSessionContext({
       agentCtx, store: f.store, cardId: f.card.id, reviewMode: true,
-      review: { reviewedHead: SHA40, sandboxMode: 'read-only' },
+      review: { reviewedHead: SHA40, sandboxMode: 'workspace-write' },
     })
     assert.equal(typeof dispose, 'function')
     assert.equal(variables.factory_reviewed_head(), SHA40)

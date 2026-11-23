@@ -37,6 +37,8 @@ Then read the diff and compare it against your record. Agreement is valid when i
 
 Run the project's own tests and typecheck (from its `AGENTS.md`/`CONTRIBUTING`) on the exact head, at the narrowest scope that covers the change. Independently reproduce the reported problem where you can. An environment failure is not a pass — say what could not run and why.
 
+Check `git status --porcelain` too: if the worktree contains untracked test output, logs, caches or scratch files that are not part of the task, record them explicitly. At `auto-delivery` the engine commits the dirty tree with untracked files included, so these would be delivered along with the reviewed change.
+
 ## Verdict
 
 - **Blocking**: the stated fix is wrong, unsafe, or unverified — incorrect behavior, a safety or security hole, or a claim the tests do not actually cover.

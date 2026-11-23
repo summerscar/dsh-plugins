@@ -424,6 +424,18 @@ export async function continueCard({ store, cardId, port, message, failureLimit,
 }
 
 /**
+ * Named permission preset whose knob bundle matches a factory work mode.
+ * `auto-review` is handled separately by the existing `permissionPreset==='auto'`
+ * path; explicit sandboxMode callers are left alone (they pin their own bundle).
+ */
+function namedPresetForWorkMode(workMode, sandboxMode) {
+  if (sandboxMode !== undefined && sandboxMode !== null) return null
+  if (workMode === 'workspace-write') return 'workspace-write'
+  if (workMode === 'full-access') return 'danger-full-access'
+  return null
+}
+
+/**
  * P2a: resolve the work mode actually usable for a NEW session. `auto-review`
  * depends on the experimental plugin; when it is disabled or unreadable we
  * fall back to workspace-write for new sessions only and leave a readable
@@ -483,11 +495,14 @@ export function isRereview(card) {
 }
 
 /**
- * P2a AC4/5: create ONE independent, read-only review session. Never touches
- * AGENT_STATUSES or card.status; the reviewer id is stored in its own field.
+ * P2a AC4/5: create ONE independent review session. It follows the project's
+ * workMode (the reviewer also runs commands), just like a build session.
+ * Never touches AGENT_STATUSES or card.status; the reviewer id is stored in
+ * its own field.
  */
 export async function dispatchReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
+  const effective = await effectiveWorkModeFor({ project, cardId, store, port })
   if (card.status !== 'review') throw new Error(`评审会话只能用于 review 状态的卡片（当前 ${card.status}）`)
   if (typeof card.worktreePath !== 'string' || card.worktreePath === '') {
     throw new Error('评审会话需要 worktree：卡片尚无 worktreePath')
@@ -498,18 +513,21 @@ export async function dispatchReview({ store, cardId, port, locale = 'zh', note,
   // Never infer it from commitSha or the current HEAD; never accept it from the model.
   const previousReviewedHead = typeof card.reviewVerdict?.reviewedHead === 'string'
     ? card.reviewVerdict.reviewedHead : null
-  const makeSetup = (reviewOptions = {}) => makeAgentSetup({
+  // Pass the real setup, not a factory: agent-loop awaits it and then calls
+  // setupCommit?.commit(). Host must not have to infer factory expansion from
+  // sandboxMode === 'read-only' (review sessions no longer use that value).
+  const setup = makeAgentSetup({
     store, cardId, locale, reviewMode: true, presetId,
-    review: { reviewedHead, previousReviewedHead, rereview, ...reviewOptions },
+    review: { reviewedHead, previousReviewedHead, rereview },
   })
   const firstMessage = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview, locale })
   const created = await port.createSession({
     cwd: card.worktreePath,
     permission: project.defaultPermission,
-    workMode: 'workspace-write',
-    sandboxMode: 'read-only',
+    workMode: effective.workMode,
+    permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
     model: project.defaultModel,
-    setup: makeSetup,
+    setup,
     firstMessage,
   })
   store.setReviewSession(cardId, created.sessionId, 'created')
@@ -522,6 +540,7 @@ export async function dispatchReview({ store, cardId, port, locale = 'zh', note,
  */
 export async function followupReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
+  const effective = await effectiveWorkModeFor({ project, cardId, store, port })
   if (card.status !== 'review') throw new Error(`复评只能用于 review 状态的卡片（当前 ${card.status}）`)
   const previousSessionId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : null
   if (previousSessionId === null) return dispatchReview({ store, cardId, port, locale, note, presetId })
@@ -533,15 +552,15 @@ export async function followupReview({ store, cardId, port, locale = 'zh', note,
   const previousReviewedHead = typeof card.reviewVerdict?.reviewedHead === 'string'
     ? card.reviewVerdict.reviewedHead : null
   const message = reviewMessage({ card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead, note, rereview, locale })
-  const makeSetup = (reviewOptions = {}) => makeAgentSetup({
+  const setup = makeAgentSetup({
     store, cardId, locale, reviewMode: true, presetId,
-    review: { reviewedHead, previousReviewedHead, rereview, ...reviewOptions },
+    review: { reviewedHead, previousReviewedHead, rereview },
   })
 
   const active = typeof port.isSessionActive === 'function' && await port.isSessionActive(previousSessionId)
   if (active) {
     try {
-      await port.followupSession({ sessionId: previousSessionId, message, sandboxMode: 'read-only' })
+      await port.followupSession({ sessionId: previousSessionId, message, workMode: effective.workMode })
       store.setReviewSession(cardId, previousSessionId, 'reused')
       return { sessionId: previousSessionId, mode: 'followup', reviewedHead, rereview }
     } catch { /* a stale/mismatched live reviewer falls through to resume */ }
@@ -549,8 +568,10 @@ export async function followupReview({ store, cardId, port, locale = 'zh', note,
   if (typeof port.resumeSession === 'function') {
     try {
       const created = await port.resumeSession({
-        resumeSessionId: previousSessionId, cwd: card.worktreePath, setup: makeSetup,
-        firstMessage: message, sandboxMode: 'read-only',
+        resumeSessionId: previousSessionId, cwd: card.worktreePath, setup,
+        workMode: effective.workMode,
+        permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
+        firstMessage: message,
       })
       store.setReviewSession(cardId, created.sessionId, 'recreated')
       return { sessionId: created.sessionId, mode: 'resumed', reviewedHead, rereview }
@@ -559,10 +580,10 @@ export async function followupReview({ store, cardId, port, locale = 'zh', note,
   const created = await port.createSession({
     cwd: card.worktreePath,
     permission: project.defaultPermission,
-    workMode: 'workspace-write',
-    sandboxMode: 'read-only',
+    workMode: effective.workMode,
+    permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
     model: project.defaultModel,
-    setup: makeSetup,
+    setup,
     firstMessage: message,
   })
   store.setReviewSession(cardId, created.sessionId, 'recreated')
@@ -687,8 +708,9 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
     async createSession({ cwd, setup, firstMessage, model: projectModel, permission, workMode, sandboxMode, permissionPreset, presetId }) {
       // The work mode is authoritative; `permission` (project.defaultPermission)
       // is kept for API compatibility only and no longer gates dispatch.
-      // A review session overrides the file boundary to read-only regardless of
-      // the project's work mode (PRD §5.12 / AC34).
+      // Review and build callers both pass only workMode; the host derives the
+      // sandbox from it. An explicit sandboxMode stays available for callers
+      // that genuinely need to pin a boundary.
       const expectedMode = sandboxMode ?? requiredModeForWorkMode(workMode)
       // A caller on the auto-review tier must explicitly ask for the preset;
       // otherwise the port would grant full access with no per-tool review.
@@ -726,9 +748,9 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
       // so it does not affect turn accounting.
       const seed = [{ type: 'sandbox/mode', seq: 0, time: Date.now(), data: { mode: expectedMode } }]
       const sessionId = randomUUID()
-      // Review paths pass a setup FACTORY so the host can inject the live
-      // sandbox reader (agent.session) into the review context. Plain paths
-      // still pass a plain function and are unchanged.
+      // Generic explicit read-only callers may pass a setup factory that wants
+      // the live sandbox reader injected. Review paths now pass an already
+      // expanded setup, so they never depend on sandboxMode to get there.
       const resolvedSetup = typeof setup === 'function' && sandboxMode === 'read-only'
         ? setup({ readSandboxMode: (agent) => sandboxPolicy.resolve({ session: agent?.session }).mode })
         : setup
@@ -750,6 +772,24 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
             throw new Error('无法派发会话：宿主未能选中 auto 权限预设；拒绝以未审查权限运行')
           }
           assertSandboxMode(handle.agent?.session, 'danger-full-access')
+        } else {
+          // The sandbox seed alone leaves approval at the profile default
+          // (ask), so current() derives "custom". Select the named preset to
+          // make both knobs match; set() writes only the differing knob.
+          const namedPreset = namedPresetForWorkMode(workMode, sandboxMode)
+          if (namedPreset !== null && permissionPresets !== undefined && permissionPresets !== null
+            && typeof permissionPresets.set === 'function') {
+            if (typeof permissionPresets.current !== 'function') {
+              throw new Error('无法派发会话：宿主 permissionPresets 缺少 current()，无法回读权限预设')
+            }
+            permissionPresets.set(handle.agent?.session, namedPreset)
+            const selected = permissionPresets.current(handle.agent?.session)
+            if (selected !== namedPreset) {
+              throw new Error(`无法派发会话：宿主未能选中 ${namedPreset} 权限预设（当前 ${selected}）`)
+            }
+            // set() must not widen the sandbox; verify the boundary again.
+            assertSandboxMode(handle.agent?.session, expectedMode)
+          }
         }
         if (presetId !== undefined && agentPresets !== undefined && agentPresets !== null
           && typeof agentPresets.presetForSession === 'function') {
@@ -794,6 +834,20 @@ export function createHostPort({ ctx, createUserMessage } = {}) {
           permissionPresets.set(handle.agent?.session, 'auto')
           if (permissionPresets.current(handle.agent?.session) !== 'auto') {
             throw new Error('无法派发会话：宿主未能选中 auto 权限预设；拒绝以未审查权限运行')
+          }
+        } else {
+          const namedPreset = namedPresetForWorkMode(workMode, sandboxMode)
+          if (namedPreset !== null && permissionPresets !== undefined && permissionPresets !== null
+            && typeof permissionPresets.set === 'function') {
+            if (typeof permissionPresets.current !== 'function') {
+              throw new Error('无法派发会话：宿主 permissionPresets 缺少 current()，无法回读权限预设')
+            }
+            permissionPresets.set(handle.agent?.session, namedPreset)
+            const selected = permissionPresets.current(handle.agent?.session)
+            if (selected !== namedPreset) {
+              throw new Error(`无法派发会话：宿主未能选中 ${namedPreset} 权限预设（当前 ${selected}）`)
+            }
+            assertSandboxMode(handle.agent?.session, expectedMode)
           }
         }
         await send(handle, firstMessage)

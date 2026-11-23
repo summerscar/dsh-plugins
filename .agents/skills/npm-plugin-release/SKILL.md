@@ -87,6 +87,7 @@ npm 上有 `latest` 之后才做（规则见 `site/AGENTS.md`）：
 - commit 前与 push 前**各 `git fetch origin main`**；远端领先用 `git rebase origin/main`（只改写本地未推送历史），禁止盲目 `git pull`（会生成无意义 merge commit）、禁止 `--force`。
 - `index.json` 是发布工作流拥有的生成物：`.husky/pre-commit` 在满足「本地落后 + 本次没动过 index.json」时会自动 `git checkout origin/main -- index.json` 采用远端副本。若 `pnpm check` 报它过期，重跑 `pnpm site:market`。
 - `git add` 用**精确文件列表**（如 `git add -- README.md README.zh-CN.md scripts/plugin-release-states.json plugins/.../...`），别用 `git add -A` 把 `.agents/`、`.scratch/`、临时产物裹进去。
+- 生命周期改动也要过这一关：**提交前用 `git status --short` 逐条确认工作树**，本轮只该有清单、README 及文档同步文件。自动交付/提交脏树的路径会把未跟踪文件一起带走——`dsh-factory` 的 PR #1 就是这样把 `.tmp-test/*.out` 和 `.tmp-npmmode-cache/**` 卷进 10 条提交里的，只有第一条是真正的 `draft → testing` 改动。临时输出写到工作树外或先确认忽略规则；具体纪律见 `.agents/skills/dsh-plugin-live-verification` 第十一节。
 
 ## 常见翻车点
 

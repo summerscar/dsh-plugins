@@ -26,6 +26,8 @@ Review both sides of the union:
 
 Together they equal `git diff $(git merge-base <base> HEAD)` (base commit against the working tree). Record the full `HEAD` SHA and note whether the working tree was dirty; everything below applies to the whole union.
 
+Untracked files in that union must belong to the card. Temporary command output, test logs, caches and scratch files are not part of the change: at `auto-delivery` the engine commits the dirty tree including untracked files, so flag them in the self-check and have them removed or ignored before hand-off.
+
 ## What to check
 
 - **Correctness** — does the change fix the stated problem and not break existing behavior?

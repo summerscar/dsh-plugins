@@ -300,7 +300,9 @@ test('P2a review seed is sandbox/mode=read-only and assertSandboxMode verifies r
   assert.equal(seen.disposed, 0)
 })
 
-test('P2a full-access project still gets a read-only review session', async () => {
+// Review dispatch no longer pins read-only, but the host still honors an
+// explicit sandboxMode from any caller that genuinely needs to pin a boundary.
+test('P2a host still honors an explicit sandboxMode pin from a caller', async () => {
   const { ctx, seen } = makeHostCtx({ resolvedMode: 'read-only' })
   const port = createHostPort({ ctx, createUserMessage: USER_MSG })
   await port.createSession({ cwd: '/workspace/p', setup: () => {}, firstMessage: 'go', workMode: 'full-access', sandboxMode: 'read-only' })
@@ -326,17 +328,19 @@ test('P2a review sandbox reading comes from the host resolver, not a caller stri
   assert.equal(seen.disposed, 1)
 })
 
-test('P2a dispatchReview passes host-derived sandbox reader and backend git head into setup', async () => {
+test('P2a dispatchReview follows project workMode and backend git head into setup', async () => {
   const f = setup({ workMode: 'full-access' })
   try {
-    const { ctx, seen } = makeHostCtx({ resolvedMode: 'read-only' })
+    // Review follows the project workMode; no explicit read-only sandbox is
+    // passed, so the host resolves the full-access project to danger-full-access.
+    const { ctx, seen } = makeHostCtx({ resolvedMode: 'danger-full-access' })
     const port = createHostPort({ ctx, createUserMessage: USER_MSG })
     const out = await dispatchReview({ store: f.store, cardId: f.card.id, port: Object.assign(port, { readHead: f.repo.head }) })
     const card = f.store.getCard(f.card.id)
     assert.equal(card.reviewSessionId, out.sessionId)
-    assert.notEqual(card.reviewSessionId, card.sessionId)
+    assert.notEqual(card.reviewSessionId, card.sessionId, 'reviewer id is recorded separately from the builder session')
     assert.equal(out.reviewedHead, f.repo.head(), 'head comes from backend git')
-    assert.equal(seen.create.seed.find((e) => e.type === 'sandbox/mode').data.mode, 'read-only', 'full-access project still read-only')
+    assert.equal(seen.create.seed.find((e) => e.type === 'sandbox/mode').data.mode, 'danger-full-access', 'full-access project gets a writable review sandbox')
     assert.equal(typeof seen.create.setup, 'function')
     assert.notEqual(seen.disposed, 1)
   } finally { f.cleanup() }
