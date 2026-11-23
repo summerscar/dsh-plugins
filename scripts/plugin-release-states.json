@@ -29,10 +29,10 @@
     },
     {
       "name": "@summerscar/dsh-factory",
-      "state": "draft",
+      "state": "testing",
       "reason": {
-        "zh": "新插件，源码已入库但尚未发布 npm；首次发布前保持草稿状态。",
-        "en": "New plugin; the source is in the repository but not yet published to npm. Stays in draft until the first release."
+        "zh": "首次交付验收中；等待 Trusted Publisher 绑定与明确授权后执行首发。",
+        "en": "First-release acceptance in progress; publishing awaits Trusted Publisher setup and explicit authorization."
       }
     }
   ]
