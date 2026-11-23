@@ -155,6 +155,8 @@ window.__ModuleLoader__.load({
       returnWithAutoApproveNotice: "这张计划评审卡会在下一 tick 被自动批准。",
       actReturnToInbox: "退回 Inbox", notePromptReturnInbox: "说明缺少的信息，卡片会回到 Inbox 等你补充。",
       actResupply: "补充信息并重新派发", notePromptResupply: "补充信息（必填）：",
+      notePreviousReason: "上次退回原因：",
+      noteResupplyGuidance: "本次请补充新的说明后提交。",
       actCommitExisting: "确认提交（回炉）", actPushExisting: "推送更新草稿 PR",
       axisTitle: "自动化程度", axisHint: "越往右机器走得越远；自动化停在哪一步见下方。",
       currentLevel: "当前：L{level}", ariaLevel: "L{n}，五档中的第 {ordinal} 档",
@@ -282,6 +284,23 @@ window.__ModuleLoader__.load({
       needsOrphan: "孤儿会话",
       orphanBadge: "孤儿卡",
       orphanWhy: "这张卡留有 worktree 或会话痕迹，但宿主已找不到对应会话。\n① 引擎不会自动清理，也不会自动重建——避免产生重复的 worktree / 会话；\n② 如何处理由你决定。",
+      flowInboxAuto: "自动处理中：下次引擎检查（约 60 秒）会自动派发；也可点「派发给 AI」立即开始。",
+      flowInboxManual: "需手动处理：本档位不自动派发，请点「派发给 AI」。",
+      flowTriageAuto: "自动处理中：会话正在整理任务，完成后自动进入计划。",
+      flowPlanAuto: "自动处理中：会话正在生成计划，完成后进入待批准计划。",
+      flowPlanReviewAuto: "自动处理中：下次引擎检查（约 60 秒）会自动批准计划并继续实现；也可点「批准计划」立即开始。",
+      flowPlanReviewManual: "需手动处理：请点「批准计划」或「退回修改计划」。",
+      flowBuildAuto: "自动处理中：会话正在实现，完成后自动进入待评审。",
+      flowReviewAuto: "自动处理中：引擎将派出评审；approved 且无阻断项后自动提交、推送并开草稿 PR；标记完成仍需你。",
+      flowReviewManual: "需手动处理：评审通过后请确认提交、创建 PR 并标记完成；评审未通过请先退回构建。",
+      flowDone: "已完成，无后续自动步骤。",
+      flowCanceled: "已放弃，无后续自动步骤；需要的话点「删除卡片」。",
+      flowPaused: "自动推进已暂停：恢复项目或引擎后继续；等待期间仍可手动处理。",
+      flowCapacity: "自动处理排队中：并发名额已满，有名额后继续。",
+      flowTakenOver: "已接管：引擎不会推进此卡；请手动处理，或点「交还引擎」。",
+      flowNeedsInfo: "需手动处理：请先「补充信息并重新派发」。",
+      flowStalled: "需手动处理：自动派发已停止，请人工决定如何处理。",
+      flowSessionStopped: "需手动处理：会话已停止但卡片未结束，请手动派发或放弃这张卡。",
       orphanSessionLabel: "会话 ID",
       orphanStatusLabel: "发现时状态",
       orphanDeliveryLabel: "自动交付失败原因",
@@ -513,6 +532,8 @@ window.__ModuleLoader__.load({
       returnWithAutoApproveNotice: "This plan-review card will be auto-approved on the next tick.",
       actReturnToInbox: "Return to inbox", notePromptReturnInbox: "Describe the missing information; the card returns to Inbox for you to supply it.",
       actResupply: "Add info and redispatch", notePromptResupply: "Additional information (required):",
+      notePreviousReason: "Previous return reason: ",
+      noteResupplyGuidance: "Add your update below and submit.",
       actCommitExisting: "Confirm commit (rework)", actPushExisting: "Push update to draft PR",
       axisTitle: "Automation level", axisHint: "Further right, the machine goes further; see below for where it stops.",
       currentLevel: "Current: L{level}", ariaLevel: "L{n}, level {ordinal} of 5",
@@ -640,6 +661,23 @@ window.__ModuleLoader__.load({
       needsOrphan: "Orphan sessions",
       orphanBadge: "Orphan card",
       orphanWhy: "This card still has a worktree or session trace, but the host can no longer find the matching session.\n① The engine neither cleans up nor rebuilds it automatically, to avoid duplicates.\n② You decide how to handle it.",
+      flowInboxAuto: "Auto: the next engine check (about 60s) will dispatch this card; or click Dispatch to AI to start now.",
+      flowInboxManual: "Manual: this tier does not auto-dispatch. Click Dispatch to AI.",
+      flowTriageAuto: "Auto: the session is triaging the task, then moves to Plan automatically.",
+      flowPlanAuto: "Auto: the session is writing the plan, then stops at Plan review.",
+      flowPlanReviewAuto: "Auto: the next engine check (about 60s) approves the plan and continues; or click Approve plan now.",
+      flowPlanReviewManual: "Manual: click Approve plan or Return to plan.",
+      flowBuildAuto: "Auto: the session is building, then moves to Review automatically.",
+      flowReviewAuto: "Auto: the engine dispatches a reviewer; once approved with no blockers it commits, pushes and opens a draft PR. Marking done still needs you.",
+      flowReviewManual: "Manual: after an approved verdict, confirm commit, create PR and mark done; if not approved, return to build first.",
+      flowDone: "Done — no further automatic steps.",
+      flowCanceled: "Abandoned — no further automatic steps; use Delete card if needed.",
+      flowPaused: "Auto advancement is paused; it resumes after unpausing. Manual actions remain available.",
+      flowCapacity: "Queued for auto processing: concurrency slots are full; it continues when a slot frees.",
+      flowTakenOver: "Taken over: the engine won't advance this card; act manually or return it to the engine.",
+      flowNeedsInfo: "Manual: add the missing information and redispatch.",
+      flowStalled: "Manual: automatic dispatch has stopped; decide how to proceed.",
+      flowSessionStopped: "Manual: the session stopped but the card is still open; dispatch it manually or abandon the card.",
       orphanSessionLabel: "Session ID",
       orphanStatusLabel: "Status when found",
       orphanDeliveryLabel: "Auto-delivery failure",
@@ -940,7 +978,50 @@ window.__ModuleLoader__.load({
           : h('span', { key: index, title: row.text, style: badge(row) }, row.text)))
     }
 
-    function Card({ card, t, working, reviewWorking, tier, sessionRows, uiWorkspace, onOpenReports, orphan, onOpenOrphan }) {
+    /**
+     * One-line flow guidance for a card. Pure so the priority order is testable
+     * without a browser. Returns a locale key, or '' when an orphan/L4 review
+     * notice already owns the line (those cards keep their existing notice).
+     */
+    function cardFlowHintKey(ctx) {
+      const {
+        status, tier, autoDispatch, orphan, needsHumanInfo, takenOver,
+        paused, capacityHeld, stalled, sessionId, working,
+        reviewSessionId, reviewWorking, reviewVerdict, reviewStale, hasReviewNotice,
+      } = ctx
+      if (orphan) return 'orphanWhy'
+      if (hasReviewNotice) return ''
+      if (needsHumanInfo === true) return 'flowNeedsInfo'
+      if (takenOver === true) return 'flowTakenOver'
+      if (paused === true) return 'flowPaused'
+      if (capacityHeld === true) return 'flowCapacity'
+      if (stalled === true) return 'flowStalled'
+      const terminal = status === 'done' || status === 'canceled'
+      const freshApproval = reviewVerdict?.verdict === 'approved' && reviewStale !== true
+      // A review card's own session is the review session; a finished build
+      // session is normal there. Plan-review waits for a decision, not a
+      // session, so neither state gets the stopped-session hint.
+      const traceId = status === 'review' ? reviewSessionId : sessionId
+      const traceRunning = status === 'review' ? reviewWorking : working
+      if (!terminal && status !== 'plan-review' && traceId && traceRunning !== true && !(status === 'review' && freshApproval)) {
+        return 'flowSessionStopped'
+      }
+      const autoInbox = tier === 'machine-approve' || tier === 'auto-delivery' || (autoDispatch === true && tier === 'you-approve')
+      const autoPlan = tier === 'machine-approve' || tier === 'auto-delivery'
+      switch (status) {
+        case 'inbox': return autoInbox ? 'flowInboxAuto' : 'flowInboxManual'
+        case 'triage': return 'flowTriageAuto'
+        case 'plan': return 'flowPlanAuto'
+        case 'plan-review': return autoPlan ? 'flowPlanReviewAuto' : 'flowPlanReviewManual'
+        case 'build': return 'flowBuildAuto'
+        case 'review': return tier === 'auto-delivery' ? 'flowReviewAuto' : 'flowReviewManual'
+        case 'done': return 'flowDone'
+        case 'canceled': return 'flowCanceled'
+        default: return ''
+      }
+    }
+
+    function Card({ card, t, working, reviewWorking, tier, sessionRows, uiWorkspace, onOpenReports, orphan, onOpenOrphan, engine, project }) {
       const accent = STATUS_ACCENT[card.status] || T.muted
       const meta = (card.source && card.source !== 'manual' ? `${card.source} · ` : '') + card.status
       const fullBody = plainBodyText(card.body)
@@ -974,6 +1055,20 @@ window.__ModuleLoader__.load({
           : deliveryError !== ''
             ? t('autoDeliveryFailedNotice', { reason: deliveryError })
             : noVerdict ? t('reviewStalledNotice') : ''
+      // One line, below the meta row and above the action buttons. Pause and
+      // capacity come from the live /status snapshot already held by the page.
+      const engineProject = Array.isArray(engine?.projects)
+        ? engine.projects.find((row) => row && row.projectId === project?.id) : null
+      const flowKey = cardFlowHintKey({
+        status: card.status, tier, autoDispatch: project?.autoDispatch, orphan,
+        needsHumanInfo: card.needsHumanInfo === true, takenOver: card.takenOver === true,
+        paused: engine?.paused === true || project?.paused === true,
+        capacityHeld: Boolean(engineProject && (Number(engineProject.approvalHeld) > 0 || engineProject.action === 'queued')),
+        stalled: card.stalled === true,
+        sessionId: card.sessionId, working, reviewSessionId: card.reviewSessionId, reviewWorking,
+        reviewVerdict: card.reviewVerdict, reviewStale: card.reviewStale === true,
+        hasReviewNotice: noticeText !== '',
+      })
       return h('div', {
         className: busyClass,
         // The working glow is a CSS animation; an inline box-shadow would win
@@ -993,6 +1088,10 @@ window.__ModuleLoader__.load({
           style: { display: '-webkit-box', WebkitLineClamp: '2', WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', fontSize: '11.5px', lineHeight: 1.45, color: T.mutedInk },
         }, bodySummary),
         h('div', { key: 'meta', style: { fontSize: 11.5, color: T.mutedInk, lineHeight: 1.4 } }, meta),
+        flowKey === '' ? null : h('div', {
+          key: 'flowHint', title: t(flowKey),
+          style: { fontSize: 11, color: T.mutedInk, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        }, t(flowKey)),
         noticeText === '' ? null : h('div', {
           key: 'reviewNotice', title: noticeText,
           style: { fontSize: 11.5, color: T.warningInk, lineHeight: 1.4 },
@@ -1141,10 +1240,10 @@ window.__ModuleLoader__.load({
       // Ask for a note through an in-page modal, never a native browser prompt.
       // Resolves with the trimmed note, or null on cancel/empty — the caller's
       // `if (note === null) return` still aborts the request exactly as before.
-      const askNote = (message, notice) => new Promise((resolve) => {
+      const askNote = (message, notice, context) => new Promise((resolve) => {
         if (typeof onModal !== 'function') { resolve(null); return }
         onModal(h(NoteModal, {
-          message, notice, t,
+          message, notice, context, t,
           onSubmit: (value) => { onModal(null); resolve(value) },
           onCancel: () => { onModal(null); resolve(null) },
         }))
@@ -1163,7 +1262,13 @@ window.__ModuleLoader__.load({
       if (card.status === 'inbox') {
         if (card.needsHumanInfo === true) {
           add(t('actResupply'), async () => {
-            const note = await askNote(t('notePromptResupply'))
+            // The return note lives in history, not on the card body. Show it
+            // above this supplement as read-only context — never prefill it,
+            // or the backend would carry the same text twice into the prompt.
+            const previousReason = lastTriageReturnReason(card.history)
+            const context = previousReason === '' ? ''
+              : `${t('notePreviousReason')}${previousReason}\n${t('noteResupplyGuidance')}`
+            const note = await askNote(t('notePromptResupply'), undefined, context)
             if (note === null) return
             await callApi('POST', `/cards/${card.id}/resupply`, { note })
           })
@@ -1661,7 +1766,17 @@ window.__ModuleLoader__.load({
      * note, or nothing at all when cancelled — callers keep the old
      * `note === null` abort semantics. Empty/whitespace input cannot confirm.
      */
-    function NoteModal({ message, t, onSubmit, onCancel, notice }) {
+    /** Most recent non-empty explanation from a triage→inbox return. */
+    function lastTriageReturnReason(history) {
+      if (!Array.isArray(history)) return ''
+      for (let index = history.length - 1; index >= 0; index -= 1) {
+        const entry = history[index]
+        if (entry && entry.type === 'triage-return' && typeof entry.reason === 'string' && entry.reason.trim() !== '') return entry.reason
+      }
+      return ''
+    }
+
+    function NoteModal({ message, t, onSubmit, onCancel, notice, context }) {
       const [note, setNote] = useState('')
       return h(Modal, {
         title: t('notePromptTitle'),
@@ -1673,6 +1788,10 @@ window.__ModuleLoader__.load({
         t,
       }, [
         h('div', { key: 'hint', style: { fontSize: 12, color: T.mutedInk, lineHeight: 1.6, marginBottom: 8 } }, message),
+        context ? h('div', {
+          key: 'context',
+          style: { boxSizing: 'border-box', border: `1px solid ${T.line}`, borderRadius: T.radiusSm, background: T.panel, color: T.ink, fontSize: 12, lineHeight: 1.6, padding: '8px 10px', marginBottom: 10, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
+        }, context) : null,
         // Optional risk line (AC43). Kept separate from `message` so the
         // textarea placeholder stays short; warning tokens, never hardcoded.
         notice ? h('div', {
@@ -2945,7 +3064,7 @@ window.__ModuleLoader__.load({
         return h('div', { key: card.id, style: { display: 'flex', flexDirection: 'column', gap: 4 } }, [
           h(Card, {
             key: 'card', card, t, sessionRows, uiWorkspace, working, reviewWorking,
-            tier: project?.autonomy,
+            tier: project?.autonomy, engine, project,
             orphan: orphanByCard.get(card.id),
             onOpenOrphan: (c, o) => setPageModal(h(OrphanModal, { card: c, orphan: o, t, onClose: () => setPageModal(null) })),
             onOpenReports: (item) => setPageModal(h(ReportsModal, { card: item, t, onClose: () => setPageModal(null) })),

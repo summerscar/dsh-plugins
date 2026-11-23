@@ -51,13 +51,14 @@ test('Dev-AC43: risk notice and toast line are gated to the two auto-approve tie
 test('Dev-AC43: NoteModal notice never becomes the textarea placeholder', () => {
   const noteModal = client.slice(client.indexOf('function NoteModal('), client.indexOf('function AutonomySection('))
   assert.ok(noteModal.length > 0, 'NoteModal found')
-  assert.match(noteModal, /function NoteModal\(\{ message, t, onSubmit, onCancel, notice \}\)/, 'notice prop accepted')
+  assert.match(noteModal, /function NoteModal\(\{ message, t, onSubmit, onCancel, notice, context \}\)/, 'notice and read-only context props accepted')
   assert.match(noteModal, /placeholder: message/, 'placeholder stays the plain message')
   assert.doesNotMatch(noteModal, /placeholder: notice/, 'notice never becomes the placeholder')
   // Warning notice rendered between the hint and the textarea, using theme tokens.
   assert.match(noteModal, /notice \?[\s\S]{0,260}T\.warningWash[\s\S]{0,260}T\.warningInk[\s\S]{0,160}notice/)
   const hintAt = noteModal.indexOf("key: 'hint'")
+  const contextAt = noteModal.indexOf('context ?')
   const noticeAt = noteModal.indexOf('notice ?')
   const textareaAt = noteModal.indexOf("key: 'note'")
-  assert.ok(hintAt < noticeAt && noticeAt < textareaAt, 'notice sits between hint and textarea')
+  assert.ok(hintAt < contextAt && contextAt < noticeAt && noticeAt < textareaAt, 'context and notice sit between hint and textarea')
 })
