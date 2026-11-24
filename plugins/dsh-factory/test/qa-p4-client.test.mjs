@@ -65,7 +65,7 @@ function texts(node, out = []) {
 }
 
 const oneProject = {
-  projects: [{ id: 'p1', name: 'owner/demo', rootPath: '/workspace/demo', autonomy: 'manual', autoDispatch: true, paused: false }],
+  projects: [{ id: 'p1', name: 'owner/demo', rootPath: '/workspace/demo', paused: false }],
   boards: [{ id: 'b1', projectId: 'p1', name: 'main' }],
   cards: [],
   settings: { effectiveGlobalMaxActive: { value: 4, source: 'settings' }, projectDefaultMaxActive: 5, globalMaxActive: 4 },
@@ -83,40 +83,45 @@ function apiFetch(payload) {
 }
 
 // ---------------------------------------------------------------------------
-// P4-2 — the badge reads ONLY the saved semantic level, never the switch.
+// P4-2 — V4: no tier badge at all; the stage-rule panel is the control, and it
+// reads ONLY the saved phaseRules.
 // ---------------------------------------------------------------------------
 
-test('P4-2 source guard: badge is derived only from the saved tier', () => {
-  assert.match(clientSrc, /const saved = storedToLevel\(project\)/,
-    'saved level derives from the stored semantic autonomy field + switch')
-  assert.match(clientSrc, /t\(`lvL\$\{saved\}`\)/,
-    'badge text is selected by the saved level alone')
-  // The badge span colours itself off savedLevel and never reads the switch.
-  const badgeStart = clientSrc.indexOf("key: 'badge'")
-  const badgeBlock = clientSrc.slice(badgeStart, badgeStart + 400)
-  assert.ok(badgeStart > 0, 'badge render block found')
-  assert.match(badgeBlock, /LEVEL_META\[saved\]/)
-  assert.doesNotMatch(badgeBlock, /pending|confirmed|autoDispatch|autoApprove|autoStart/,
-    'badge block must not read any switch')
+test('P4-2 source guard: no tier badge; the stage-rule panel reads only the saved phaseRules', () => {
+  assert.doesNotMatch(clientSrc, /LEVEL_META|storedToLevel|levelToStored/, 'the tier mapping is gone from the client')
+  assert.match(clientSrc, /function StageConfigSection\(/)
+  const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
+  assert.match(section, /useState\(project\?\.phaseRules \?\? defaults\)/, 'rules read the saved phaseRules, falling back to the full-auto default only when the field is absent')
+  // The badge in this section is a static "default" marker, never a state.
+  const badgeStart = section.indexOf("key: 'badge'")
+  const badgeBlock = section.slice(badgeStart, badgeStart + 300)
+  assert.match(badgeBlock, /stageDefaultBadge/)
+  assert.doesNotMatch(badgeBlock, /autoDispatch|pending|confirmed/, 'the badge block must not read any switch')
 })
 
-test('P4-2 render: manual with stale switch still shows the manual badge, not auto-running', () => {
+test('P4-2 render: the main page renders with no tier text at all', () => {
   const slots = loadClientModule({ fetchImpl: apiFetch(oneProject) })
   const main = slots.find((s) => s.o.name === 'main')
   assert.ok(main, 'main page registered')
   const tree = main.C({ t: (k) => k })
   assert.ok(tree && typeof tree === 'object', 'page renders')
+  const all = texts(tree).join('\n')
+  // The panel itself lives in the project-scope settings branch (gated on the
+  // selected project, unreachable with a frozen useState shim); the naming
+  // test covers its dictionary keys and the P4-2 source guard covers the wiring.
+  // What this render proves: no tier copy anywhere on the default view.
+  for (const k of ['lvManual', 'lvYouApprove', 'lvMachineApprove', 'badgeManual', 'badgeYouApprove', 'badgeMachineApprove']) {
+    assert.doesNotMatch(all, new RegExp(k), `${k} does not render`)
+  }
   const inlineZh = captureZh()
-  assert.equal(inlineZh.badgeManual, '手动')
-  assert.equal(inlineZh.badgeYouApprove, '你批准')
-  assert.equal(inlineZh.badgeMachineApprove, '机器批准')
-  // No legacy badge keys survive.
-  for (const k of ['badgeL0', 'badgeL1', 'badgeL2']) assert.equal(k in inlineZh, false, `${k} deleted`)
+  for (const k of ['badgeL0', 'badgeL1', 'badgeL2', 'lvManual', 'lvYouApprove', 'lvMachineApprove']) assert.equal(k in inlineZh, false, `${k} deleted`)
+  assert.match(inlineZh.stageConfigTitle, /自动化流程/, 'the panel title is the stage-rule wording')
 })
 
 // ---------------------------------------------------------------------------
-// Naming — the user required plain-language level names; "半自动/Assisted"
-// must be gone everywhere in the client dictionaries.
+// Naming — V4: tier level and badge names are gone; the stage names are plain
+// language, mirrored in zh and en.
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 function captureZh() {
@@ -138,41 +143,40 @@ function captureZh() {
   return JSON.parse(JSON.stringify(dicts.zh))
 }
 
-test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE names', () => {
+test('naming: tier level and badge names are gone; stage-rule keys are mirrored in zh/en', () => {
   const zh = captureZh()
   const en = (() => {
     let dicts = null
     const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f, useRef: (v) => ({ current: v }) }
     const sandbox = {
       window: { __ModuleLoader__: { load: (def) => { sandbox.__def = def } } },
-      require: (n) => shim, fetch: async () => ({ ok: true, text: async () => '{}' }), console,
+      require: (n) => { if (n === 'react') return shim; throw new Error(n) },
+      fetch: async () => ({ ok: true, text: async () => '{}' }), console,
     }
     vm.runInNewContext(clientSrc, sandbox)
     const mod = sandbox.__def.factory(sandbox.require)
     mod.apply({ effect: (f) => { f(); return () => {} }, locale: { register: (_n, d) => { dicts = d; return () => {} }, bind: () => (k) => k }, slots: { inject: (_o, cb) => cb(), register: () => () => {} } })
     return JSON.parse(JSON.stringify(dicts.en))
   })()
-  // Three semantic levels with plain-language names; switch has its own label.
-  const levelAndBadge = ['lvManual', 'lvYouApprove', 'lvMachineApprove', 'badgeManual', 'badgeYouApprove', 'badgeMachineApprove']
-  for (const key of levelAndBadge) {
-    assert.doesNotMatch(String(zh[key]), /半自动|L[012]/, `${key} zh must not say 半自动 or L0/L1/L2`)
-    assert.doesNotMatch(String(en[key]), /Assisted|Auto-approve|L[012]/i, `${key} en must not say Assisted/Auto-approve/L0-L2`)
+  // Every legacy tier key: zero survivors, in both languages.
+  for (const k of ['lvManual', 'lvYouApprove', 'lvMachineApprove', 'badgeManual', 'badgeYouApprove', 'badgeMachineApprove',
+    'lvL0', 'lvL1', 'lvL2', 'lvL3', 'lvL4', 'leL0End', 'leL4End', 'autoDispatchLabel']) {
+    assert.equal(k in zh, false, `zh ${k} deleted`)
+    assert.equal(k in en, false, `en ${k} deleted`)
   }
-  assert.equal(zh.lvManual, '手动')
-  assert.equal(zh.lvYouApprove, '你批准')
-  assert.equal(zh.lvMachineApprove, '机器批准')
-  assert.equal(en.lvYouApprove, 'You approve')
-  assert.equal(en.lvMachineApprove, 'Machine approves')
-  for (const n of [0, 1, 2, 3, 4]) {
-    assert.equal(zh[`lvL${n}`], `L${n}`)
-    assert.equal(en[`lvL${n}`], `L${n}`)
+  // The stage names exist and are plain language: no L codes, no 半自动/Assisted.
+  for (const k of ['stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview']) {
+    assert.equal(typeof zh[k], 'string', `zh has ${k}`)
+    assert.doesNotMatch(zh[k], /半自动|L[0-4]/, `${k} zh is plain language`)
+    assert.equal(typeof en[k], 'string', `en has ${k}`)
+    assert.doesNotMatch(en[k], /Assisted|L[0-4]/i, `${k} en is plain language`)
   }
-  assert.equal(en.autoDispatchLabel, 'Auto-dispatch new cards')
-  assert.notEqual(en.lvMachineApprove, en.autoDispatchLabel, 'level name and switch label differ')
-  // No legacy keys or switch names survive.
-  for (const k of ['badgeL0', 'badgeL1', 'badgeL2', 'autoStart', 'autoApprove']) {
-    assert.equal(k in zh, false, `${k} deleted`)
-  }
+  // The narrowing-only rule is stated in both languages.
+  assert.match(zh.whenAdvancedHint, /收窄|不能放宽/, 'zh states the narrowing-only rule')
+  assert.match(en.whenAdvancedHint, /narrow|cannot be widened/i, 'en states the narrowing-only rule')
+  // No 半自动 / Assisted copy survives anywhere in either dictionary value.
+  for (const [k, v] of Object.entries(zh)) if (typeof v === 'string') assert.doesNotMatch(v, /半自动/, `${k} zh value`)
+  for (const [k, v] of Object.entries(en)) if (typeof v === 'string') assert.doesNotMatch(v, /Assisted/i, `${k} en value`)
 })
 
 // ---------------------------------------------------------------------------
@@ -180,11 +184,11 @@ test('naming: legacy 半自动 / Assisted are gone from the LEVEL and BADGE name
 // form originals. Guard the exact save() call shape.
 // ---------------------------------------------------------------------------
 
-test('P4-3 source guard: save() PATCHes the mapped tier and re-reads it from the response', () => {
-  assert.match(clientSrc, /const next = levelToStored\(confirmed\)/, 'save sends tier + mapped autoDispatch only')
-  assert.match(clientSrc, /const data = await callApi\('PATCH'/, 'save() reads back the server project')
-  assert.match(clientSrc, /const actual = storedToLevel\(data\.project\)/, 'pending level adopts the read-back value')
-  assert.doesNotMatch(clientSrc, /autoStart|autoApprove/, 'no legacy switch in client live code')
+test('P4-3 source guard: save() PATCHes phaseRules and adopts the server read-back', () => {
+  const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
+  assert.match(section, /callApi\('PATCH', `\/projects\/\$\{encodeURIComponent\(project\.id\)\}`, \{ phaseRules: next \}\)/, 'save PATCHes the rule object only')
+  assert.match(section, /setRules\(data\.project\.phaseRules \?\? next\)/, 'the panel adopts the server read-back, never the form original')
+  assert.doesNotMatch(section, /levelToStored|storedToLevel|LEVEL_META/, 'no tier mapping left in the panel')
 })
 
 // ---------------------------------------------------------------------------

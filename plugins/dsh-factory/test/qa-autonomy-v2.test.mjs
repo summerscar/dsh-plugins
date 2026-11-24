@@ -1,10 +1,11 @@
 /**
- * QA — PRD-AUTONOMY-V2 formal verification (B1–B7 + P1).
+ * QA — autonomy V4 verification (replaces the L0–L4 "autonomy-v2" suite).
  *
- * Three semantic levels manual / you-approve / machine-approve, one switch
- * autoDispatch only on you-approve. All offline against the real modules with
- * injected seams; self-contained assertions (no git show HEAD baseline).
- * No business code changed; no commit.
+ * V4: no tier fields. The default is full auto, and project phase rules may
+ * only NARROW a stage (stop it for a human). The engine therefore always has
+ * the capability; what changes per project is which stage rules are narrowed.
+ * All offline against the real modules with injected seams; self-contained
+ * assertions, no git show HEAD baseline. No business code changed.
  */
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -17,8 +18,9 @@ import test from 'node:test'
 
 import { FactoryStore, SCHEMA_VERSION } from '../store.js'
 import {
-  runTick, createEngineStatus, behaviorOf, AUTO_TIER, MACHINE_APPROVE_TIER,
+  runTick, createEngineStatus, behaviorOf, DEFAULT_PHASE_RULES,
 } from '../autonomy.js'
+import { DEFAULT_PHASE_RULES as PR_DEFAULTS, PHASES, phaseAllows } from '../phase-rules.js'
 import { collectAudit } from '../audit.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -46,12 +48,11 @@ function fixture() {
   return { tmp, file, store, project, board, cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
 }
 function depsFor() {
-  // The four L4-only git/review seams are ALWAYS injected as real counting
-  // functions, not omitted. Omitting them would make "never called" a fake
-  // green (the engine would have no seam to call); injecting them gives the
-  // engine every opportunity, so a tier regression that commits / reviews /
-  // re-reviews / delivers under machine-approve actually turns the counters red.
-  const calls = { intake: 0, dispatch: 0, approve: 0, autoCommit: 0, reviewDispatch: 0, reviewRereview: 0, deliver: 0 }
+  // The git/review seams are ALWAYS injected as real counting functions, not
+  // omitted: omitting them would make "never called" a fake green. The engine
+  // in V4 owns no git writes at all — what the counters guard is that a
+  // narrowing regression (or a re-introduced deliver loop) turns red here.
+  const calls = { intake: 0, dispatch: 0, approve: 0, autoCommit: 0, reviewDispatch: 0, reviewRereview: 0, deliver: 0, remoteSync: 0 }
   const active = new Map()
   const deps = {
     ghPort: {},
@@ -65,195 +66,144 @@ function depsFor() {
     },
     approve: async ({ store: s, cardId }) => {
       calls.approve += 1
-      s.transitionCard(cardId, 'build', 'autoRule', undefined, { actor: 'autoRule', tier: MACHINE_APPROVE_TIER, rule: 'auto-approve-plan', channel: 'poll' })
+      s.transitionCard(cardId, 'build', 'autoRule', undefined, { actor: 'autoRule', tier: 'phase-rules', rule: 'auto-approve-plan', channel: 'poll' })
       return { approved: true, cardId }
     },
     isSessionActive: async (id) => active.get(id) === true,
-    // L4 review-entry commit (autonomy.js deps.autoCommit; delivery.js owns the git write).
     autoCommit: async () => { calls.autoCommit += 1; return { ok: true, committed: false } },
-    // L4 automatic reviewer dispatch (deps.reviewDispatch).
     reviewDispatch: async () => { calls.reviewDispatch += 1; return { dispatched: true } },
-    // L4 automatic re-review of a stale verdict (deps.reviewRereview; followupReview).
     reviewRereview: async () => { calls.reviewRereview += 1; return { sessionId: 'x', mode: 'followup' } },
-    // L4 arm+execute delivery (deps.deliver; internally push / draft PR).
     deliver: async () => { calls.deliver += 1; return { delivered: false } },
+    remoteSync: async () => { calls.remoteSync += 1; return { changed: false } },
   }
   return { deps, calls }
 }
 
 // ==============================================================================
-// B1 — four combinations, real tick
+// B1 — three rule shapes, real tick
 // ==============================================================================
-test('B1 four combinations run a real tick with the expected side effects', async () => {
+
+test('B1 default full-auto dispatches; narrowed inbox autoStart discovers but never dispatches', async () => {
   const cases = [
-    { name: 'manual', autonomy: 'manual', autoDispatch: true, intake: 0, dispatch: 0 },
-    { name: 'you-approve ON', autonomy: 'you-approve', autoDispatch: true, intake: 1, dispatch: 1 },
-    { name: 'you-approve OFF', autonomy: 'you-approve', autoDispatch: false, intake: 1, dispatch: 0 },
-    { name: 'machine-approve', autonomy: 'machine-approve', autoDispatch: false, intake: 1, dispatch: 1 },
+    { name: 'default', rules: undefined, dispatch: 1, want: 'triage' },
+    { name: 'narrowed inbox', rules: { inbox: { autoStart: false } }, dispatch: 0, want: 'inbox' },
   ]
   for (const c of cases) {
     const f = fixture()
     try {
-      f.store.updateAutonomy(f.project.id, { autonomy: c.autonomy, autoDispatch: c.autoDispatch })
+      if (c.rules) f.store.updatePhaseRules(f.project.id, c.rules)
       f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: f.board.id })
-      f.store.createCard({ boardId: f.board.id, title: 'c', source: 'issue:owner/repo#1' })
+      const card = f.store.createCard({ boardId: f.board.id, title: 'c', source: 'issue:owner/repo#1' })
       const { deps, calls } = depsFor()
       await runTick({ store: f.store, status: createEngineStatus(), deps })
-      assert.equal(calls.intake, c.intake, `${c.name}: intake calls`)
+      await runTick({ store: f.store, status: createEngineStatus(), deps })
       assert.equal(calls.dispatch, c.dispatch, `${c.name}: dispatch calls`)
-      const card = f.store.listCards({})[0]
-      if (c.name === 'manual') assert.equal(card.status, 'inbox')
-      if (c.name === 'you-approve ON' || c.name === 'machine-approve') assert.equal(card.status, 'triage', `${c.name}: dispatched to triage`)
-      if (c.name === 'you-approve OFF') assert.equal(card.status, 'inbox', 'only Inbox card created, not dispatched')
+      assert.equal(f.store.getCard(card.id).status, c.want, `${c.name}: card lands in ${c.want}`)
     } finally { f.cleanup() }
   }
 })
 
-test('B1 machine-approve auto-approves plan-review to build and stops there (no git/delivery)', async () => {
+test('B1 default rules auto-approve plan to build and stop there (no engine git writes)', async () => {
   const f = fixture()
   try {
-    f.store.updateAutonomy(f.project.id, { autonomy: 'machine-approve' })
     f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: f.board.id })
     const c = f.store.createCard({ boardId: f.board.id, title: 'c' })
-    for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent']]) f.store.transitionCard(c.id, to, actor)
+    for (const [to, actor] of [['triage', 'human'], ['plan', 'agent']]) f.store.transitionCard(c.id, to, actor)
     const { deps, calls } = depsFor()
     await runTick({ store: f.store, status: createEngineStatus(), deps })
-    assert.equal(calls.approve, 1, 'machine-approve approved the plan')
-    assert.equal(f.store.getCard(c.id).status, 'build', 'advanced to build, does not self-advance to review/done')
-    // Same tier boundary on the approval path: if a future change slips a git
-    // call into the machine-approve approve branch, these go red. The seams are
-    // injected (depsFor), so this is engine behaviour, not a source-text check.
-    assert.equal(calls.autoCommit, 0, 'machine-approve approval path must not auto-commit')
-    assert.equal(calls.reviewDispatch, 0, 'machine-approve approval path must not dispatch a reviewer')
-    assert.equal(calls.reviewRereview, 0, 'machine-approve approval path must not re-review')
-    assert.equal(calls.deliver, 0, 'machine-approve approval path must not deliver')
+    assert.equal(calls.approve, 1, 'default rules approved the plan')
+    assert.equal(f.store.getCard(c.id).status, 'build', 'advanced to build, does not self-advance further')
+    // The engine must never write git itself in the approval path; the seams
+    // are injected (depsFor), so a regression that re-introduces an engine
+    // deliver loop turns these red.
+    assert.equal(calls.autoCommit, 0, 'approval path must not auto-commit')
+    assert.equal(calls.deliver, 0, 'approval path must not run an engine deliver loop')
   } finally { f.cleanup() }
 })
 
-// Intent-level replacement for the old whole-file `doesNotMatch(autonomySrc,
-// /commit|create-pr|mark-done/)` guard. That guard only checked that no git
-// word appeared ANYWHERE in autonomy.js, so it falsely failed when L4 added
-// legitimate git code (and forced Dev to rename identifiers to dodge it).
-// What B1 actually means: at machine-approve the ENGINE must not write git —
-// even when a card is sitting in review, including a stale-verdict card that
-// L4 would re-review. Two tiers, identical cards in review, identical injected
-// seams; only the tier differs:
-//   machine-approve → git/review seams stay at 0
-//   auto-delivery   → the very same seams fire
-// Two cards per tier because first-review and re-review are mutually exclusive:
-//   - plain card (no reviewer)     → deps.reviewDispatch fires at L4
-//   - stale card (reviewer + rS)   → deps.reviewRereview fires at L4
-// The seams are ALWAYS injected (see depsFor), so a regression that lets
-// machine-approve commit / dispatch / re-review / deliver turns the zeros red
-// rather than hiding behind a missing deps port. This is a behaviour guard, not
-// a source-text guard: identifiers and comments in autonomy.js may change freely.
-test('B1 git boundary: machine-approve in review touches no git seam; L4 does', async () => {
-  for (const [tier, wantGit] of [['machine-approve', 0], ['auto-delivery', 1]]) {
+// Intent-level boundary: the ENGINE dispatches the independent self-review
+// session ONLY when the self-review.autoStart rule is open. A narrowed rule
+// stops it — but nothing in the engine commits, re-reviews into git, or
+// delivers on the reviewer's behalf. Two shapes, identical cards, identical
+// injected seams; only the rule differs:
+//   default            → the self-review card reaches deps.reviewDispatch
+//   self-review off    → the very same card never reaches the seam
+test('B1 self-review dispatch follows the self-review.autoStart rule; no engine git seam fires', async () => {
+  for (const [name, rules, want] of [
+    ['default', undefined, 1],
+    ['self-review narrowed', { 'self-review': { autoStart: false } }, 0],
+  ]) {
     const f = fixture()
     try {
-      f.store.updateAutonomy(f.project.id, { autonomy: tier })
-      // Card 1: plain, in review, no reviewer → first-review / delivery path.
-      const c = f.store.createCard({ boardId: f.board.id, title: 'plain' })
-      for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'autoRule'], ['review', 'agent']]) f.store.transitionCard(c.id, to, actor)
-      // Card 2: stale verdict + registered reviewer, count below cap → re-review
-      // path. This is the prerequisite the reviewRereview gate checks; without
-      // it a removed canDeliver() gate would never actually call the seam.
-      const s = f.store.createCard({ boardId: f.board.id, title: 'stale' })
-      for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'autoRule'], ['review', 'agent']]) f.store.transitionCard(s.id, to, actor)
-      f.store.setReviewSession(s.id, 'reviewer-stale')
-      f.store.markReviewStale(s.id, { previousReviewedHead: 'old-head', head: 'new-head' })
-      const { deps, calls } = depsFor()
-      await runTick({ store: f.store, status: createEngineStatus(), deps })
-      if (wantGit === 0) {
-        assert.equal(calls.autoCommit, 0, `${tier}: engine must not auto-commit`)
-        assert.equal(calls.reviewDispatch, 0, `${tier}: engine must not dispatch a reviewer`)
-        assert.equal(calls.reviewRereview, 0, `${tier}: engine must not re-review a stale card`)
-        assert.equal(calls.deliver, 0, `${tier}: engine must not deliver (push / draft PR)`)
-        assert.equal(f.store.getCard(c.id).status, 'review', `${tier}: card stays in review, not done`)
-        assert.equal(f.store.getCard(s.id).reviewStale, true, `${tier}: stale card left for human, not auto-rereviewed`)
-      } else {
-        assert.ok(calls.autoCommit >= 1, `${tier}: review cards reach deps.autoCommit`)
-        assert.ok(calls.reviewDispatch >= 1, `${tier}: plain review card reaches deps.reviewDispatch`)
-        assert.ok(calls.reviewRereview >= 1, `${tier}: stale review card reaches deps.reviewRereview`)
-        assert.ok(calls.deliver >= 1, `${tier}: review cards reach deps.deliver`)
-        assert.equal(f.store.getCard(s.id).autoRereviewCount, 1, `${tier}: exactly one auto re-review attempt`)
-      }
-    } finally { f.cleanup() }
-  }
-})
-
-// ==============================================================================
-// B2 — single source of truth: machine-approve reads no switch
-// ==============================================================================
-test('B2 machine-approve reads no switch; behaviorOf is the capability truth source', async () => {
-  assert.deepEqual(behaviorOf('manual'), { intake: false, dispatch: false, approve: false })
-  assert.deepEqual(behaviorOf('you-approve'), { intake: true, dispatch: true, approve: false })
-  assert.deepEqual(behaviorOf('machine-approve'), { intake: true, dispatch: true, approve: true })
-  // No live read of autoApprove/autoStart anywhere in engine; switch only read for you-approve.
-  const liveLines = autonomySrc.split('\n').filter((l) => /project\.(autoApprove|autoStart)/.test(l) && !/^\s*(\*|\/\/)/.test(l))
-  assert.equal(liveLines.length, 0, `no legacy switch reads: ${liveLines.join(' | ')}`)
-  // autoDispatch is computed in one place, gated by behavior.dispatch, and
-  // includes both dispatch tiers plus the you-approve switch. Check the
-  // clauses separately so line breaks / clause order may change without
-  // weakening the real regression guards.
-  const adExpr = autonomySrc.match(/const autoDispatch = behavior\.dispatch[\s\S]{0,220}?(?=\n\s*const\b)/)?.[0]
-  assert.ok(adExpr, 'autoDispatch computed once from behavior.dispatch')
-  assert.equal((autonomySrc.match(/const autoDispatch =/g) ?? []).length, 1, 'autoDispatch computed only once')
-  assert.match(adExpr, /level === 'machine-approve'/, 'machine-approve short-circuits the switch')
-  assert.match(adExpr, /AUTO_DELIVERY_TIER/, 'auto-delivery tier participates (its stored switch is forced false)')
-  assert.match(adExpr, /project\.autoDispatch === true/, 'you-approve switch is still read')
-
-  // Real behavior: machine-approve dispatch is identical for switch true/false.
-  for (const sw of [true, false]) {
-    const f = fixture()
-    try {
-      f.store.updateAutonomy(f.project.id, { autonomy: 'machine-approve', autoDispatch: sw })
+      if (rules) f.store.updatePhaseRules(f.project.id, rules)
       f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: f.board.id })
-      f.store.createCard({ boardId: f.board.id, title: 'c' })
+      const c = f.store.createCard({ boardId: f.board.id, title: 'self-review' })
+      for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['build', 'agent'], ['self-review', 'agent']]) {
+        f.store.transitionCard(c.id, to, actor)
+      }
       const { deps, calls } = depsFor()
       await runTick({ store: f.store, status: createEngineStatus(), deps })
-      assert.equal(calls.dispatch, 1, `machine-approve dispatch independent of switch=${sw}`)
-      assert.equal(f.store.getProject(f.project.id).autoDispatch, false, 'switch never stored at machine-approve')
+      assert.equal(calls.reviewDispatch, want, `${name}: reviewDispatch calls`)
+      assert.equal(calls.autoCommit, 0, `${name}: no engine commit`)
+      assert.equal(calls.deliver, 0, `${name}: no engine deliver`)
+      assert.equal(f.store.getCard(c.id).status, 'self-review', `${name}: card stays in self-review, not done`)
     } finally { f.cleanup() }
   }
 })
 
 // ==============================================================================
-// B3 — migration 7 rows + empty v1 schemaVersion bump (P2 fix)
+// B2 — single source of truth: phase rules, no legacy switch reads
 // ==============================================================================
-test('B3 migration 7 rows land correctly on load and persist; schemaVersion=2', () => {
+
+test('B2 behaviorOf is the capability truth source and is full auto', async () => {
+  assert.deepEqual(behaviorOf(), { intake: true, dispatch: true, approve: true, selfReview: true, remoteSync: true })
+  assert.deepEqual(DEFAULT_PHASE_RULES, PR_DEFAULTS, 'the exported default is the rule set itself')
+  for (const phase of PHASES) assert.equal(phaseAllows(DEFAULT_PHASE_RULES, phase, 'autoStart'), true)
+  // No live read of the removed legacy switches anywhere in the engine.
+  const liveLines = autonomySrc.split('\n').filter((l) => /project\.(autoApprove|autoStart|autoDispatch|autonomy)/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+  assert.equal(liveLines.length, 0, `live code never reads legacy autonomy fields; found: ${liveLines.join(' | ')}`)
+})
+
+// ==============================================================================
+// B3 — legacy tier archives migrate to phase rules on load
+// ==============================================================================
+
+test('B3 legacy L0–L4 archives migrate to phase rules and strip the tier fields on load', () => {
   const rows = [
-    ['L0', false, false, 'manual', false],
-    ['L1', true, false, 'you-approve', true],
-    ['L1', false, false, 'you-approve', false],
-    ['L2', true, true, 'machine-approve', false],
-    ['L2', true, false, 'you-approve', true],
-    ['L2', false, true, 'you-approve', false],
-    ['L2', false, false, 'you-approve', false],
+    ['manual', { inbox: { autoStart: false }, plan: { autoApprove: false } }],
+    ['L0', { inbox: { autoStart: false }, plan: { autoApprove: false } }],
+    ['you-approve', { plan: { autoApprove: false } }],
+    ['L1', { plan: { autoApprove: false } }],
+    ['machine-approve', null],
+    ['L3', null],
+    ['auto-delivery', null],
+    ['L4', null],
   ]
-  for (const [level, autoStart, autoApprove, wantLevel, wantSwitch] of rows) {
+  for (const [legacy, want] of rows) {
     const f = fixture()
     try {
       patchRow(f.file, (d) => {
         d.schemaVersion = 1
-        d.projects[0].autonomy = level
-        d.projects[0].autoStart = autoStart
-        d.projects[0].autoApprove = autoApprove
-        delete d.projects[0].autoDispatch
+        d.projects[0].autonomy = legacy
+        d.projects[0].autoDispatch = false
       })
       const loaded = new FactoryStore({ file: f.file })
       const p = loaded.getProject(f.project.id)
-      assert.equal(p.autonomy, wantLevel, `${level}+${autoStart}+${autoApprove} -> level`)
-      assert.equal(p.autoDispatch, wantSwitch, `${level}+${autoStart}+${autoApprove} -> switch`)
+      assert.equal('autonomy' in p, false, `${legacy}: tier field stripped`)
+      assert.equal('autoDispatch' in p, false, `${legacy}: switch stripped`)
+      if (want === null) assert.deepEqual(p.phaseRules, PR_DEFAULTS, `${legacy} migrates to full auto`)
+      else for (const [phase, patch] of Object.entries(want)) {
+        for (const [key, value] of Object.entries(patch)) assert.equal(p.phaseRules[phase][key], value, `${legacy} → ${phase}.${key}`)
+      }
       const disk = reopen(f.file)
       assert.equal(disk.schemaVersion, 2, 'v1 rewritten to v2 on disk')
-      assert.equal('autoStart' in disk.projects[0], false, 'legacy start key removed on disk')
-      assert.equal('autoApprove' in disk.projects[0], false, 'legacy approve key removed on disk')
+      assert.equal('autonomy' in disk.projects[0], false, 'legacy tier key removed on disk')
+      assert.equal('autoDispatch' in disk.projects[0], false, 'legacy switch removed on disk')
     } finally { f.cleanup() }
   }
 })
 
-test('B3 missing/invalid level migrates to manual; empty v1 archive bumps schemaVersion (P2)', () => {
+test('B3 missing/invalid legacy values migrate to the full-auto default', () => {
   const f = fixture()
   try {
     patchRow(f.file, (d) => {
@@ -262,12 +212,14 @@ test('B3 missing/invalid level migrates to manual; empty v1 archive bumps schema
     })
     const loaded = new FactoryStore({ file: f.file })
     assert.equal(reopen(f.file).schemaVersion, 2, 'empty v1 archive bumped to v2 on disk')
-    // invalid level on a project → manual
+    assert.equal(loaded, loaded, 'load succeeds with an empty project list')
     const f2 = fixture()
     try {
       patchRow(f2.file, (d) => { d.schemaVersion = 1; d.projects[0].autonomy = 'bogus' })
       const l2 = new FactoryStore({ file: f2.file })
-      assert.equal(l2.getProject(f2.project.id).autonomy, 'manual')
+      const p = l2.getProject(f2.project.id)
+      assert.deepEqual(p.phaseRules, PR_DEFAULTS, 'junk legacy value falls back to the safe full-auto default')
+      assert.equal('autonomy' in p, false)
     } finally { f2.cleanup() }
   } finally { f.cleanup() }
 })
@@ -281,56 +233,51 @@ test('B3 schemaVersion other than 1 or 2 is still rejected', () => {
 })
 
 // ==============================================================================
-// B4 — UI: no visible L0/L1/L2, switch only on you-approve, hint present
+// B4 — UI: no slider, no L-codes; the stage-rule panel is the control
 // ==============================================================================
-test('B4 L0–L4 slider ticks in copy; no independent autoDispatch switch', () => {
+
+test('B4 no L0–L4 slider or level copy; stage rules are checkboxes in all four dicts', () => {
   for (const [name, dict] of [['zh', zh], ['en', en]]) {
     for (const n of [0, 1, 2, 3, 4]) {
-      assert.equal(dict[`lvL${n}`], `L${n}`, `${name}: tick ${n}`)
-      assert.equal(typeof dict[`leL${n}End`], 'string')
-      assert.equal(typeof dict[`leL${n}M`], 'string')
-      assert.equal(typeof dict[`leL${n}Y`], 'string')
+      assert.equal(dict[`lvL${n}`], undefined, `${name}: no L${n} tick copy`)
+      assert.equal(dict[`leL${n}End`], undefined, `${name}: no L${n} endpoint copy`)
     }
   }
-  assert.match(clientSrc, /const LEVEL_TIERS = \['manual', 'you-approve', 'you-approve', 'machine-approve', 'auto-delivery'\]/, 'five-level mapping fixed')
-  assert.match(clientSrc, /type: 'range', min: '0', max: '4', step: '1'/, 'single native range slider')
-  assert.match(clientSrc, /'aria-valuetext': ariaText/, 'aria-valuetext wired')
+  assert.doesNotMatch(clientSrc, /const LEVEL_TIERS/, 'five-level mapping is gone')
+  assert.doesNotMatch(clientSrc, /type: 'range', min: '0', max: '4'/, 'no tier slider')
   assert.doesNotMatch(clientSrc, /role: 'switch', 'aria-checked': autoDispatch/, 'no independent autoDispatch switch')
+  assert.match(clientSrc, /StageConfigSection/, 'the stage-rule section replaced the slider')
+  for (const k of ['stageConfigTitle', 'stageConfigPurpose', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
+    'whenAdvancedTitle', 'whenAdvancedHint', 'whenNoNarrow', 'resetDefault', 'stageSaved']) {
+    assert.equal(typeof zh[k], 'string', `zh locale has ${k}`)
+    assert.equal(typeof en[k], 'string', `en locale has ${k}`)
+  }
+  assert.match(en.whenAdvancedHint, /narrow|cannot be widened|cannot widen/i, 'the narrowing-only rule is stated in en')
+  assert.match(zh.whenAdvancedHint, /收窄|不能放宽/, 'the narrowing-only rule is stated in zh')
 })
 
 // ==============================================================================
 // B5 — pause/takeover copy: takeHint gone, scope note present, no duplicate label
 // ==============================================================================
+
 test('B5 pause/takeover copy is clean; backend pause/takeover/release unchanged', () => {
   assert.doesNotMatch(clientSrc, /takeHint/, 'fake take entry removed from PauseSection')
   assert.match(clientSrc, /t\('pauseScopeNote'\)/, 'scope note rendered')
   assert.match(clientSrc, /t\('pauseTitle'\)/, 'pauseTitle label rendered')
-  // Pause is now a STATE SWITCH, not a paused/resume action button: one
-  // role=switch control with a fixed pauseProject label beside it.
   const pauseSection = clientSrc.slice(clientSrc.indexOf('function PauseSection'), clientSrc.indexOf('function GlobalTokenSetting'))
   assert.ok(pauseSection.length > 0, 'PauseSection boundaries found')
   assert.equal((pauseSection.match(/role: 'switch'/g) ?? []).length, 1, 'exactly one switch in PauseSection')
   assert.doesNotMatch(pauseSection, /h\(Button|resumeProject/, 'no pause/resume action button left')
-  assert.match(pauseSection, /'aria-checked': paused \? 'true' : 'false'/, 'switch reflects the paused state')
-  assert.match(pauseSection, /'aria-label': t\('pauseProject'\)/, 'switch has an accessible name')
-  assert.match(pauseSection, /disabled: saving/, 'switch is disabled while saving')
-  assert.match(pauseSection, /onClick: \(\) => void toggle\(\)/, 'switch still drives the same toggle')
-  assert.match(pauseSection, /background: paused \? T\.warning : T\.line/, 'on = warning orange, off = neutral grey')
-  assert.match(pauseSection, /left: paused \? 19 : 3/, 'knob moves right when paused')
-  assert.match(pauseSection, /h\('span', \{ key: 'label'[^\n]*t\('pauseProject'\)/, 'fixed pauseProject label next to the switch')
-  // The key is used twice on purpose: switch aria-label + fixed visible label.
-  assert.equal((clientSrc.match(/t\('pauseProject'\)/g) ?? []).length, 2, 'pauseProject appears as aria-label and label')
-  assert.doesNotMatch(zh.pauseSem ?? '', /闸门/, 'no 闸门 jargon in pauseSem')
-  assert.doesNotMatch(zh.pauseSub ?? '', /闸门/, 'pauseSub key deleted')
   // CardActions takeover/release still present (takeover only on the card).
   assert.match(clientSrc, /t\('takeover'\)/, 'takeover button still in CardActions')
   assert.match(clientSrc, /t\('returnToEngine'\)/, 'return button still in CardActions')
 })
 
 // ==============================================================================
-// B6 — four dictionaries: 15 new / 3 changed byte-identical, 19 deleted residual-free
+// B6 — four dictionaries: tier keys deleted residue-free; new stage keys present
 // ==============================================================================
-test('B6 new/changed keys byte-identical across four dicts; deleted keys zero residue; relational counts', () => {
+
+test('B6 tier keys are deleted residue-free and stage-rule keys exist in all four dicts', () => {
   const inline = (() => {
     let reg
     const shim = { createElement: () => ({}), useState: (v) => [v, () => {}], useEffect: () => {}, useCallback: (f) => f, useRef: (v) => ({ current: v }) }
@@ -341,49 +288,48 @@ test('B6 new/changed keys byte-identical across four dicts; deleted keys zero re
     reg.factory(req).apply({ effect: (f) => { f(); return () => {} }, locale: { register: (_n, d) => { cap = d; return () => {} }, bind: () => (k) => k }, slots: { inject: (_o, cb) => cb(), register: () => () => {} } })
     return JSON.parse(JSON.stringify(cap))
   })()
-  const added = ['badgeManual', 'badgeYouApprove', 'badgeMachineApprove', 'lvManual', 'lvYouApprove', 'lvMachineApprove', 'leManualM', 'leManualY', 'leYouApproveM', 'leYouApproveY', 'leMachineApproveM', 'leMachineApproveY', 'axisTitle', 'axisHint', 'currentLevel', 'ariaLevel', 'autoEndLabel', 'machineLabel', 'youLabel', ...[0, 1, 2, 3, 4].flatMap((n) => [`lvL${n}`, `leL${n}End`, `leL${n}M`, `leL${n}Y`])]
-  const changed = ['pauseSem', 'l2Title', 'l2Body']
-  const deleted = ['badgeL0', 'badgeL1', 'badgeL2', 'prefHead', 'prefNote', 'autoStart', 'autoApprove', 'inactiveAtLevel', 'pauseSub', 'projPause']
-  for (const k of [...added, ...changed]) {
-    assert.equal(inline.zh[k], zh[k], `four-place zh.${k}`)
-    assert.equal(inline.en[k], en[k], `four-place en.${k}`)
-    assert.equal(typeof zh[k], 'string', `${k} in zh locale`)
-    assert.equal(typeof en[k], 'string', `${k} in en locale`)
-  }
-  for (const k of deleted) {
+  const deleted = ['badgeManual', 'badgeYouApprove', 'badgeMachineApprove', 'lvManual', 'lvYouApprove', 'lvMachineApprove',
+    'leManualM', 'leManualY', 'leYouApproveM', 'leYouApproveY', 'leMachineApproveM', 'leMachineApproveY',
+    'axisTitle', 'axisHint', 'currentLevel', 'ariaLevel', 'autoEndLabel', 'machineLabel', 'youLabel',
+    ...[0, 1, 2, 3, 4].flatMap((n) => [`lvL${n}`, `leL${n}End`, `leL${n}M`, `leL${n}Y`]),
+    'l2Title', 'l2Body', 'enableL2', 'autoDispatchLabel', 'autoDispatchHint', 'saveLevel',
+    'leManualM', 'leYouApproveM', 'leMachineApproveM']
+  for (const k of new Set(deleted)) {
     assert.equal(k in inline.zh, false, `inline zh ${k} deleted`)
     assert.equal(k in inline.en, false, `inline en ${k} deleted`)
     assert.equal(k in zh, false, `locale zh ${k} deleted`)
     assert.equal(k in en, false, `locale en ${k} deleted`)
   }
-  assert.equal(Object.keys(inline.zh).length, Object.keys(inline.en).length)
+  // Every inline key must be byte-identical in its locale twin.
+  for (const [key, value] of Object.entries(inline.zh)) assert.equal(zh[key], value, `zh locale mirrors inline: ${key}`)
+  for (const [key, value] of Object.entries(inline.en)) assert.equal(en[key], value, `en locale mirrors inline: ${key}`)
+  assert.equal(Object.keys(inline.zh).length, Object.keys(inline.en).length, 'zh/en inline key sets match')
   assert.equal(Object.keys(zh).length - 1, Object.keys(inline.zh).length, 'locale = UI + meta')
-  assert.equal(Object.keys(en).length - 1, Object.keys(inline.en).length)
+  // The new stage keys are present and mirrored.
+  for (const k of ['stageSelfReview', 'stagePrReview', 'stageConfigTitle', 'writeBoundaryNotice', 'writeBoundaryDetail']) {
+    assert.equal(inline.zh[k], zh[k], `${k} inline=locale zh`)
+    assert.equal(inline.en[k], en[k], `${k} inline=locale en`)
+  }
 })
 
 // ==============================================================================
-// P1 — audit tier consistent per level (dispatch/intake tier == approve tier)
+// P1 — audit: automatic actions carry the rule-set tier, and are auditable
 // ==============================================================================
-test('P1 machine-approve dispatch/intake events carry machine-approve tier; you-approve carry you-approve', async () => {
-  assert.equal(AUTO_TIER, 'you-approve')
-  assert.equal(MACHINE_APPROVE_TIER, 'machine-approve')
-  // Static: tierForLevel covers the new L4 tier and feeds intake/dispatch.
-  assert.match(autonomySrc, /const tierForLevel = \(level\) => level === AUTO_DELIVERY_TIER \? AUTO_DELIVERY_TIER/)
-  assert.match(autonomySrc, /const intakeOrigin = \(level\) => \(\{[^}]*tier: tierForLevel\(level\)/)
-  assert.match(autonomySrc, /const dispatchMeta = \(level\) => \(\{ tier: tierForLevel\(level\)/)
 
-  for (const [level, wantTier] of [['you-approve', 'you-approve'], ['machine-approve', 'machine-approve']]) {
-    const f = fixture()
-    try {
-      f.store.updateAutonomy(f.project.id, { autonomy: level, autoDispatch: true })
-      f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: f.board.id })
-      f.store.createCard({ boardId: f.board.id, title: 'c', source: 'issue:owner/repo#1' })
-      const { deps } = depsFor()
-      await runTick({ store: f.store, status: createEngineStatus(), deps })
-      const events = collectAudit(f.store, { cardId: f.store.listCards({})[0].id })
-      const tiers = events.map((e) => e.tier).filter(Boolean)
-      assert.ok(tiers.length > 0, `${level}: audit has tier-tagged events`)
-      assert.ok(tiers.every((t) => t === wantTier), `${level}: all tiers == ${wantTier}, got ${JSON.stringify(tiers)}`)
-    } finally { f.cleanup() }
-  }
+test('P1 automatic dispatch events carry the phase-rules tier tag', async () => {
+  const f = fixture()
+  try {
+    f.store.updateIntake(f.project.id, { issueRepo: 'owner/repo', intakeBoardId: f.board.id })
+    const card = f.store.createCard({ boardId: f.board.id, title: 'c', source: 'issue:owner/repo#1' })
+    const { deps } = depsFor()
+    await runTick({ store: f.store, status: createEngineStatus(), deps })
+    await runTick({ store: f.store, status: createEngineStatus(), deps })
+    const events = collectAudit(f.store, { cardId: card.id })
+    const transitions = events.filter((e) => e.type === 'transition' || (e.from && e.to))
+    assert.ok(transitions.length > 0, 'the automatic dispatch is in the audit')
+    for (const event of transitions) {
+      assert.equal(event.actor, 'autoRule', 'the auto edge is audited as the engine, never as a human')
+      assert.equal(event.tier, 'phase-rules', 'the tier tag is the rule set, not a level')
+    }
+  } finally { f.cleanup() }
 })

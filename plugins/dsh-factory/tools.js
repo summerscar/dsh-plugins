@@ -14,48 +14,20 @@
  * Done or approving a plan, so the same check that guards the UI guards the model.
  */
 import { STATUSES } from './state.js'
-import { AUTONOMY_LEVELS, WORK_MODES } from './store.js'
+import { WORK_MODES } from './store.js'
 import { assertRepoRoot, inspectRepo } from './project-proposal.js'
 import { defaultLsFilesPort, dropTrackedCopyFiles } from './worktree-setup.js'
 import { precheckReceipt } from './receipt.js'
-import { normalizeVerdict, reviewedHeadFor, VERDICT_SOURCES, VERDICT_VALUES } from './verdict.js'
+import { isFullSha, normalizeVerdict, reviewedHeadFor, VERDICT_SOURCES, VERDICT_VALUES } from './verdict.js'
+import { isProtectedBranch } from './git-exec.js'
 
-const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review', 'canceled']
-const ATTENTION_STATUSES = ['inbox', 'plan-review', 'review']
-// The two per-project settings the add-project skill asks about. L0–L4 is the
-// human-facing wording; L1/L2 share `you-approve` and differ only in the
-// autoDispatch switch, exactly as the UI slider maps them.
-const AUTONOMY_LEVEL_CODES = ['L0', 'L1', 'L2', 'L3', 'L4']
-const LEVEL_TO_AUTONOMY = {
-  L0: { autonomy: 'manual', autoDispatch: false },
-  L1: { autonomy: 'you-approve', autoDispatch: false },
-  L2: { autonomy: 'you-approve', autoDispatch: true },
-  L3: { autonomy: 'machine-approve', autoDispatch: false },
-  L4: { autonomy: 'auto-delivery', autoDispatch: false },
-}
-
-/**
- * Resolve the answers from ask_user_question into persisted project settings.
- * Only the five exact L-codes are accepted; a bad answer fails closed before
- * any project is written. Store createProject still starts every project manual
- * — the autonomy answer is applied as a separate, explicit follow-up write.
- */
-export function resolveAddProjectSettings({ workMode, autonomy, autoDispatch } = {}) {
+const AGENT_TARGETS = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review', 'canceled']
+const ATTENTION_STATUSES = ['inbox', 'self-review', 'pr-review']
+// V4: stage rules replace L0–L4. Work mode remains a permission boundary.
+export function resolveAddProjectSettings({ workMode } = {}) {
   const mode = workMode === undefined || workMode === null || workMode === '' ? 'workspace-write' : workMode
   if (!WORK_MODES.includes(mode)) throw new Error(`未知工作模式：${mode}（可选 ${WORK_MODES.join(' / ')}）`)
-  if (autonomy === undefined || autonomy === null || autonomy === '' || autonomy === 'L0') {
-    return { workMode: mode, autonomy: null, autoDispatch: autoDispatch === true }
-  }
-  if (!AUTONOMY_LEVEL_CODES.includes(autonomy)) {
-    throw new Error(`未知自动化程度：${autonomy}（可选 ${AUTONOMY_LEVEL_CODES.join(' / ')}）`)
-  }
-  const level = LEVEL_TO_AUTONOMY[autonomy]
-  // A semantic level from the model/API is accepted too, but L1 vs L2 then
-  // needs the explicit switch; bare `you-approve` stays L1 (no auto dispatch).
-  const stored = AUTONOMY_LEVELS.has(autonomy)
-    ? { autonomy, autoDispatch: autoDispatch === true }
-    : level
-  return { workMode: mode, ...stored }
+  return { workMode: mode, phaseRules: undefined }
 }
 
 const stringArray = () => ({ type: 'array', items: { type: 'string' } })
@@ -76,7 +48,7 @@ const CARD_SCHEMA = {
 const cardsArray = () => ({ type: 'array', items: CARD_SCHEMA })
 const cardsListSchema = (key) => ({ type: 'object', additionalProperties: false, properties: { [key]: cardsArray() } })
 
-export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort(), receiptPorts = {}, readHead } = {}) {
+export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = assertRepoRoot, lsFilesPort = defaultLsFilesPort(), receiptPorts = {}, readHead, buildGitPortFor, isSessionActive, closePrFor } = {}) {
   if (store === undefined || store === null) throw new Error('factoryToolSpecs needs a store')
 
   // Per-session, per-card, per-target counter for no-op transitions. An agent
@@ -102,6 +74,25 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       `Recorded a report on ${value.id} (${value.reports} total).`,
       ...(value.verdict ? [`Verdict ${value.verdict} recorded.`] : []),
     ].join('\n')),
+  }
+  const PUSH_OUTPUT = {
+    schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, sha: { type: 'string' }, prUrl: { type: 'string' }, notice: { type: 'string' } } },
+    render: (args, value) => textBlock(value.notice),
+  }
+  const VERDICT_OUTPUT = {
+    schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, verdict: { type: 'string' }, head: { type: 'string' }, rounds: { type: 'integer' } } },
+    render: (args, value) => textBlock(`Self-review ${value.verdict} recorded on ${value.id} at ${value.head} (round ${value.rounds}).`),
+  }
+  const PR_OUTPUT = {
+    schema: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, url: { type: 'string' }, head: { type: 'string' }, notice: { type: 'string' } } },
+    render: (args, value) => textBlock(value.notice),
+  }
+  const sessionIdOf = (exec) => exec?.agent?.session?.id ?? exec?.agent?.id
+  const requireBuilderSession = (card, exec, action) => {
+    const fromExec = sessionIdOf(exec)
+    if (typeof fromExec !== 'string' || fromExec === '' || fromExec !== card.sessionId) {
+      throw new Error(`${action}只能由本卡的 builder 会话执行`)
+    }
   }
   const CREATE_OUTPUT = {
     schema: {
@@ -147,7 +138,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
     },
     {
       name: 'factory_transition_work_item',
-      description: 'Move a card to another stage. As the agent you may advance triage→plan→plan-review and build→review, and send a card back to inbox, but you may NOT approve a plan, move a card to done, or open a PR — those are human-only and will be refused.',
+      description: 'Move a card between V4 stages. Builder advances triage→plan→build→self-review; the reviewer returns changes to build or advances an approved head to pr-review. Done is syncRule-only.',
       parameters: {
         cardId: { type: 'string', required: true, description: 'Card id.' },
         to: { type: 'string', required: true, enum: AGENT_TARGETS, description: 'Target status.' },
@@ -158,8 +149,17 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
         const card = store.getCard(args.cardId)
         const liveSessionId = exec?.agent?.session?.id ?? exec?.agent?.id
         if (card !== undefined && card !== null && typeof liveSessionId === 'string'
-          && card.reviewSessionId === liveSessionId) {
-          throw new Error('评审会话不能移卡：review 阶段的放行与退回只能由人操作')
+          && card.reviewSessionId === liveSessionId
+          && !(card.status === 'self-review' && ['build', 'pr-review'].includes(args.to))) {
+          throw new Error('评审会话只能在 self-review 退回 build 或从批准 head 进入 pr-review')
+        }
+        if (card !== undefined && card !== null && card.status === 'self-review' && args.to === 'pr-review') {
+          if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('没有草稿 PR，不能进入 pr-review')
+          const live = typeof readHead === 'function' ? readHead({ worktreePath: card.worktreePath }) : null
+          if (!isFullSha(live) || live !== card.prHead) {
+            if (typeof closePrFor === 'function') await closePrFor(card)
+            throw new Error(`批准 head 已漂移，误开的 PR 已关闭（${card.prHead} ≠ ${live}）`)
+          }
         }
         if (card !== undefined && card !== null && card.status === args.to) {
           // Idempotent no-op: never throw the "illegal transition" error that an
@@ -191,7 +191,7 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
       parameters: {
         cardId: { type: 'string', required: true, description: 'Card id.' },
         report: { type: 'string', required: true, description: 'The human-readable report text.' },
-        source: { type: 'string', enum: [...VERDICT_SOURCES], description: 'Verdict source: review for the first pass, rereview for a later pass. Required together with the other verdict fields.' },
+        source: { type: 'string', enum: [...VERDICT_SOURCES], description: 'Verdict source: review (self-review), rereview (self-review follow-up), or pr-review (independent PR review). Required together with the other verdict fields.' },
         verdict: { type: 'string', enum: [...VERDICT_VALUES], description: 'Verdict value. Required together with the other verdict fields.' },
         blocking: {
           type: 'array', description: 'Blocking findings; empty array when none. Required for a structured verdict.',
@@ -229,21 +229,24 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
           const card = store.getCard(args.cardId)
           if (card === undefined || card === null) throw new Error(`卡片不存在：${args.cardId}`)
           const fromExec = exec?.agent?.session?.id ?? exec?.agent?.id
-          // P2a bug fix + hole-A closure: a verdict is the REVIEWER's
-          // conclusion, NEVER a builder self-certification. This is a
-          // STAGE-INDEPENDENT rule: only the session recorded on
-          // card.reviewSessionId may write structured fields, in any phase.
-          // Without a reviewer session there is no review conclusion at all.
+          // Typed dual-field gate: a verdict is bound to the SESSION TYPE that
+          // produced it. Never use `reviewSessionId || prReviewSessionId` —
+          // that would let one review session impersonate the other.
           // Plain free-text reports are unaffected (no verdict keys).
-          const reviewerId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : null
-          if (reviewerId === null) {
-            throw new Error('本卡尚未派出评审会话，不能提交结构化 verdict；请先发起评审')
-          }
+          const isPrReview = args.source === 'pr-review'
+          const selfId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : null
+          const prId = typeof card.prReviewSessionId === 'string' && card.prReviewSessionId !== '' ? card.prReviewSessionId : null
           if (typeof card.sessionId === 'string' && card.sessionId !== '' && fromExec === card.sessionId) {
-            throw new Error('只有评审会话可以提交结构化 verdict；builder 会话在任何阶段都不能自评')
+            throw new Error('builder 会话不能提交任何结构化 verdict')
           }
-          if (typeof fromExec !== 'string' || fromExec === '' || fromExec !== reviewerId) {
-            throw new Error('只有评审会话可以提交结构化 verdict；当前会话不是本卡的评审会话')
+          if (isPrReview) {
+            if (prId === null) throw new Error('本卡尚未派出 PR 评审会话，不能提交 PR verdict')
+            if (fromExec === selfId) throw new Error('自审会话不能代交 PR 评审 verdict')
+            if (fromExec !== prId) throw new Error('只有本卡 PR 评审会话可以提交 PR verdict')
+          } else {
+            if (selfId === null) throw new Error('本卡尚未派出自审会话，不能提交自审 verdict')
+            if (fromExec === prId) throw new Error('PR 评审会话不能代交自审 verdict')
+            if (fromExec !== selfId) throw new Error('只有本卡自审会话可以提交自审 verdict')
           }
           const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead })
           canonical = normalizeVerdict({
@@ -342,15 +345,13 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
     },
     {
       name: 'factory_create_project',
-      description: 'Create a factory project directly in this session: register an absolute repository root with optional copyFiles (relative local file paths) and postCreate (a setup command you author). workMode and autonomy are the answers from the add-project skill\'s ask_user_question step; pass them to persist the session mode and autonomy level at creation. Creating a project is local and reversible — it does not commit, push, or open a PR; those still require the human approval gates. Validate rootPath is an absolute path to an existing git repository before calling. Show the name, rootPath, copyFiles, postCreate, workMode and autonomy to the user before creating.',
+      description: 'Create a factory project in this session: register an absolute repository root with optional copyFiles and postCreate. workMode is the session permission boundary; stage rules default to full auto and may be narrowed in project settings. Creating a project is local and reversible.',
       parameters: {
         name: { type: 'string', required: true, description: 'Project name.' },
         rootPath: { type: 'string', required: true, description: 'Absolute repository root; must exist and be a git repository.' },
         copyFiles: { ...stringArray(), description: 'Relative local file paths to copy into each new worktree.' },
         postCreate: { type: 'string', description: 'Setup command run inside each new worktree; provided by the user, never a plugin default.' },
-        workMode: { type: 'string', enum: [...WORK_MODES], description: 'Session mode answer: workspace-write / full-access / auto-review. Defaults to workspace-write.' },
-        autonomy: { type: 'string', enum: [...AUTONOMY_LEVEL_CODES, ...AUTONOMY_LEVELS], description: 'Autonomy answer from the question: L0–L4 (L1/L2 differ by autoDispatch). Defaults to L0 manual.' },
-        autoDispatch: { type: 'boolean', description: 'Only used with you-approve; true is L2, false is L1.' },
+        workMode: { type: 'string', enum: [...WORK_MODES], description: 'Session permission boundary: workspace-write / full-access / auto-review. Defaults to workspace-write.' },
       },
       output: CREATE_OUTPUT,
       execute: async (args = {}) => {
@@ -383,20 +384,149 @@ export function factoryToolSpecs({ store, inspect = inspectRepo, assertRoot = as
           postCreate: args.postCreate ?? '',
           workMode: settings.workMode,
         })
-        // createProject always starts manual; apply the asked level as a
-        // separate explicit write instead of changing the store's default.
-        if (settings.autonomy !== null && settings.autonomy !== 'manual') {
-          store.updateAutonomy(project.id, {
-            autonomy: settings.autonomy,
-            autoDispatch: settings.autoDispatch,
-          })
-        }
         return {
           id: project.id,
           name: project.name,
           ...(project.warning ? { warning: project.warning } : {}),
           ...(droppedPaths.length ? { droppedCopyFiles: droppedPaths } : {}),
         }
+      },
+    },
+    {
+      name: 'factory_push_branch',
+      description: 'BUILD ONLY. Commit the frozen dirty paths and push this card branch. Never opens a PR. Only the registered builder session may call it; no write while another session is active.',
+      parameters: {
+        cardId: { type: 'string', required: true, description: 'Card id.' },
+        message: { type: 'string', required: true, description: 'Commit message written by the build session.' },
+      },
+      output: PUSH_OUTPUT,
+      execute: async (args = {}, exec) => {
+        const card = store.getCard(args.cardId)
+        if (card === undefined || card === null) throw new Error(`卡片不存在：${args.cardId}`)
+        if (card.status !== 'build') throw new Error(`仅 build 阶段可提交推送（当前 ${card.status}）`)
+        requireBuilderSession(card, exec, '提交推送')
+        if (card.commitSha) throw new Error('该卡已提交，不能重复推送')
+        if (typeof isSessionActive === 'function') {
+          for (const [sessionId, label] of [
+            [card.reviewSessionId, '评审'],
+            [card.prReviewSessionId, 'PR 评审'],
+          ]) {
+            if (typeof sessionId === 'string' && sessionId !== '' && await isSessionActive(sessionId)) {
+              throw new Error(`${label}会话仍在运行，禁止写入`)
+            }
+          }
+        }
+        if (isProtectedBranch(card.branch)) throw new Error(`拒绝向受保护分支「${card.branch}」推送`)
+        if (card.baseBranch && String(card.branch).toLowerCase() === String(card.baseBranch).toLowerCase()) {
+          throw new Error(`拒绝向 base 分支「${card.branch}」推送`)
+        }
+        if (typeof buildGitPortFor !== 'function') throw new Error('提交推送缺少 git 端口')
+        const port = await buildGitPortFor(card)
+        const cwd = card.worktreePath
+        const base = card.baseBranch || 'main'
+        // Legacy fail-closed gate: an unrecorded build must still sit on the
+        // project base tip. A stray/fixture HEAD must never become a delivery.
+        const head = typeof readHead === 'function' ? readHead({ worktreePath: cwd }) : null
+        const baseHead = typeof port?.headOf === 'function' ? port.headOf(cwd, base) : null
+        if (!isFullSha(head) || !isFullSha(baseHead) || head !== baseHead) {
+          throw new Error(`HEAD 与基线不一致，拒绝提交推送（${head} ≠ ${baseHead}）`)
+        }
+        // Same bulk-deletion fence as the legacy auto-commit path.
+        const deleted = typeof port?.deletedCount === 'function' ? Number(port.deletedCount(cwd, head)) : 0
+        if (Number.isFinite(deleted) && deleted > 20) {
+          throw new Error(`工作树相对 HEAD 删除了 ${deleted} 个已跟踪文件，疑似临时夹具或误操作，拒绝自动提交`)
+        }
+        // Freeze paths before the hook runs; untracked-only changes are valid.
+        const paths = typeof port?.changedPaths === 'function' ? port.changedPaths(cwd) : []
+        if (!Array.isArray(paths) || paths.length === 0) throw new Error('没有可交付的脏文件')
+        if (typeof port?.hasDiff === 'function' && port.hasDiff(cwd, base) !== true) {
+          throw new Error('没有可交付的改动（HEAD 与 base 无差异）')
+        }
+        const message = typeof args.message === 'string' && args.message.trim() !== '' ? args.message.trim() : `factory: implement card ${card.id.slice(0, 8)}`
+        precheck('factory_push_branch', PUSH_OUTPUT, args, { id: card.id, sha: '0'.repeat(40), prUrl: '', notice: '' })
+        try {
+          port.add(card.worktreePath, paths)
+          const sha = port.commit(card.worktreePath, message, paths)
+          if (!isFullSha(sha)) throw new Error(`提交返回的 sha 不是完整 SHA：${sha}`)
+          port.push(card.worktreePath, card.branch)
+          const notice = `Committed ${sha} and pushed ${card.branch}; no PR was opened.`
+          store.recordBuildPush(card.id, { sha, message })
+          return { id: card.id, sha, prUrl: '', notice }
+        } catch (error) {
+          try { port.reset?.(card.worktreePath) } catch { /* best-effort unstage */ }
+          throw error
+        }
+      },
+    },
+    {
+      name: 'factory_self_review_verdict',
+      description: 'SELF-REVIEW ONLY. Record the independent reviewer verdict with findings bound to the backend-read HEAD. approved unlocks the draft PR; changes-requested returns to build.',
+      parameters: {
+        cardId: { type: 'string', required: true, description: 'Card id.' },
+        head: { type: 'string', required: true, description: 'Full HEAD SHA reviewed (git rev-parse HEAD).' },
+        verdict: { type: 'string', required: true, enum: ['approved', 'changes-requested', 'verification-incomplete'] },
+        blocking: { type: 'array', description: 'Blocking findings.', items: { type: 'object', additionalProperties: false, properties: { file: { type: 'string', required: true }, line: { type: 'integer', required: true }, reason: { type: 'string', required: true } } } },
+        followUps: { type: 'array', description: 'Non-blocking follow-ups.', items: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', required: true } } } },
+        checks: { type: 'array', description: 'Checks actually run.', items: { type: 'object', additionalProperties: false, properties: { name: { type: 'string', required: true }, result: { type: 'string', required: true }, tests: { type: 'string' } } } },
+        note: { type: 'string' },
+      },
+      output: VERDICT_OUTPUT,
+      execute: async (args = {}, exec) => {
+        const card = store.getCard(args.cardId)
+        if (card === undefined || card === null) throw new Error(`卡片不存在：${args.cardId}`)
+        if (card.status !== 'self-review') throw new Error(`仅 self-review 阶段可记录结论（当前 ${card.status}）`)
+        const fromExec = sessionIdOf(exec)
+        if (typeof card.prReviewSessionId === 'string' && card.prReviewSessionId !== '' && fromExec === card.prReviewSessionId) {
+          throw new Error('PR 评审会话不能代交自审结论')
+        }
+        if (fromExec !== card.reviewSessionId) throw new Error('只有本卡评审会话可以提交自审结论')
+        if (!isFullSha(args.head) || typeof readHead !== 'function') throw new Error('自审需要完整 HEAD SHA 与 git 读取端口')
+        const live = readHead({ worktreePath: card.worktreePath })
+        if (!isFullSha(live) || live.trim().toLowerCase() !== args.head.trim().toLowerCase()) {
+          throw new Error(`自审 head 与当前 git HEAD 不一致（${args.head} ≠ ${live}）`)
+        }
+        precheck('factory_self_review_verdict', VERDICT_OUTPUT, args, { id: card.id, verdict: args.verdict, head: live, rounds: 0 })
+        const result = store.recordSelfReviewVerdict(card.id, {
+          head: live, verdict: args.verdict, blocking: args.blocking ?? [], followUps: args.followUps ?? [],
+          checks: args.checks ?? [], note: args.note ?? '', sessionId: fromExec,
+        })
+        return { id: card.id, verdict: result.verdict, head: result.head, rounds: result.rounds }
+      },
+    },
+    {
+      name: 'factory_open_draft_pr',
+      description: 'SELF-REVIEW ONLY, after approved verdict. Open ONE draft PR from the approved head. Backend re-reads HEAD and refuses on drift; never force, merge, close issues or update the PR.',
+      parameters: {
+        cardId: { type: 'string', required: true, description: 'Card id.' },
+        title: { type: 'string', required: true, description: 'Draft PR title.' },
+        body: { type: 'string', description: 'Draft PR body.' },
+      },
+      output: PR_OUTPUT,
+      execute: async (args = {}, exec) => {
+        const card = store.getCard(args.cardId)
+        if (card === undefined || card === null) throw new Error(`卡片不存在：${args.cardId}`)
+        if (card.status !== 'self-review') throw new Error(`仅 self-review 阶段可开草稿 PR（当前 ${card.status}）`)
+        const fromExec = sessionIdOf(exec)
+        if (fromExec !== card.reviewSessionId) throw new Error('只有本卡评审会话可以从批准 head 开 PR')
+        if (card.selfReview?.verdict !== 'approved') throw new Error('没有 approved 自审结论，禁止开 PR')
+        if (card.prUrl) throw new Error('该卡已有 PR，不能重复开')
+        if (typeof readHead !== 'function' || typeof buildGitPortFor !== 'function') throw new Error('开 PR 缺少 git/gh 端口')
+        const live = readHead({ worktreePath: card.worktreePath })
+        if (!isFullSha(live) || live.trim().toLowerCase() !== card.selfReview.head.trim().toLowerCase()) {
+          throw new Error(`批准 head 与当前 HEAD 不一致，禁止开 PR（${card.selfReview.head} ≠ ${live}）`)
+        }
+        const port = await buildGitPortFor(card)
+        precheck('factory_open_draft_pr', PR_OUTPUT, args, { id: card.id, url: '', head: live, notice: '' })
+        const url = port.createPr(card.worktreePath, {
+          title: typeof args.title === 'string' && args.title.trim() !== '' ? args.title.trim() : card.title,
+          body: typeof args.body === 'string' ? args.body : (card.body || ''),
+          branch: card.branch,
+          draft: true,
+        })
+        if (typeof url !== 'string' || url.trim() === '') throw new Error('创建草稿 PR 未返回 URL')
+        const notice = `Draft PR ${url} opened from approved head ${live}.`
+        store.recordDraftPr(card.id, { url, head: live, title: args.title, body: args.body })
+        return { id: card.id, url, head: live, notice }
       },
     },
   ]

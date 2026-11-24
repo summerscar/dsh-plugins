@@ -111,5 +111,22 @@ export function createGhPort({ limit = 100, credentialToken, ghLoggedIn } = {}) 
       if (result.status !== 0) throw new Error(`gh issue list 失败：${(result.stderr || '').trim()}`)
       return result.stdout
     },
+    /** V4 merge→done poll: state of the card's ACTIVE PR only. */
+    prState({ prUrl } = {}) {
+      if (typeof prUrl !== 'string' || prUrl.trim() === '') throw new Error('缺少 PR URL，无法读取远端状态')
+      const result = spawnSync('gh', ['pr', 'view', prUrl.trim(), '--json', 'state'], { encoding: 'utf8', env })
+      if (result.error) throw result.error
+      if (result.status !== 0) throw new Error(`gh pr view 失败：${(result.stderr || '').trim()}`)
+      const parsed = JSON.parse(result.stdout || '{}')
+      const state = typeof parsed.state === 'string' ? parsed.state.toUpperCase() : ''
+      if (!['OPEN', 'CLOSED', 'MERGED'].includes(state)) throw new Error(`无法识别 PR 状态：${parsed.state}`)
+      return state
+    },
+    /** Close a PR that was opened then invalidated by HEAD drift. */
+    closePr({ prUrl, reason } = {}) {
+      if (typeof prUrl !== 'string' || prUrl.trim() === '') throw new Error('缺少 PR URL，无法关闭误开 PR')
+      spawnSync('gh', ['pr', 'close', prUrl.trim(), '--comment', typeof reason === 'string' ? reason : 'closed by dsh-factory: approved head drifted'], { encoding: 'utf8', env })
+      return true
+    },
   }
 }

@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { DEFAULT_AUTONOMY, FactoryStore } from '../store.js'
+import { DEFAULT_PHASE_RULES } from '../phase-rules.js'
 import { createApi } from '../api.js'
 import { factoryToolSpecs } from '../tools.js'
 import { inspectRepo } from '../project-proposal.js'
@@ -364,63 +365,84 @@ test('skills: every packaged skill loads and factory-add-project is present', ()
   }
 })
 
-// --- autonomy normalisation: the UI must never claim "auto-running" wrongly --
+// --- V4 stage rules: new projects start full auto; tiers are gone -----------
 
-test('autonomy: new projects start manual, semantic levels are an allow-list', () => {
+test('stage rules: new projects start full auto; tier keys are inert, narrowing is an explicit edit', () => {
   const { store, cleanup } = setup()
   try {
-    const mk = (name, extra = {}) => store.createProject({ name, rootPath: '/workspace/p', ...extra })
-    // createProject always starts manual — autonomy is an explicit later edit.
-    for (const [name, extra] of [['default', {}], ['you', { autonomy: 'you-approve', autoDispatch: true }], ['legacy', { autonomy: 'L1', autoStart: true }], ['junk', { autonomy: 'L9' }]]) {
-      const p = mk(name, extra)
-      assert.equal(p.autonomy, 'manual', `${name}: new project is manual`)
-      assert.equal(p.autoDispatch, false, `${name}: no switch on by default`)
-    }
-    assert.equal(DEFAULT_AUTONOMY, 'manual')
+    const p = store.createProject({ name: 'default', rootPath: '/workspace/p' })
+    assert.deepEqual(p.phaseRules, DEFAULT_PHASE_RULES, 'new project is full auto')
+    assert.equal('autonomy' in p, false, 'no tier field on a new project')
+    assert.equal('autoDispatch' in p, false, 'no legacy switch on a new project')
 
-    // Upsert via PATCH to set a semantic level; junk is refused there.
+    // Legacy tier keys in a create payload no longer mean anything.
+    const legacy = store.createProject({ name: 'legacy', rootPath: '/workspace/p', autonomy: 'L1', autoStart: true })
+    assert.equal('autonomy' in legacy, false, 'the legacy tier key is dropped at create')
+    assert.deepEqual(legacy.phaseRules, DEFAULT_PHASE_RULES, 'legacy keys must not smuggle rules in')
+
+    // An explicit narrowing is accepted; absent rules keep their defaults.
     const api = createApi({ store, build: 'qa' })
-    const p = mk('patch')
-    for (const level of ['you-approve', 'machine-approve', 'manual']) {
-      const r = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: level } })
-      assert.equal(r.status, 200, `PATCH ${level} accepted`)
-      assert.equal(r.body.project.autonomy, level)
-    }
+    const patch = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: { plan: { autoApprove: false } } } })
+    assert.equal(patch.status, 200)
+    assert.equal(patch.body.project.phaseRules.plan.autoApprove, false, 'a narrowing is accepted')
+    assert.equal(patch.body.project.phaseRules.plan.autoStart, true, 'an absent rule keeps its default')
   } finally { cleanup() }
 })
 
-test('autonomy UI predicate: the semantic level set is an ALLOW-LIST', () => {
-  // The safe predicate enumerates the three semantic levels; a deny-list would
-  // treat any junk string as auto-running.
-  const LEVELS = ['manual', 'you-approve', 'machine-approve']
-  const isKnownLevel = (autonomy) => LEVELS.includes(autonomy)
-  const unsafeDenyList = (autonomy) => autonomy !== 'manual'
-  for (const value of ['manual', 'L9', '', 'l1', 'L3']) {
-    assert.equal(isKnownLevel(value), value === 'manual', `${JSON.stringify(value)} allow-list result`)
-  }
-  assert.equal(isKnownLevel('you-approve'), true)
-  assert.equal(isKnownLevel('machine-approve'), true)
-  assert.equal(unsafeDenyList('L9'), true, 'deny-list shape is exactly the bug we must avoid')
-  assert.notEqual(isKnownLevel('L9'), unsafeDenyList('L9'))
+test('stage rules allow-list: only boolean autoStart / autoApprove narrow; junk is refused', () => {
+  const { store, cleanup } = setup()
+  try {
+    const p = store.createProject({ name: 'p', rootPath: '/workspace/p' })
+    const r = store.updatePhaseRules(p.id, { inbox: { autoStart: false }, 'self-review': { autoApprove: false } })
+    assert.equal(r.phaseRules.inbox.autoStart, false, 'a valid narrowing is stored')
+    assert.equal(r.phaseRules.inbox.autoApprove, true, 'an absent rule keeps its value')
+    assert.equal(r.phaseRules.plan.autoApprove, true)
+
+    // Junk is refused with a readable error and zero writes.
+    const junk = [
+      { plan: { autoApprove: 'yes' } },
+      { plan: { widen: true } },
+      { plan: 'off' },
+      { 'self-review': [true] },
+    ]
+    for (const value of junk) {
+      assert.throws(() => store.updatePhaseRules(p.id, value), /阶段规则/, `junk ${JSON.stringify(value)} refused`)
+    }
+    assert.equal(store.getProject(p.id).phaseRules.inbox.autoStart, false, 'a refused write changed nothing')
+
+    // The API surfaces the refusal as 400, and legacy tier keys are inert there.
+    const api = createApi({ store, build: 'qa' })
+    for (const value of junk) {
+      const r2 = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: value } })
+      assert.equal(r2.status, 400, `junk ${JSON.stringify(value)} is a 400, not a silent store`)
+    }
+    const beforeLegacy = store.getProject(p.id).phaseRules
+    const legacy = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'you-approve', autoDispatch: true } })
+    assert.equal(legacy.status, 200)
+    assert.equal('autonomy' in legacy.body.project, false, 'legacy tier keys are no longer routed or stored')
+    assert.deepEqual(legacy.body.project.phaseRules, beforeLegacy, 'a legacy PATCH cannot move the rules')
+  } finally { cleanup() }
 })
 
-// --- PATCH /projects/:id autonomy (PRD §5.3.2, PM's four rules) --------------
+// --- PATCH /projects/:id stage rules (PM's four rules, V4 shapes) ----------
 
-test('PATCH autonomy: only the fields present change; identity and rootPath never move', () => {
+test('PATCH phaseRules: only the fields present change; identity and rootPath never move', () => {
   const { store, file, cleanup } = setup()
   try {
     const api = createApi({ store, build: 'qa' })
     const p = api({ method: 'POST', route: '/projects', body: { name: 'p', rootPath: '/workspace/p' } }).body.project
-    assert.equal(p.autonomy, 'manual')
+    assert.deepEqual(p.phaseRules, DEFAULT_PHASE_RULES)
 
-    const toYou = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'you-approve' } })
-    assert.equal(toYou.status, 200)
-    assert.equal(toYou.body.project.autonomy, 'you-approve')
-    assert.equal(toYou.body.project.autoDispatch, false, 'an absent switch must not flip')
+    const narrowed = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: { plan: { autoApprove: false } } } })
+    assert.equal(narrowed.status, 200)
+    assert.equal(narrowed.body.project.phaseRules.plan.autoApprove, false)
+    assert.equal(narrowed.body.project.phaseRules.plan.autoStart, true, 'an absent rule must not flip')
 
-    const switchOnly = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autoDispatch: true } })
-    assert.equal(switchOnly.body.project.autoDispatch, true)
-    assert.equal(switchOnly.body.project.autonomy, 'you-approve', 'absent level must stay put')
+    // A later PATCH preserves previously written narrowings and only moves the given fields.
+    const again = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: { inbox: { autoStart: false } } } })
+    assert.equal(again.status, 200)
+    assert.equal(again.body.project.phaseRules.plan.autoApprove, false, 'a previously written narrowing survives')
+    assert.equal(again.body.project.phaseRules.inbox.autoStart, false)
 
     // Identity / path are not writable through PATCH.
     api({ method: 'PATCH', route: `/projects/${p.id}`, body: { rootPath: '/etc', name: 'hacked' } })
@@ -428,59 +450,68 @@ test('PATCH autonomy: only the fields present change; identity and rootPath neve
     assert.equal(after.rootPath, '/workspace/p', 'rootPath cannot be retargeted')
     assert.equal(after.name, 'p', 'name cannot be changed here')
 
-    // Rule 5: mixing the two disjoint shapes is refused AND writes nothing.
+    // Mixing the two disjoint shapes is refused AND writes nothing.
     // A 400 alone is not enough — a handler could half-apply before rejecting.
     const beforeDisk = reopen(file).projects[0]
-    const mixed = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'machine-approve', copyFiles: ['.other'] } })
+    const mixed = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: { plan: { autoApprove: false } }, copyFiles: ['.other'] } })
     assert.equal(mixed.status, 400)
     assert.match(mixed.body.error, /混改/)
     const afterDisk = reopen(file).projects[0]
-    assert.equal(afterDisk.autonomy, beforeDisk.autonomy, 'a refused mixed PATCH must not write autonomy')
+    assert.deepEqual(afterDisk.phaseRules, beforeDisk.phaseRules, 'a refused mixed PATCH must not write phaseRules')
     assert.deepEqual(afterDisk.copyFiles, beforeDisk.copyFiles, 'a refused mixed PATCH must not write copyFiles')
   } finally { cleanup() }
 })
 
-test('PATCH autonomy: a junk value is REFUSED and leaves every field untouched', () => {
-  // PATCH REFUSES truly junk autonomy with 400 and zero writes. Legacy v1 ids
-  // (L0/L1/L2) are accepted and MIGRATED by normalizeAutonomy — that is the
-  // deliberate backwards-compat path, happening on PATCH as well as on load.
+test('PATCH phaseRules: a junk value is REFUSED and leaves every field untouched', () => {
+  // A refused PATCH writes nothing: the stored narrowing survives byte-identical.
   const { store, cleanup } = setup()
   try {
     const api = createApi({ store, build: 'qa' })
     const p = api({ method: 'POST', route: '/projects', body: { name: 'p', rootPath: '/workspace/p' } }).body.project
-    api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'you-approve', autoDispatch: true } })
-    for (const junk of ['L9', 'l1', '', true, 0, null]) {
-      const r = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: junk } })
+    api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: { plan: { autoApprove: false } } } })
+    for (const junk of [{ plan: { autoApprove: 'yes' } }, { plan: { widen: true } }, { plan: 'off' }, { 'self-review': [true] }]) {
+      const r = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { phaseRules: junk } })
       assert.equal(r.status, 400, `junk ${JSON.stringify(junk)} must be refused, not silently stored`)
       const now = store.getProject(p.id)
-      assert.equal(now.autonomy, 'you-approve', 'a refused PATCH must not change the level')
-      assert.equal(now.autoDispatch, true, 'a refused PATCH must not change the switch either')
+      assert.equal(now.phaseRules.plan.autoApprove, false, 'a refused PATCH must not change the rules')
+      assert.equal(now.phaseRules.inbox.autoStart, true, 'a refused PATCH must not touch other stages either')
     }
-    // Legacy ids ARE migrated on PATCH (single source: normalizeAutonomy).
-    const migrated = api({ method: 'PATCH', route: `/projects/${p.id}`, body: { autonomy: 'L1', autoStart: true } })
-    assert.equal(migrated.status, 200)
-    assert.equal(migrated.body.project.autonomy, 'you-approve')
-    assert.equal(migrated.body.project.autoDispatch, true)
-    assert.equal('autoStart' in migrated.body.project, false, 'legacy switch not stored')
   } finally { cleanup() }
 })
 
-test('legacy/dirty autonomy on disk: the store still loads it, and it never looks auto-running', () => {
-  // store._load() validates only schemaVersion — autonomy is NOT checked on read.
-  // That is deliberate (a bad field must not reject the whole store), so every
-  // reader must defend itself. Proven here by writing junk straight into the
-  // persisted state.data JSON column (SQLite is binary; no legacy JSON file).
+test('legacy/dirty tier fields on disk: the store still loads them, migrates to stage rules, and strips them', () => {
+  // store._load() validates only schemaVersion — the tier fields are NOT checked
+  // on read. That is deliberate (a bad field must not reject the whole store),
+  // so the migration must make a dirty v1 row land somewhere safe: the rules,
+  // never a silent auto-run that the owner never configured.
   const { store, file, cleanup } = setup()
   try {
     const p = store.createProject({ name: 'p', rootPath: '/workspace/p' })
-    patchStateRow(file, (data) => { data.projects[0].autonomy = 'L9'; data.projects[0].autoDispatch = true })
+    patchStateRow(file, (data) => {
+      data.schemaVersion = 1
+      data.projects[0].autonomy = 'L1'
+      data.projects[0].autoDispatch = true
+    })
 
-    // A dirty on-disk level is migrated to manual on LOAD (never rejected, never
-    // left looking auto-running), and the rewrite is committed to disk.
+    // L1 with the switch on migrates to the you-approve shape: the plan gate
+    // stays for a human, self-review dispatches, and nothing looks like the
+    // old auto-delivery tier.
     const reloaded = new FactoryStore({ file })
     const loaded = reloaded.getProject(p.id)
-    assert.equal(loaded.autonomy, 'manual', 'junk on-disk level migrates to manual')
-    assert.equal(loaded.autoDispatch, false, 'junk migration clears the switch')
-    assert.equal(reopen(file).projects[0].autonomy, 'manual', 'migration persisted to disk')
+    assert.equal('autonomy' in loaded, false, 'the tier field is stripped on load')
+    assert.equal('autoDispatch' in loaded, false, 'the legacy switch is stripped on load')
+    assert.equal(loaded.phaseRules.plan.autoApprove, false, 'L1 keeps its human plan gate')
+    assert.equal(loaded.phaseRules['self-review'].autoStart, true, 'L1 + switch on dispatches self-review')
+    assert.equal(reopen(file).schemaVersion, 2, 'the v2 rewrite is committed to disk')
+
+    // Junk tier values fall back to the full-auto default and are stripped too.
+    patchStateRow(file, (data) => {
+      data.schemaVersion = 1
+      data.projects[0].autonomy = 'L9'
+      data.projects[0].autoDispatch = true
+    })
+    const dirty = new FactoryStore({ file }).getProject(p.id)
+    assert.deepEqual(dirty.phaseRules, DEFAULT_PHASE_RULES, 'junk lands on the default, never on a silent auto-run')
+    assert.equal('autonomy' in dirty, false)
   } finally { cleanup() }
 })

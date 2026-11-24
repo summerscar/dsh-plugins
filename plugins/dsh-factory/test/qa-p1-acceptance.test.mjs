@@ -50,9 +50,8 @@ function setup({ cardStatus = 'inbox', repo = makeRepo(), receiptPorts = {}, rea
   if (cardStatus !== 'inbox') {
     store.transitionCard(card.id, 'triage', 'human')
     store.transitionCard(card.id, 'plan', 'agent')
-    store.transitionCard(card.id, 'plan-review', 'agent')
-    store.transitionCard(card.id, 'build', 'human')
-    store.transitionCard(card.id, 'review', 'agent')
+    store.transitionCard(card.id, 'build', 'agent')
+    store.transitionCard(card.id, 'self-review', 'agent')
   }
   const allSpecs = factoryToolSpecs({ store, receiptPorts, readHead })
   const reportSpec = allSpecs.find((s) => s.name === 'factory_report')
@@ -85,8 +84,19 @@ const verdictsOf = (store, id) => store.getCard(id).history.filter((h) => h.type
 // ===========================================================================
 
 test('P1-AC1 shape: constants are closed and full-SHA validation rejects short ids', () => {
-  assert.deepEqual([...VERDICT_SOURCES], ['review', 'rereview'])
+  assert.deepEqual([...VERDICT_SOURCES], ['review', 'rereview', 'pr-review'], 'self-review, follow-up review and PR review each have a structured source')
   assert.deepEqual([...VERDICT_VALUES], ['approved', 'changes-requested', 'verification-incomplete'])
+  // Intent: all three review modes can produce a canonical verdict, and no
+  // fourth source is silently accepted. Behaviour, not just constant shape.
+  for (const source of ['review', 'rereview', 'pr-review']) {
+    const canonical = normalizeVerdict({
+      cardId: 'probe', source, verdict: 'approved', blocking: [], followUps: [], checks: [], reviewerSessionId: 's',
+    }, { reviewedHead: SHA40 })
+    assert.equal(canonical.source, source)
+  }
+  assert.throws(() => normalizeVerdict({
+    cardId: 'probe', source: 'unknown', verdict: 'approved', blocking: [], followUps: [], checks: [], reviewerSessionId: 's',
+  }, { reviewedHead: SHA40 }), /source/)
   assert.equal(FULL_SHA_RE.test(SHA40), true)
   assert.equal(FULL_SHA_RE.test(SHA64), true)
   for (const bad of ['abc123', 'z'.repeat(40), '', SHA40.slice(0, 39)]) {
@@ -271,24 +281,37 @@ const REVIEW_OPTS = (head = SHA40) => ({ reviewMode: true, review: { reviewedHea
 const ADVANCE_RE = /advance through|move the card yourself|factory_transition_work_item to advance/i
 
 test('P1-AC3 review context has no advance/move wording, nine fields, empty nextPhases, review skill; role stays explicit without read-only wording', () => {
-  const f = setup({ cardStatus: 'review' })
+  const f = setup({ cardStatus: 'self-review' })
   try {
     const built = buildSessionContext({ card: f.store.getCard(f.card.id), project: f.project, ...REVIEW_OPTS() })
-    assert.equal(ADVANCE_RE.test(built.sectionText), false, 'sectionText must not tell the reviewer to advance')
-    assert.equal(ADVANCE_RE.test(built.firstMessage), false, 'firstMessage must not tell the reviewer to advance')
+    assert.equal(/advance the card yourself/i.test(built.sectionText), false, 'sectionText must not carry the builder advance loop')
+    assert.equal(/advance the card yourself/i.test(built.firstMessage), false, 'firstMessage must not carry the builder advance loop')
     for (const key of ['cardId', 'phase', 'repo', 'branch', 'worktreePath', 'prUrl', 'reviewedHead', 'previousVerdict', 'commitSha']) {
       assert.ok(key in built, `missing review field ${key}`)
     }
     assert.equal(built.reviewedHead, SHA40)
     assert.deepEqual(built.nextPhases, [])
-    assert.equal(built.skill, 'factory-review')
+    assert.equal(built.skill, 'factory-self-review')
     // Review permission now follows the project workMode, so the prompt must
     // not claim a read-only sandbox. The role boundary itself stays intact.
     assert.doesNotMatch(built.sectionText, /read-only/i, 'no misleading read-only claim')
     assert.match(built.sectionText, /independent review/i, 'independent review role stays explicit')
-    assert.match(built.sectionText, /do not move the card/i, 'reviewer must not move the card')
-    assert.match(built.sectionText, /commit, push or open a PR/i, 'reviewer must not commit, push or open a PR itself')
-    assert.ok(built.sectionText.includes('factory_report'))
+    // V4: the self-review session is the only writer of the one draft PR — from
+    // the approved head only, never merge / force / another branch, and no
+    // builder-style advance loop.
+    assert.match(built.sectionText, /factory_self_review_verdict/, 'V4 verdict channel is named')
+    assert.match(built.sectionText, /factory_open_draft_pr/, 'draft-PR opening is named')
+    assert.match(built.sectionText, /exactly ONE draft PR/i, 'draft-PR-only write boundary')
+    assert.match(built.sectionText, /never merge/i, 'merge stays with a human')
+    assert.doesNotMatch(built.sectionText, /advance the card yourself/i, 'no builder advance loop')
+    assert.doesNotMatch(built.firstMessage, /advance the card yourself/i, 'no builder advance loop in firstMessage')
+    // A re-review (back-from-build or new head) keeps the fully read-only
+    // boundary: structured verdict via factory_report, no PR opening.
+    const rr = buildSessionContext({ card: f.store.getCard(f.card.id), project: f.project, ...REVIEW_OPTS(SHA40), review: { rereview: true, sandboxMode: 'read-only' } })
+    assert.equal(rr.skill, 'factory-rereview')
+    assert.match(rr.sectionText, /commit, push or open a PR/i, 'rereview must not open a PR')
+    assert.ok(rr.sectionText.includes('factory_report'), 'rereview verdict stays on the structured channel')
+    assert.doesNotMatch(rr.sectionText, /factory_open_draft_pr/, 'rereview has no PR opening')
   } finally { f.cleanup() }
 })
 
@@ -311,7 +334,7 @@ test('P1-AC3 missing head / invalid SHA fail closed; writable sandbox is valid w
     ['missing head', { reviewMode: true, review: { readHead: () => null } }],
     ['invalid SHA', REVIEW_OPTS('deadbeef')],
   ]) {
-    const f = setup({ cardStatus: 'review' })
+    const f = setup({ cardStatus: 'self-review' })
     try {
       // A missing head with no injectable reader must fail: the fixture repo
       // exists, so supply a reader returning null to model "no readable head".
@@ -324,14 +347,14 @@ test('P1-AC3 missing head / invalid SHA fail closed; writable sandbox is valid w
     } finally { f.cleanup() }
   }
 
-  const f = setup({ cardStatus: 'review' })
+  const f = setup({ cardStatus: 'self-review' })
   try {
     const built = buildSessionContext({
       card: f.store.getCard(f.card.id), project: f.project, reviewMode: true,
       review: { reviewedHead: SHA40, sandboxMode: 'workspace-write' },
     })
     assert.equal(built.reviewedHead, SHA40, 'writable sandbox builds and keeps the full reviewedHead')
-    assert.equal(built.skill, 'factory-review', 'review role is still selected')
+    assert.equal(built.skill, 'factory-self-review', 'the independent review skill is selected')
   } finally { f.cleanup() }
 })
 
@@ -341,7 +364,7 @@ test('P1-AC3 attach fails without a head; writable attach exposes review variabl
   for (const [label, review] of [
     ['no head', { readHead: () => null }],
   ]) {
-    const f = setup({ cardStatus: 'review' })
+    const f = setup({ cardStatus: 'self-review' })
     try {
       const variables = {}
       let section = null
@@ -362,7 +385,7 @@ test('P1-AC3 attach fails without a head; writable attach exposes review variabl
     } finally { f.cleanup() }
   }
 
-  const f = setup({ cardStatus: 'review' })
+  const f = setup({ cardStatus: 'self-review' })
   try {
     const variables = {}
     const agentCtx = {

@@ -20,6 +20,7 @@ import test from 'node:test'
 
 import { FactoryStore } from '../store.js'
 import { createApi } from '../api.js'
+import { applyRemoteSync } from '../sync.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '..')
@@ -111,15 +112,18 @@ test('V1 fold bar renders canceledCards via renderCard (title + body summary)', 
 // ==============================================================================
 test('V2 every CardActions button is gated off at canceled (read-only)', () => {
   const actions = clientSrc.slice(clientSrc.indexOf('function CardActions'), clientSrc.indexOf('function Column'))
-  // All six button branches key off non-terminal conditions; none is unconditional.
-  for (const key of ['actDispatch', 'actApprovePlan', 'takeover', 'returnToEngine', 'actConfirmCommit', 'actMarkDone', 'cancelCard']) {
-    const idx = actions.indexOf(`'${key}'`)
+  // V4 matrix: inbox (resupply/dispatch), triage (return), takeover, return,
+  // cancel, delete. No human git-write and no mark-done button exists at all.
+  for (const key of ['actResupply', 'actDispatch', 'actReturnToInbox', 'takeover', 'returnToEngine', 'cancelCard', 'deleteCard']) {
+    const idx = actions.indexOf(key)
     assert.ok(idx > 0, `${key} present`)
   }
-  assert.match(actions, /if \(card\.status !== 'done' && card\.status !== 'canceled'\)/, 'takeover + cancel gated off at canceled')
+  for (const key of ['actConfirmCommit', 'actCreatePr', 'actPushUpdate', 'actMarkDone']) {
+    assert.equal(actions.includes(key), false, `V4 has no ${key} button`)
+  }
+  assert.match(actions, /if \(card\.status !== 'done' && card\.status !== 'canceled' && card\.takenOver !== true\)/, 'takeover gated off at terminal states')
   assert.match(actions, /if \(card\.takenOver === true\)/, 'return gated by takenOver')
-  assert.match(actions, /if \(card\.status === 'plan-review'\)/, 'approve gated')
-  assert.match(actions, /if \(card\.status === 'review'\)/, 'commit/pr/done gated')
+  assert.match(actions, /if \(card\.status !== 'done' && card\.status !== 'canceled'\)/, 'cancel gated off at terminal states')
   assert.match(actions, /if \(buttons\.length === 0\) return null/, 'no buttons → no action bar')
 })
 
@@ -186,9 +190,12 @@ test('V5 done counted in stat and cardCounts; done column still includes it', ()
   const f = fixture()
   const inbox = f.store.createCard({ boardId: f.board.id, title: 'inbox' })
   const done = f.store.createCard({ boardId: f.board.id, title: 'done' })
-  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'human'], ['review', 'agent'], ['done', 'human']]) {
+  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['build', 'agent'], ['self-review', 'agent'], ['pr-review', 'agent']]) {
     f.store.transitionCard(done.id, to, actor)
   }
+  // V4: only the merged-PR fact, fed through the engine's remote sync, reaches done.
+  f.store.setPrUrl(done.id, 'https://github.com/o/r/pull/5')
+  assert.equal(applyRemoteSync({ store: f.store, cardId: done.id, remote: { pr: { state: 'MERGED' } } }).changed, true)
   assert.equal(f.store.getCard(done.id).status, 'done')
   const v = boardView(f.store, f.board.id)
   assert.equal(statCardsOf(v), 2, 'inbox + done both counted')

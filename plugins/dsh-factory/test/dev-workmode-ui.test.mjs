@@ -1,69 +1,39 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { clientSource } from './dev-v4-support.mjs'
 
-const here = dirname(fileURLToPath(import.meta.url))
-const root = join(here, '..')
-const client = readFileSync(join(root, 'client.js'), 'utf8')
-const zh = JSON.parse(readFileSync(join(root, 'locale', 'zh.json'), 'utf8'))
-const en = JSON.parse(readFileSync(join(root, 'locale', 'en.json'), 'utf8'))
+const source = clientSource()
 
-const KEYS = [
-  'workModeTitle', 'workModePurpose',
-  'workModeWorkspace', 'workModeWorkspaceDesc',
-  'workModeFull', 'workModeFullDesc',
-  'workModeAuto', 'workModeAutoDesc',
-  'autoReviewUnavailable', 'autoReviewRisk', 'autoReviewFallback',
-  'workModeConfirm', 'confirmMode',
-]
-
-test('Dev-UI: work mode reuses the worktree block native save (no second save button)', () => {
-  const setup = client.slice(client.indexOf('function WorktreeSetup('), client.indexOf('function WorktreesRootSetting('))
-  assert.match(setup, /function WorktreeSetup\(\{ project, engine, t, onSaved, onModal \}\)/)
-  assert.match(client, /block\('prep', '01'[\s\S]{0,300}project, engine, t[\s\S]{0,200}onModal: setPageModal/)
-  assert.ok(setup.includes("key: 'modeBlock'"), 'mode selector inside WorktreeSetup')
-  assert.match(setup, /role: 'radiogroup'/)
-  assert.match(setup, /role: 'radio'/)
-  for (const value of ['workspace-write', 'full-access', 'auto-review']) {
-    assert.ok(setup.includes(`key: '${value}'`), `mode option ${value} present`)
-  }
-  // The API rejects mixed PATCH shapes, so the single worktree save button
-  // sends the preparation PATCH and, when needed, a workMode PATCH in sequence.
-  assert.match(setup, /if \(dirty\) \{[\s\S]{0,500}copyFiles:/, 'preparation PATCH gated by prep dirty')
-  assert.match(setup, /if \(modeDirty\) \{[\s\S]{0,300}workMode: mode/, 'workMode PATCH gated by mode dirty')
-  assert.doesNotMatch(setup, /saveMode\b|modeSaving|modeMessage|modeError/, 'no second save function/state remains')
-  const modeBlock = setup.slice(setup.indexOf("key: 'modeBlock'"), setup.indexOf("key: 'saveRow'"))
-  assert.doesNotMatch(modeBlock, /h\(Button/, 'mode block has no own save button')
-  assert.match(setup, /disabled: saving \|\| invalid \|\| \(!dirty && !modeDirty\)/, 'the only save button covers both changes')
-})
-
-test('Dev-UI: auto-review is fail-closed in the selector and confirmed on risky switches', () => {
-  assert.match(client, /autoAvailable = engine\?\.autoReviewPluginState\?\.available === true/)
-  assert.match(client, /key: 'auto-review'[\s\S]{0,160}disabled: !autoAvailable/)
-  assert.match(client, /t\('autoReviewUnavailable'\)/)
-  assert.match(client, /savedMode === 'auto-review' && !autoAvailable/)
-  assert.match(client, /t\('autoReviewFallback'\)/)
-  assert.match(client, /next === 'full-access' \|\| next === 'auto-review'/)
-  assert.match(client, /t\(next === 'full-access' \? 'workModeConfirm' : 'autoReviewRisk'\)/)
-})
-
-test('Dev-UI: project list badges use L0-L4 labels, not the legacy semantic names', () => {
-  assert.doesNotMatch(client, /t\(LEVEL_META\[lv\]\.badge\)/)
-  const levelBadges = client.match(/t\(`lvL\$\{lv\}`\)/g) || []
-  assert.ok(levelBadges.length >= 2, 'sidebar rail and top tabs both render L0-L4')
-  for (const n of [0, 1, 2, 3, 4]) {
-    assert.ok(zh[`lvL${n}`] === `L${n}`, `zh lvL${n}`)
-    assert.ok(en[`lvL${n}`] === `L${n}`, `en lvL${n}`)
+test('Dev-UI: no raw auto-panel keys or tier wording remain in any dictionary carrier', () => {
+  const zh = JSON.parse(readFileSync(new URL('../locale/zh.json', import.meta.url), 'utf8'))
+  const en = JSON.parse(readFileSync(new URL('../locale/en.json', import.meta.url), 'utf8'))
+  assert.doesNotMatch(source, /autoPanelTitle|autoPanelPurpose/)
+  assert.match(source, /block\('autonomy', '02', 'stageConfigTitle', 'stageConfigPurpose'/)
+  for (const dict of [source, JSON.stringify(zh), JSON.stringify(en)]) {
+    assert.doesNotMatch(dict, /自治档位|自动化档位|autoPanelTitle|autoPanelPurpose/)
+    assert.doesNotMatch(dict, /autonomy level|autonomy tier/)
   }
 })
 
-test('Dev-UI: work-mode copy is mirrored in inline dictionaries and locale files', () => {
-  for (const key of KEYS) {
-    assert.ok(zh[key], `zh.${key} present`)
-    assert.ok(en[key], `en.${key} present`)
-    assert.ok(client.includes(`${key}: ${JSON.stringify(zh[key])}`), `inline zh.${key} mirrors locale`)
-    assert.ok(client.includes(`${key}: ${JSON.stringify(en[key])}`), `inline en.${key} mirrors locale`)
-  }
+test('Dev-UI: project badges show full-auto stage rules, not L0–L4', () => {
+  assert.match(source, /t\('stageDefaultBadge'\)/)
+  assert.doesNotMatch(source, /LEVEL_META|lvL0|badgeManual|badgeMachineApprove/)
+})
+
+test('Dev-UI: work mode remains a separate permission boundary', () => {
+  assert.match(source, /workModeTitle/)
+  assert.match(source, /workModePurpose/)
+  assert.doesNotMatch(source, /与自动化档位无关/)
+})
+
+test('Dev-UI: stage rules panel is the automation control', () => {
+  assert.match(source, /stageConfigTitle/)
+  assert.match(source, /autoStartLabel/)
+  assert.match(source, /autoApproveLabel/)
+  assert.match(source, /whenAdvancedTitle/)
+})
+
+test('Dev-UI: no legacy axisTitle or slider remains', () => {
+  assert.doesNotMatch(source, /axisTitle|axisHint|autoEndLabel|currentLevel/)
 })

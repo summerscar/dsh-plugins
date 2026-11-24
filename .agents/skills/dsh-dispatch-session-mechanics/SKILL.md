@@ -57,5 +57,7 @@ description: 在 DSH 宿主上构建「自动派发的 agent 会话」类功能�
 - 判断会话真实状态只认 `tool/call` 事件与 `turn/end.reason.kind`；卡片字段、API 返回值、崩溃后的收尾事件都不算。
 - 夹具仓库必须含与任务相符的源码，空壳仓会造出「agent 不守工作区/不回执」的假象。
 - 取证清理前等 `turn/end` 落定。
+- 多评审会话共存时，身份闸要按 verdict source 绑定到各自会话字段、禁用 `||` 兜底，活会话写入闸覆盖所有字段；设计步骤见 `dsh-typed-session-identity-gate`。
+- 取不到的交叉拒交轨迹按证据边界如实标注，不把承诺当结果；见 `dsh-evidence-integrity`。
 
 这些真机验证的执行细节见 `dsh-plugin-live-verification` 技能；本 skill 只管「机制为什么这样设计」。

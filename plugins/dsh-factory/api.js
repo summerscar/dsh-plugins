@@ -20,9 +20,8 @@ import { collectAudit } from './audit.js'
 import { inspectRepo } from './project-proposal.js'
 import { applyRemoteSync } from './sync.js'
 import { assertWorktreeRoot, isPathInside, removeWorktree, worktreeRootOf } from './worktree.js'
-import { AUTO_DELIVERY_TIER, DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
+import { DEFAULT_PROJECT_MAX_ACTIVE, effectiveGlobalMaxActive } from './autonomy.js'
 import { assertNoActiveSession } from './session-guard.js'
-import { assertApprovedVerdict } from './verdict-guard.js'
 import { isFullSha, readHeadFromGit } from './verdict.js'
 
 /**
@@ -200,13 +199,13 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         // the caller thought it only changed a switch. Identity and rootPath are
         // never writable here. Pause/resume/takeover are separate actions below.
         if (method === 'PATCH' && seg.length === 2) {
-          const wantsAutonomy = ['autonomy', 'autoDispatch'].some((key) => key in body)
+          const wantsPhaseRules = 'phaseRules' in body
           const wantsPreparation = ['copyFiles', 'postCreate', 'postCreateTimeoutMs'].some((key) => key in body)
           const wantsIntake = ['issueRepo', 'intakeBoardId', 'maxActiveSessions', 'intakeLimit', 'githubCredentialId'].some((key) => key in body)
           const wantsWorkMode = 'workMode' in body
-          const kinds = [wantsAutonomy, wantsPreparation, wantsIntake, wantsWorkMode].filter(Boolean).length
+          const kinds = [wantsPhaseRules, wantsPreparation, wantsIntake, wantsWorkMode].filter(Boolean).length
           if (kinds > 1) {
-            return { status: 400, body: { error: 'autonomy / preparation / intake / workMode 字段不能在同一次 PATCH 里混改' } }
+            return { status: 400, body: { error: 'phaseRules / preparation / intake / workMode 字段不能在同一次 PATCH 里混改' } }
           }
           if (wantsWorkMode) {
             const available = typeof workModeAvailability === 'function' ? workModeAvailability() : undefined
@@ -217,7 +216,7 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
               return { status: 400, body: { error: error instanceof Error ? error.message : String(error), reason: available?.reason ?? null } }
             }
           }
-          if (wantsAutonomy) return ok({ project: store.updateAutonomy(seg[1], body) })
+          if (wantsPhaseRules) return ok({ project: store.updatePhaseRules(seg[1], body) })
           if (wantsIntake) return ok({ project: store.updateIntake(seg[1], body) })
           return ok({ project: store.updatePreparation(seg[1], body) })
         }
@@ -251,65 +250,12 @@ export function createApi({ store, build = 'unknown', inspect = inspectRepo, run
         }
         if (method === 'POST' && seg.length === 1) return ok({ card: store.createCard(body) }, 201)
         if (method === 'GET' && seg.length === 2) return ok({ card: store.getCard(seg[1]) })
-        // Human recovery for a latched L4 commit stall. The engine stops after
-        // three failed commit attempts; without this route a corrected worktree
-        // could never re-enter the pipeline. Explicit actor + session gate keep
-        // this from racing an agent or being triggered by an accidental caller.
-        if (method === 'POST' && seg.length === 3 && seg[2] === 'retry-auto-delivery') {
-          if (body.actor !== 'human') return { status: 400, body: { error: '重试自动交付必须由人工显式触发' } }
-          const card = store.getCard(seg[1])
-          if (card === undefined || card === null) return { status: 400, body: { error: '卡片不存在' } }
-          if (card.status !== 'review') return { status: 400, body: { error: '只有 Review 卡片能重试自动交付' } }
-          if (card.takenOver === true || card.needsHumanInfo === true) {
-            return { status: 400, body: { error: '接管中或待补信息的卡片不能重试自动交付' } }
-          }
-          const project = store.getProject(card.projectId)
-          if (project?.autonomy !== AUTO_DELIVERY_TIER) {
-            return { status: 400, body: { error: '只有 L4 自动交付档能重试自动交付' } }
-          }
-          if (card.commitStalled !== true && card.autoDelivery?.state !== 'failed'
-            && typeof body.commitSha !== 'string') {
-            return { status: 400, body: { error: '当前没有可重试的自动交付失败' } }
-          }
-          try {
-            assertNoActiveSession({ card, isSessionActive, action: '重试自动交付' })
-            const head = readHeadFromGit({ worktreePath: card.worktreePath })
-            // Optional after a human repaired the worktree and committed with
-            // the real hook: sync that head into the live store so the engine
-            // stops trying to re-commit a now-clean tree.
-            if (typeof body.commitSha === 'string' && isFullSha(body.commitSha)) {
-              store.recordCommit(card.id, {
-                sha: body.commitSha.trim(),
-                message: typeof body.message === 'string' ? body.message : 'recovery commit',
-                actor: 'human',
-              })
-            }
-            store.clearCommitFailures(card.id)
-            store.setAutoDelivery(card.id, { head, state: 'retry', actor: 'human' })
-            store.recordEvent({
-              type: 'auto-delivery-retry', scope: 'card', targetId: card.id,
-              actor: 'human', decision: 'retried', note: `head ${head}`,
-            })
-            return ok({ card: store.getCard(card.id) })
-          } catch (error) {
-            return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } }
-          }
-        }
         if (method === 'POST' && seg.length === 3 && seg[2] === 'transition') {
           // Backend fallback: the UI hides these actions while a session runs,
           // so a direct request must fail the same way instead of racing it.
           if (body.actor === 'human') {
             const card = store.getCard(seg[1])
             assertNoActiveSession({ card, isSessionActive, action: `转移到 ${body.to}` })
-            // Same gate as the git writes: a human may only finish a card that
-            // review approved. Cancel and the return actions are deliberately
-            // NOT gated — abandoning or sending work back needs no verdict.
-            // Opt-in at the HTTP boundary: the state machine itself still
-            // allows review→done for any human caller (state.test/M4 cover that
-            // legal edge); this is an API-level business gate, not an edge change.
-            if (body.to === 'done' && requireApprovedVerdict === true) {
-              assertApprovedVerdict({ card, action: '标记完成', deny: '禁止标记完成' })
-            }
           }
           // External callers always supply a string note; a missing note on a
           // human return becomes an explicit empty one and is refused by the

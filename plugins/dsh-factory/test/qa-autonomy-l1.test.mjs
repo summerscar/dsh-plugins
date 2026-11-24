@@ -105,57 +105,70 @@ const cardOf = (f, statusValue) => {
   const card = f.store.createCard({ boardId: f.board.id, title: `card-${statusValue}` })
   if (statusValue !== 'inbox') {
     // Walk the REAL state machine with an actor legal on each edge (EDGE_ACTORS):
-    // inbox->triage human, then triage->plan / plan->plan-review are agent-only.
-    const path = ['inbox', 'triage', 'plan', 'plan-review']
+    // inbox->triage human, then the agent-owned stages up to the requested one.
+    const path = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
+    const actors = { triage: 'human', plan: 'agent', build: 'agent', 'self-review': 'agent', 'pr-review': 'agent' }
     for (let i = 1; i <= path.indexOf(statusValue); i += 1) {
-      const actor = i === 1 ? 'human' : 'agent'
-      f.store.transitionCard(card.id, path[i], actor)
+      f.store.transitionCard(card.id, path[i], actors[path[i]])
     }
   }
   return card
 }
 
 // ---------------------------------------------------------------------------
-// AE-1d — you-approve NEVER auto-approves; only machine-approve does
+// AE-1d — V4: no tiers; the default is full auto, and rules only narrow
 // ---------------------------------------------------------------------------
 
-test('AE-1d: you-approve stops at plan-review; machine-approve is the only auto-approve level', async () => {
-  const { behaviorOf, MACHINE_APPROVE_TIER, AUTO_TIER } = await import('../autonomy.js')
-  const f = setup({ autonomy: 'you-approve', autoDispatch: true })
-  try {
-    const waiting = cardOf(f, 'plan-review')
-    await runTick({ store: f.store, status: f.status, deps: f.deps })
-    assert.equal(f.store.getCard(waiting.id).status, 'plan-review',
-      'you-approve must not advance a plan-approval card')
-    assert.equal(f.state.dispatchCalls, 0, 'no automatic dispatch for a non-Inbox card')
-    const transitions = f.store.getCard(waiting.id).history.filter((h) => h.type === 'transition')
-    assert.equal(transitions.filter((h) => h.actor === 'autoRule').length, 0, 'no autoRule transition on the plan-approval card')
+test('AE-1d: the default engine auto-approves plan to build; a narrowed plan.autoApprove stops it', async () => {
+  const { behaviorOf } = await import('../autonomy.js')
+  const { PHASES, phaseAllows, DEFAULT_PHASE_RULES, normalizePhaseRules } = await import('../phase-rules.js')
+  // Capability truth source: the engine is full auto; narrowing comes only
+  // from stored rules.
+  assert.deepEqual(behaviorOf(), { intake: true, dispatch: true, approve: true, selfReview: true, remoteSync: true })
 
-    // Capability truth source: you-approve never approves, machine-approve does,
-    // and the tiers are distinct semantic values (P1 audit fix).
-    assert.deepEqual(behaviorOf('you-approve'), { intake: true, dispatch: true, approve: false })
-    assert.deepEqual(behaviorOf('machine-approve'), { intake: true, dispatch: true, approve: true })
-    assert.deepEqual(behaviorOf('manual'), { intake: false, dispatch: false, approve: false })
-    assert.notEqual(AUTO_TIER, MACHINE_APPROVE_TIER)
-    assert.equal(AUTO_TIER, 'you-approve')
-    assert.equal(MACHINE_APPROVE_TIER, 'machine-approve')
+  const f = setup({ autonomy: 'machine-approve' })
+  try {
+    f.deps.approve = async ({ store: s, cardId }) => {
+      s.transitionCard(cardId, 'build', 'autoRule', undefined, { actor: 'autoRule', tier: 'phase-rules', rule: 'auto-approve-plan', channel: 'poll' })
+      return { approved: true, cardId }
+    }
+    const waiting = cardOf(f, 'plan')
+    await runTick({ store: f.store, status: f.status, deps: f.deps })
+    assert.equal(f.store.getCard(waiting.id).status, 'build', 'default rules auto-approve the plan')
+    const transitions = f.store.getCard(waiting.id).history.filter((h) => h.type === 'transition')
+    assert.equal(transitions.filter((h) => h.actor === 'autoRule').length, 1, 'one autoRule edge: plan → build')
 
     // The legacy autoApprove switch no longer exists anywhere in live code.
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(new URL('../autonomy.js', import.meta.url), 'utf8')
-    const live = src.split('\n').filter((l) => /project\.autoApprove/.test(l) && !/^\s*(\*|\/\/)/.test(l))
-    assert.equal(live.length, 0, `live code never reads autoApprove; found: ${live.join(' | ')}`)
+    const live = src.split('\n').filter((l) => /project\.(autoApprove|autoStart|autoDispatch)\b/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+    assert.equal(live.length, 0, `live code never reads the legacy switches; found: ${live.join(' | ')}`)
   } finally { f.cleanup() }
+
+  // Narrowed: the SAME card, one rule off, stops where the human wants.
+  const g = setup({ autonomy: 'you-approve' })
+  try {
+    g.store.updatePhaseRules(g.project.id, { plan: { autoApprove: false } })
+    g.deps.approve = async ({ store: s, cardId }) => {
+      s.transitionCard(cardId, 'build', 'autoRule', undefined, { actor: 'autoRule', tier: 'phase-rules', rule: 'auto-approve-plan', channel: 'poll' })
+      return { approved: true, cardId }
+    }
+    const waiting = cardOf(g, 'plan')
+    await runTick({ store: g.store, status: g.status, deps: g.deps })
+    assert.equal(g.store.getCard(waiting.id).status, 'plan', 'narrowed plan.autoApprove=false must not advance the card even with the approve port wired')
+    assert.equal(phaseAllows(normalizePhaseRules({ plan: { autoApprove: false } }), 'plan', 'autoApprove'), false)
+  } finally { g.cleanup() }
 })
 
 // ---------------------------------------------------------------------------
-// AE-2b — the重点: remote sync must NOT approve on a human's behalf
+// AE-2b — the重点: remote sync auto-completes ONLY a merged PR, and never by hand
 // ---------------------------------------------------------------------------
 
-test('AE-2b: PR CLOSED unmerged on a plan-review card records a suggestion, never moves it', () => {
+test('AE-2b: a closed-unmerged PR on a pr-review card records a suggestion, never moves it', () => {
   const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
-    const waiting = cardOf(f, 'plan-review')
+    const waiting = cardOf(f, 'pr-review')
+    f.store.setPrUrl(waiting.id, 'https://github.com/o/r/pull/9')
     const remote = { pr: { state: 'CLOSED', merged: false } }
 
     // Real chain: deriveRemoteTarget -> resolveSync -> applyRemoteSync.
@@ -163,7 +176,7 @@ test('AE-2b: PR CLOSED unmerged on a plan-review card records a suggestion, neve
     assert.equal(derived.target, 'build', 'the remote fact suggests a Build return')
 
     const resolved = resolveSync(f.store.getCard(waiting.id), remote)
-    assert.equal(resolved.suggestion.autoApplicable, false)
+    assert.equal(resolved.suggestion.autoApplicable, false, 'close-without-merge is NOT an auto edge')
     assert.equal(resolved.suggestion.requiresHuman, true)
 
     const result = applyRemoteSync({ store: f.store, cardId: waiting.id, remote })
@@ -171,7 +184,7 @@ test('AE-2b: PR CLOSED unmerged on a plan-review card records a suggestion, neve
     assert.equal(result.needsHuman, true)
 
     const after = f.store.getCard(waiting.id)
-    assert.equal(after.status, 'plan-review', 'still waiting for human plan approval')
+    assert.equal(after.status, 'pr-review', 'still in pr-review')
 
     const syncRuleTransitions = after.history.filter((h) => h.type === 'transition' && h.actor === 'syncRule')
     assert.equal(syncRuleTransitions.length, 0, 'actor=syncRule transition count must be 0')
@@ -179,62 +192,77 @@ test('AE-2b: PR CLOSED unmerged on a plan-review card records a suggestion, neve
     // The suggestion is recorded for a human, not silently dropped.
     const suggestions = after.history.filter((h) => h.type === 'sync-suggestion' || h.type === 'suggestion')
     assert.ok(suggestions.length > 0, 'a needsHuman suggestion is recorded on the card')
-
-    // audit?actor=autoRule must be empty for this card's transitions.
-    const audit = f.get('/audit?actor=autoRule')
-    assert.equal(audit.status, 200)
-    const autoEvents = audit.body.events.filter((e) => e.cardId === waiting.id)
-    assert.equal(autoEvents.length, 0, 'no autoRule audit event for the plan-approval card')
   } finally { f.cleanup() }
+
+  // The V4 widening: MERGED is auto-applied on pr-review via syncRule, and is
+  // idempotent (a second feed performs no write).
+  const g = setup({ autonomy: 'you-approve', autoDispatch: true })
+  try {
+    const done = cardOf(g, 'pr-review')
+    g.store.setPrUrl(done.id, 'https://github.com/o/r/pull/9')
+    assert.equal(applyRemoteSync({ store: g.store, cardId: done.id, remote: { pr: { state: 'MERGED' } } }).changed, true)
+    assert.equal(g.store.getCard(done.id).status, 'done', 'the merge event completes the card')
+    assert.equal(applyRemoteSync({ store: g.store, cardId: done.id, remote: { pr: { state: 'MERGED' } } }).changed, false, 'repeat feed is a no-op')
+  } finally { g.cleanup() }
 })
 
-test('AE-2b guard: syncRule is frozen out of every auto edge, while autoRule keeps you-approve semantics', () => {
-  // The fix must be narrow: sync's whitelist is empty (blocked), but the engine's
-  // autoRule must remain legal on plan-review->build so machine-approve can open it.
-  assert.equal(canSyncAutoApply('plan-review', 'build'), false)
-  assert.equal(canTransition('plan-review', 'build', 'syncRule'), false)
-  assert.equal(canTransition('plan-review', 'build', 'autoRule'), true,
-    'autoRule semantics must not be broken by the G4 fix')
+test('AE-2b guard: syncRule auto-applies only the pr-review→done edge; autoRule never marks done', () => {
+  // The V4 widening is exactly one edge: the merged-PR fact. Everything else
+  // stays frozen: sync may not open the plan gate, and the engine may not
+  // complete cards by hand either.
+  assert.equal(canSyncAutoApply('pr-review', 'done'), true, 'the merged edge is open')
+  assert.equal(canSyncAutoApply('plan', 'build'), false, 'sync never opens the plan gate')
+  assert.equal(canTransition('plan', 'build', 'autoRule'), true, 'the engine keeps its plan approval edge')
+  assert.equal(canTransition('pr-review', 'done', 'human'), false, 'no human mark-done edge')
+  assert.equal(canTransition('pr-review', 'done', 'autoRule'), false, 'no engine mark-done edge')
 })
 
 // ---------------------------------------------------------------------------
-// AE-1 / AE-1b / AE-1c — default zero side effects and the you-approve stop point
+// AE-1 / AE-1b / AE-1c — full auto is the default; narrowing is a rule, not a level
 // ---------------------------------------------------------------------------
 
-test('AE-1: manual is a strict no-op across multiple ticks', async () => {
+test('AE-1: a fully narrowed project discovers but never dispatches or approves', async () => {
   const f = setup({ autonomy: 'manual', autoDispatch: false })
   try {
-    const before = f.store.listCards({}).length
+    // V4 equivalent of the old "manual" level: every stage rule closed off.
+    // inbox.autoStart=false means discover-only: discovery still creates Inbox
+    // cards, but nothing is ever dispatched or approved.
+    f.store.updatePhaseRules(f.project.id, {
+      inbox: { autoStart: false }, triage: { autoStart: false, autoApprove: false },
+      plan: { autoStart: false, autoApprove: false }, build: { autoStart: false, autoApprove: false },
+      'self-review': { autoStart: false, autoApprove: false }, 'pr-review': { autoStart: false, autoApprove: false },
+    })
     for (let i = 0; i < 3; i += 1) await runTick({ store: f.store, status: f.status, deps: f.deps })
 
-    assert.equal(f.store.listCards({}).length, before, 'no card was created')
-    assert.equal(f.state.intakeCalls, 0, 'manual never runs discovery')
-    assert.equal(f.state.dispatchCalls, 0, 'manual never dispatches')
+    const cards = f.store.listCards({})
+    assert.ok(cards.length > 0, 'discovery still creates Inbox cards')
+    assert.ok(cards.every((c) => c.status === 'inbox'), 'fully narrowed: nothing leaves Inbox')
+    assert.equal(f.state.intakeCalls, 3, 'discovery keeps running on discover-only')
+    assert.equal(f.state.dispatchCalls, 0, 'narrowed rules never dispatch')
+    assert.ok(f.status.ticks >= 3, 'the engine still ticks and reports')
+    assert.equal(f.status.projects[0].action, 'discover-only', 'the hold is visible, not silent')
 
     const audit = f.get('/audit?actor=autoRule')
-    assert.equal(audit.body.events.length, 0, 'no autoRule audit events at manual')
-
-    // A disabled engine must also be visible, not silently idle.
-    assert.ok(f.status.ticks >= 3)
-    assert.ok(f.status.projects.every((p) => p.action === 'skipped'))
-    assert.match(f.status.projects[0].reason, /manual/)
+    const autoTransitions = audit.body.events.filter((e) => e.from && e.to)
+    assert.equal(autoTransitions.length, 0, 'no automatic transition when fully narrowed (discovery audit rows are expected, edges are not)')
   } finally { f.cleanup() }
 })
 
-test('AE-1b: autoDispatch=false discovers Inbox cards but never dispatches', async () => {
+test('AE-1b: inbox autoStart=false discovers Inbox cards but never dispatches', async () => {
   const f = setup({ autonomy: 'you-approve', autoDispatch: false })
   try {
+    f.store.updatePhaseRules(f.project.id, { inbox: { autoStart: false } })
     await runTick({ store: f.store, status: f.status, deps: f.deps })
 
     const cards = f.store.listCards({})
     assert.ok(cards.length > 0, 'discovery still creates Inbox cards (discovery is not starting)')
     assert.ok(cards.every((c) => c.status === 'inbox'), 'nothing moved out of inbox')
-    assert.equal(f.state.dispatchCalls, 0, 'no dispatch while autoDispatch=false')
-    assert.equal(f.status.projects[0].reason, 'autoDispatch=false', 'the reason is readable in status')
+    assert.equal(f.state.dispatchCalls, 0, 'no dispatch while inbox autoStart=false')
+    assert.equal(f.status.projects[0].reason, 'inbox autoStart=false', 'the reason is readable in status')
   } finally { f.cleanup() }
 })
 
-test('AE-1c / AE-2: you-approve runs exactly one automatic edge, then stops at plan-review', async () => {
+test('AE-1c / AE-2: the default runs the one automatic inbox→triage edge and stops', async () => {
   const f = setup({ autonomy: 'you-approve', autoDispatch: true })
   try {
     // The tick snapshots cards at its start, so newly discovered cards are picked
@@ -245,13 +273,13 @@ test('AE-1c / AE-2: you-approve runs exactly one automatic edge, then stops at p
     const cards = f.store.listCards({})
     assert.ok(cards.length > 0)
     for (const card of cards) {
-      assert.equal(card.status, 'triage', 'the engine advances Inbox -> triage and no further')
+      assert.equal(card.status, 'triage', 'the engine advances Inbox -> triage; deeper edges are agent/autoRule-driven')
       const autoEdges = card.history.filter((h) => h.type === 'transition' && h.actor === 'autoRule')
       assert.equal(autoEdges.length, 1, 'exactly ONE automatic transition per card')
       assert.equal(autoEdges[0].from, 'inbox')
       assert.equal(autoEdges[0].to, 'triage')
       // Governance fields present on the automatic transition (AE-6).
-      assert.equal(autoEdges[0].tier, 'you-approve')
+      assert.equal(autoEdges[0].tier, 'phase-rules')
       assert.equal(autoEdges[0].rule, 'auto-dispatch-triage')
       assert.equal(autoEdges[0].channel, 'poll')
       assert.ok(autoEdges[0].at)

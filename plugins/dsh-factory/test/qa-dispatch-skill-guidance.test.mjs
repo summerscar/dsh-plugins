@@ -18,16 +18,17 @@ import test from 'node:test'
 
 import { buildSessionContext, skillForPhase } from '../session-context.js'
 
-/** Chief's authoritative stage→skill mapping. plan-review/done/canceled = none.
+/** Chief's authoritative stage→skill mapping. V4: done/canceled = none.
  *  inbox is included: first dispatch lands there and is driven by triage too. */
 const STAGE_SKILL = {
   inbox: 'factory-triage',
   triage: 'factory-triage',
   plan: 'factory-plan',
   build: 'factory-build',
-  review: 'factory-review',
+  'self-review': 'factory-self-review',
+  'pr-review': 'factory-review',
 }
-const NO_SKILL_STAGES = ['plan-review', 'done', 'canceled']
+const NO_SKILL_STAGES = ['done', 'canceled']
 const ALL_SKILLS = Object.values(STAGE_SKILL)
 const SOME_SKILL = ALL_SKILLS[0]
 

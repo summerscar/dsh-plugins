@@ -37,8 +37,8 @@ function setup({ status = 'inbox', withTraces = true } = {}) {
       sessionId: 'builder-old',
     })
   }
-  const path = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']
-  const actor = { triage: 'human', plan: 'agent', 'plan-review': 'agent', build: 'human', review: 'agent' }
+  const path = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
+  const actor = { triage: 'human', plan: 'agent', build: 'agent', 'self-review': 'agent', 'pr-review': 'agent' }
   for (let i = 1; i <= path.indexOf(status); i += 1) store.transitionCard(card.id, path[i], actor[path[i]])
   return {
     store, project, card, repo,
@@ -66,8 +66,8 @@ const fakePort = ({ failWorktree = false } = {}) => {
 // A — human returns (AC 17–24)
 // ===========================================================================
 
-test('P2b-A1 human-review record: note mandatory, review-only, all fields present', () => {
-  const f = setup({ status: 'review' })
+test('P2b-A1 human-review record: note mandatory, pr-review-only, all fields present', () => {
+  const f = setup({ status: 'pr-review' })
   try {
     for (const bad of ['', '   ', undefined]) {
       assert.throws(() => f.store.recordHumanReview(f.card.id, { decision: 'return-to-build', text: bad }), /修改意见|缺少必填/)
@@ -87,8 +87,8 @@ test('P2b-A1 human-review record: note mandatory, review-only, all fields presen
   } finally { f.cleanup() }
 })
 
-test('P2b-A2 plan-feedback record: note mandatory, plan-review-only, fixed decision', () => {
-  const f = setup({ status: 'plan-review' })
+test('P2b-A2 plan-feedback record: note mandatory, plan-only, fixed decision', () => {
+  const f = setup({ status: 'plan' })
   try {
     assert.throws(() => f.store.recordPlanFeedback(f.card.id, { text: '  ' }), /缺少必填/)
     const e = f.store.recordPlanFeedback(f.card.id, { text: '重做计划' })
@@ -96,17 +96,17 @@ test('P2b-A2 plan-feedback record: note mandatory, plan-review-only, fixed decis
       { type: e.type, actor: e.actor, decision: e.decision, text: e.text },
       { type: 'plan-feedback', actor: 'human', decision: 'return-to-plan', text: '重做计划' },
     )
-    const g = setup({ status: 'review' })
-    try { assert.throws(() => g.store.recordPlanFeedback(g.card.id, { text: 'x' }), /Plan-review/) } finally { g.cleanup() }
+    const g = setup({ status: 'pr-review' })
+    try { assert.throws(() => g.store.recordPlanFeedback(g.card.id, { text: 'x' }), /Plan-review|计划修改意见/) } finally { g.cleanup() }
   } finally { f.cleanup() }
 })
 
-test('P2b-A3 review→build carries note to the ORIGINAL builder and keeps reviewSessionId', async () => {
-  const f = setup({ status: 'review' })
+test('P2b-A3 self-review→build carries note to the ORIGINAL builder and keeps reviewSessionId', async () => {
+  const f = setup({ status: 'self-review' })
   try {
     f.store.setReviewSession(f.card.id, 'reviewer-1', 'created')
     const reviewerBefore = f.store.getCard(f.card.id).reviewSessionId
-    const moved = f.store.transitionCard(f.card.id, 'build', 'human', '请补重试上限')
+    const moved = f.store.transitionCard(f.card.id, 'build', 'agent', '请补重试上限')
     assert.equal(moved.status, 'build')
     assert.equal(historyOf(f.store, f.card.id, 'transition').at(-1).note, '请补重试上限')
     const port = fakePort()
@@ -122,51 +122,50 @@ test('P2b-A3 review→build carries note to the ORIGINAL builder and keeps revie
 test('P2b-A4 synthetic rollback edge stays agent-only; human cannot plan→plan-review', () => {
   const f = setup({ status: 'plan' })
   try {
-    f.store.transitionCard(f.card.id, 'plan-review', 'agent')
-    assert.equal(f.store.getCard(f.card.id).status, 'plan-review')
-    f.store.transitionCard(f.card.id, 'plan', 'human', '改计划')
-    assert.equal(f.store.getCard(f.card.id).status, 'plan')
-    // The rollback used on continuation failure is agent-only; a human cannot
-    // push a card back to plan-review on their own.
-    assert.throws(() => f.store.transitionCard(f.card.id, 'plan-review', 'human'), /不允许由 human 触发|非法/)
-    f.store.transitionCard(f.card.id, 'plan-review', 'agent')
-    assert.equal(f.store.getCard(f.card.id).status, 'plan-review', 'retryable')
+    // V4 has no plan-review status: a failed continuation rolls back plan in
+    // place, and plan→build is the autoRule/approval edge.
+    assert.throws(() => f.store.transitionCard(f.card.id, 'plan', 'agent'), /already|幂等|非法|no transition|不允许/)
+    assert.equal(f.store.getCard(f.card.id).status, 'plan', 'a same-status transition is refused or a no-op, never a state change')
+    f.store.transitionCard(f.card.id, 'build', 'autoRule')
+    assert.equal(f.store.getCard(f.card.id).status, 'build', 'the engine approves plan→build')
+    assert.throws(() => f.store.transitionCard(f.card.id, 'build', 'syncRule'), /不允许|非法/, 'remote sync may never open the plan gate')
   } finally { f.cleanup() }
 })
 
-test('P2b-A5 generic review→build with empty/missing note is refused with zero state change', () => {
+test('P2b-A5 generic pr-review→build with empty/missing note is refused with zero state change', () => {
   for (const body of [{ to: 'build', actor: 'human' }, { to: 'build', actor: 'human', note: '' }, { to: 'build', actor: 'human', note: '   ' }]) {
-    const f = setup({ status: 'review' })
+    const f = setup({ status: 'pr-review' })
     try {
       const api = createApi({ store: f.store })
       const before = historyOf(f.store, f.card.id, 'transition').length
       const res = api({ method: 'POST', route: `/cards/${f.card.id}/transition`, body })
       assert.equal(res.status, 400)
       assert.match(res.body.error, /退回构建必须填写修改意见/)
-      assert.equal(f.store.getCard(f.card.id).status, 'review', 'card stays in review')
+      assert.equal(f.store.getCard(f.card.id).status, 'pr-review', 'card stays in pr-review')
       assert.equal(historyOf(f.store, f.card.id, 'human-review').length, 0, 'no structured record')
       assert.equal(historyOf(f.store, f.card.id, 'transition').length, before, 'no new transition record')
     } finally { f.cleanup() }
   }
 })
 
-test('P2b-A5b generic plan-review→plan with empty/missing note is refused with zero state change', () => {
+test('P2b-A5b generic plan→plan with empty/missing note is refused with zero state change', () => {
   for (const body of [{ to: 'plan', actor: 'human' }, { to: 'plan', actor: 'human', note: '' }]) {
-    const f = setup({ status: 'plan-review' })
+    const f = setup({ status: 'plan' })
     try {
       const before = historyOf(f.store, f.card.id, 'transition').length
       const res = createApi({ store: f.store })({ method: 'POST', route: `/cards/${f.card.id}/transition`, body })
-      assert.equal(res.status, 400)
-      assert.match(res.body.error, /退回修改计划必须填写修改意见/)
-      assert.equal(f.store.getCard(f.card.id).status, 'plan-review')
+      // V4: plan is a live agent stage with no human return-to-plan edge; the
+      // generic route must not silently accept a same-status "return".
+      assert.notEqual(res.status, 200, 'a same-status plan→plan is not a legal transition')
+      assert.equal(f.store.getCard(f.card.id).status, 'plan')
       assert.equal(historyOf(f.store, f.card.id, 'plan-feedback').length, 0)
       assert.equal(historyOf(f.store, f.card.id, 'transition').length, before, 'no new transition record')
     } finally { f.cleanup() }
   }
 })
 
-test('P2b-A6 a valid generic review→build/plan-review→plan note IS recorded (single store-layer write)', () => {
-  const f = setup({ status: 'review' })
+test('P2b-A6 a valid generic pr-review→build note IS recorded (single store-layer write)', () => {
+  const f = setup({ status: 'pr-review' })
   try {
     createApi({ store: f.store })({ method: 'POST', route: `/cards/${f.card.id}/transition`, body: { to: 'build', actor: 'human', note: '补超时' } })
     assert.equal(f.store.getCard(f.card.id).status, 'build')
@@ -174,11 +173,12 @@ test('P2b-A6 a valid generic review→build/plan-review→plan note IS recorded 
     assert.equal(historyOf(f.store, f.card.id, 'human-review')[0].text, '补超时')
   } finally { f.cleanup() }
 
-  const g = setup({ status: 'plan-review' })
+  const g = setup({ status: 'plan' })
   try {
-    createApi({ store: g.store })({ method: 'POST', route: `/cards/${g.card.id}/transition`, body: { to: 'plan', actor: 'human', note: '重做计划' } })
-    assert.equal(g.store.getCard(g.card.id).status, 'plan')
-    assert.equal(historyOf(g.store, g.card.id, 'plan-feedback').length, 1)
+    createApi({ store: g.store })({ method: 'POST', route: `/cards/${g.card.id}/transition`, body: { to: 'build', actor: 'human', note: '跳过自动批准' } })
+    // V4 keeps no human plan→build edge (plan approval is machine/human-UI only);
+    // the generic route refuses it rather than opening a new human edge.
+    assert.notEqual(g.store.getCard(g.card.id).status, 'build')
   } finally { g.cleanup() }
 })
 
@@ -259,7 +259,7 @@ test('P2b-B4 engine tick skips flagged cards and dispatches them once unflagged'
     const store = new FactoryStore({ file: join(tmp, 'f.json') })
     const project = store.createProject({ name: 'p', rootPath: '/workspace/p' })
     const board = store.createBoard({ projectId: project.id, name: 'b' })
-    store.updateAutonomy(project.id, { autonomy: 'you-approve', autoDispatch: true })
+    // V4: no tier to set; the default full-auto rules are what dispatches.
     store.updateIntake(project.id, { issueRepo: 'o/r', intakeBoardId: board.id })
     const flagged = store.createCard({ boardId: board.id, title: 'flagged' })
     store._card(flagged.id).needsHumanInfo = true
@@ -317,7 +317,7 @@ function gitPort() {
 }
 
 function reviewWithPr() {
-  const f = setup({ status: 'review' })
+  const f = setup({ status: 'pr-review' })
   f.store.recordCommit(f.card.id, { sha: 'old-sha', message: 'first' })
   f.store.setPrUrl(f.card.id, 'https://github.com/o/r/pull/7')
   return f

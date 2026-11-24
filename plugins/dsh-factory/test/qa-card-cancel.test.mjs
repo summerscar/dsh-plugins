@@ -32,7 +32,7 @@ const COPY = {
   zh: { cancelCard: '放弃这张卡', toastCardCanceled: '已放弃这张卡，保留在「已取消」列表' },
   en: { cancelCard: 'Abandon card', toastCardCanceled: 'Card abandoned; kept in the canceled list' },
 }
-const NON_TERMINAL = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']
+const NON_TERMINAL = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
 const TERMINAL = ['done', 'canceled']
 
 async function withStore(fn) {
@@ -193,7 +193,7 @@ test('C5 human→canceled legal on all six non-terminal edges (state.js fact)', 
 })
 
 test('C5 API transition to canceled returns 200 (not 400) for all six non-terminal states', () => withStore((f) => {
-  const path = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']
+  const path = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
   for (const target of path) {
     const card = f.store.createCard({ boardId: f.board.id, title: `state-${target}` })
     // Walk the real state machine to `target` with a legal actor on each edge.
@@ -239,14 +239,13 @@ test('C6 success toast uses toastCardCanceled; failure path shows backend err.me
 
 test('C6 API surfaces backend error text verbatim on an illegal transition', () => withStore((f) => {
   const card = f.store.createCard({ boardId: f.board.id, title: 'x' })
-  // Walk the real legal path to the terminal `done` state.
-  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'human'], ['review', 'agent'], ['done', 'human']]) {
-    f.store.transitionCard(card.id, to, actor)
-  }
-  assert.equal(f.store.getCard(card.id).status, 'done')
-  const res = cancelViaApi(f.api, card.id) // done is terminal → 400
+  // V4: done is only reachable by the engine's syncRule (a merged PR). A human
+  // transition from inbox straight to done is an illegal edge: the API must
+  // surface the backend error text verbatim for the UI to display.
+  const res = f.api({ method: 'POST', route: `/cards/${card.id}/transition`, body: { to: 'done', actor: 'human' } })
   assert.equal(res.status, 400)
   assert.ok(typeof res.body.error === 'string' && res.body.error.length > 0, 'backend error text present for UI to display')
+  assert.equal(f.store.getCard(card.id).status, 'inbox', 'an illegal transition moves nothing')
 }))
 
 // ==============================================================================

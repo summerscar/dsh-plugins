@@ -15,7 +15,7 @@
  * actor, never `autoRule`. At you-approve that set is empty, so every suggestion
  * needs a human.
  *
- *   PR MERGED          → suggest Done          (human confirms; Done is human-only)
+ *   PR MERGED          → auto Done             (syncRule; pr-review->done idempotent)
  *   PR CLOSED unmerged → suggest Build (退回)   (Review→Build is human-only)
  *   PR OPEN            → no column change
  */

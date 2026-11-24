@@ -1,7 +1,7 @@
 ---
 user-invocable: true
 name: factory-add-project
-description: Add a git repository to the factory as a project when the user says things like "把这个项目加进 factory", "添加工作区", "把这个仓库注册成项目", or invokes /factory-add-project or /factory add — inspect the path, ask about the session mode and autonomy level with ask_user_question, propose a config from objective signals, and create the project with factory_create_project. This is the only factory skill a human can invoke directly. Not for working on cards (triage/plan/build/review) or for git operations that need human approval.
+description: Add a git repository to the factory as a project when the user says things like "把这个项目加进 factory", "添加工作区", "把这个仓库注册成项目", or invokes /factory-add-project or /factory add — inspect the path, ask about the session mode; stage rules stay full-auto by default with ask_user_question, propose a config from objective signals, and create the project with factory_create_project. This is the only factory skill a human can invoke directly. Not for working on cards (triage/plan/build/review) or for git operations that need human approval.
 whenToUse: The user wants to register a repository/workspace as a new factory project, or a /factory-add-project (or /factory add) command hands you a path.
 ---
 

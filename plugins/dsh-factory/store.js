@@ -26,8 +26,11 @@ import { assertWorktreeRoot, checkProjectRoot, defaultWorktreeRoot, expandHome }
 import { DEFAULT_POST_CREATE_TIMEOUT_MS, normalizeCopyFiles } from './worktree-setup.js'
 import { detectGithubRepo, normalizeGithubRepo } from './git-exec.js'
 import { normalizeVerdict } from './verdict.js'
+import { DEFAULT_PHASE_RULES, migrateLegacyAutonomyToPhaseRules, normalizePhaseRules } from './phase-rules.js'
 
 export const SCHEMA_VERSION = 2
+/** An independent reviewer that ends without a verdict is redispersed at most this many times. */
+export const SELF_REVIEW_DISPATCH_LIMIT = 3
 
 /**
  * Credential-key segment grammar, mirrored from the host's dsh-credentials seam
@@ -43,7 +46,6 @@ export function isCredentialKeySegment(value) {
 }
 
 export const DEFAULT_PERMISSION = 'workspace-write'
-export const DEFAULT_AUTONOMY = 'manual'
 export const AUTO_DELIVERY_TIER = 'auto-delivery'
 export const WORK_MODES = Object.freeze(['workspace-write', 'full-access', 'auto-review'])
 export const DEFAULT_WORK_MODE = 'workspace-write'
@@ -57,7 +59,7 @@ export function normalizeWorkMode(value, fallback = DEFAULT_WORK_MODE) {
 
 /** Consecutive failed dispatches before a card stops being re-dispatched. */
 export const DEFAULT_DISPATCH_FAILURE_LIMIT = 3
-export const DEFAULT_COLUMNS = ['planning', 'awaiting-approval', 'building', 'review', 'done']
+export const DEFAULT_COLUMNS = ['planning', 'build', 'self-review', 'pr-review', 'done']
 // One project owns one active board. Board names are no longer surfaced in the
 // UI; this label only identifies the auto-created board in persisted state/API.
 export const DEFAULT_BOARD_NAME = 'Default'
@@ -128,54 +130,14 @@ function normalizePreparation(input) {
 }
 
 /**
- * Project-level autonomy config. The semantic level is the only truth source;
- * `autoDispatch` is a switch ONLY for you-approve. The old switches are never
- * stored again.
+ * V4: project automation is expressed as stage rules. The legacy autonomy
+ * fields are migration input only and are never persisted on new projects.
  */
 export const AUTONOMY_LEVELS = new Set(['manual', 'you-approve', 'machine-approve', 'auto-delivery'])
-const LEGACY_AUTONOMY_LEVELS = new Set(['L0', 'L1', 'L2'])
+export const DEFAULT_AUTONOMY = 'auto-delivery'
 
-/** Map a stored v1 triple to the v2 level + single switch, by REAL behavior. */
-function migrateLegacyAutonomy(level, autoStart, autoApprove) {
-  if (level === 'L0') return { autonomy: 'manual', autoDispatch: false }
-  if (level === 'L1') return { autonomy: 'you-approve', autoDispatch: autoStart === true }
-  if (level === 'L2') {
-    if (autoStart === true && autoApprove === true) return { autonomy: 'machine-approve', autoDispatch: false }
-    if (autoStart === true) return { autonomy: 'you-approve', autoDispatch: true }
-    return { autonomy: 'you-approve', autoDispatch: false }
-  }
-  return { autonomy: 'manual', autoDispatch: false }
-}
-
-function normalizeAutonomy(input, current = {}) {
-  const raw = input.autonomy === undefined ? current.autonomy : input.autonomy
-  if (raw !== undefined && LEGACY_AUTONOMY_LEVELS.has(raw)) {
-    return migrateLegacyAutonomy(raw, input.autoStart ?? current.autoStart, input.autoApprove ?? current.autoApprove)
-  }
-  if (raw !== undefined && !AUTONOMY_LEVELS.has(raw)) {
-    throw new Error(`autonomy 只能是 manual / you-approve / machine-approve / auto-delivery：${String(raw)}`)
-  }
-  const autonomy = raw === undefined ? DEFAULT_AUTONOMY : raw
-  // Only you-approve reads autoDispatch. auto-delivery inherits machine-approve
-  // behavior and explicitly ignores the switch.
-  const autoDispatch = autonomy === 'you-approve'
-    ? (input.autoDispatch === undefined ? current.autoDispatch === true : input.autoDispatch === true)
-    : false
-  return { autonomy, autoDispatch }
-}
-
-/** Load-time normalization never rejects an old or corrupt archive. */
-function normalizeStoredAutonomy(project) {
-  try {
-    return normalizeAutonomy({
-      autonomy: project.autonomy,
-      autoDispatch: project.autoDispatch,
-      autoStart: project.autoStart,
-      autoApprove: project.autoApprove,
-    }, {})
-  } catch {
-    return { autonomy: DEFAULT_AUTONOMY, autoDispatch: false }
-  }
+function normalizeStoredPhaseRules(project) {
+  try { return migrateLegacyAutonomyToPhaseRules(project) } catch { return normalizePhaseRules({}) }
 }
 
 /**
@@ -291,12 +253,12 @@ export class FactoryStore {
     if (parsed.schemaVersion !== SCHEMA_VERSION) this._needsMigration = true
     state.schemaVersion = SCHEMA_VERSION
     state.projects = (Array.isArray(state.projects) ? state.projects : []).map((p) => {
-      const { autoStart, autoApprove, ...rest } = p
-      const normalized = normalizeStoredAutonomy(p)
-      if ('autoStart' in p || 'autoApprove' in p || p.autonomy !== normalized.autonomy || p.autoDispatch !== normalized.autoDispatch) {
+      const { autonomy, autoDispatch, autoStart, autoApprove, ...rest } = p
+      const phaseRules = normalizeStoredPhaseRules(p)
+      if (autonomy !== undefined || autoDispatch !== undefined || autoStart !== undefined || autoApprove !== undefined || JSON.stringify(p.phaseRules) !== JSON.stringify(phaseRules)) {
         this._needsMigration = true
       }
-      return { ...rest, ...normalized }
+      return { ...rest, phaseRules }
     })
     return state
   }
@@ -514,13 +476,12 @@ export class FactoryStore {
       repos: normalizeRepos(input.repos),
       defaultModel: optionalString(input.defaultModel),
       defaultPermission: optionalString(input.defaultPermission) || DEFAULT_PERMISSION,
-      // P2a: work mode is a separate, persisted project setting. It does NOT
-      // read or write `autonomy` / `autoDispatch` (L0–L4 remain orthogonal).
+      // Work mode is a session permission boundary, orthogonal to stage rules.
       workMode: normalizeWorkMode(input.workMode),
       worktreeRoot,
       ...normalizePreparation(input),
-      // New projects always start manual; autonomy is an explicit later edit.
-      ...normalizeAutonomy({}, {}),
+      // V4: full-auto stage rules by default; advanced rules may only narrow.
+      phaseRules: normalizePhaseRules(input.phaseRules ?? {}, DEFAULT_PHASE_RULES),
       ...intake,
       // GitHub permission verification is opt-in until the full check runs.
       permissionStatus: intake.permissionStatus ?? null,
@@ -585,6 +546,46 @@ export class FactoryStore {
     return clone(card)
   }
 
+  /** Record a fresh PR-review session; a new session clears the idle hint. */
+  setPrReviewSession(id, sessionId, mode = 'created') {
+    if (typeof sessionId !== 'string' || sessionId === '') throw new Error('PR 评审会话 ID 不能为空')
+    const card = this._card(id)
+    const previous = card.prReviewSessionId ?? null
+    card.prReviewSessionId = sessionId
+    card.prReviewIdle = false
+    card.history.push({
+      type: 'pr-review-session', from: previous, sessionId, mode,
+      actor: 'autoRule', at: new Date().toISOString(),
+    })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Mark a one-shot idle PR-review session for the UI/human; never auto-redispatch. */
+  recordPrReviewIdle(id, { reason = '' } = {}) {
+    const card = this._card(id)
+    if (card.prReviewIdle === true) return clone(card)
+    card.prReviewIdle = true
+    card.history.push({
+      type: 'pr-review-idle', actor: 'autoRule', sessionId: card.prReviewSessionId ?? null,
+      reason: typeof reason === 'string' ? reason : '', at: new Date().toISOString(),
+    })
+    this.recordEvent({
+      type: 'pr-review-idle', scope: 'card', targetId: id, actor: 'autoRule',
+      decision: 'parked', note: typeof reason === 'string' ? reason : '',
+    })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Clear the idle hint when a human manually redispatches PR review. */
+  clearPrReviewIdle(id) {
+    const card = this._card(id)
+    card.prReviewIdle = false
+    this._commit()
+    return clone(card)
+  }
+
   /**
    * L4: flag that the current HEAD moved past the last structured verdict
    * (e.g. the engine auto-committed a dirty tree on entry to Review). Stores
@@ -637,17 +638,21 @@ export class FactoryStore {
   }
 
   /**
-   * Update a project's autonomy config. Identity and paths stay immutable here
-   * for the same reason as `updatePreparation`: a settings write must never
-   * retarget a project's repository. Values are validated, not silently
-   * rewritten — see `normalizeAutonomy`.
+   * Update V4 stage rules. Only narrowing is accepted by normalizePhaseRules;
+   * identity, paths and work mode stay immutable here.
    */
-  updateAutonomy(id, input = {}) {
+  updatePhaseRules(id, input = {}) {
     const project = this._project(id)
-    const patch = normalizeAutonomy(input, project)
-    Object.assign(project, patch)
+    const patch = normalizePhaseRules(input.phaseRules ?? input, project.phaseRules ?? DEFAULT_PHASE_RULES)
+    project.phaseRules = patch
+    this.recordEvent({ type: 'phase-rules', scope: 'project', targetId: id, actor: 'human', decision: 'updated' })
     this._commit()
     return clone(project)
+  }
+
+  /** Legacy compatibility shim: map an old tier to narrowing rules. */
+  updateAutonomy(id, input = {}) {
+    return this.updatePhaseRules(id, migrateLegacyAutonomyToPhaseRules({ autonomy: input.autonomy, autoDispatch: input.autoDispatch, phaseRules: this._project(id).phaseRules }))
   }
 
   /**
@@ -849,6 +854,9 @@ export class FactoryStore {
       needsHumanInfo: false,
       // P2a: the reviewer's session, distinct from the builder's sessionId.
       reviewSessionId: null,
+      // V4 part (3): independent PR-review session, distinct from self-review.
+      prReviewSessionId: null,
+      prReviewIdle: false,
       sessionTurn: 0,
       worktreePath: null,
       branch: null,
@@ -856,6 +864,13 @@ export class FactoryStore {
       prUrl: null,
       commitSha: null,
       commitMessage: null,
+      // build-session delivery: self-review result bound to the pre-commit
+      // HEAD, and who performed the git write (session / engine / human).
+      selfReview: null,
+      selfReviewRounds: 0,
+      selfReviewLimit: 3,
+      prHead: null,
+      deliverySource: null,
       // Latest structured review verdict (P1). null until a reviewer records
       // one; history keeps every verdict for audit / re-review.
       reviewVerdict: null,
@@ -888,6 +903,9 @@ export class FactoryStore {
       // L4: engine-initiated re-reviews used so far (lifetime cap AUTO_REREVIEW_LIMIT).
       // Manual redispatch never increments this.
       autoRereviewCount: 0,
+      // Separate from autoRereviewCount: idle first-review sessions that end
+      // without any verdict/PR attempt. Capped independently, then parked.
+      selfReviewDispatchFailures: 0,
       // Set when the automatic engine has stopped re-dispatching this card, so
       // the board can show why instead of silently doing nothing.
       stalled: false,
@@ -957,7 +975,7 @@ export class FactoryStore {
     }
 
     // A stale verdict only means something while the card sits in Review.
-    if (from === STATUS.REVIEW) this.clearReviewStale(id, `left review to ${to}`)
+    if (from === STATUS.REVIEW || from === STATUS.SELF_REVIEW) this.clearReviewStale(id, `left ${from} to ${to}`)
     card.status = to
     card.history.push({ type: 'transition', from, to, actor, note: optionalString(note), ...auditFields(meta), at: new Date().toISOString() })
     this._commit()
@@ -1056,7 +1074,7 @@ export class FactoryStore {
    */
   setPrUrl(id, prUrl, actor = 'human') {
     const card = this._card(id)
-    if (card.status !== STATUS.REVIEW) throw new Error(`仅 Review 状态可写回 PR（当前 ${card.status}）`)
+    if (card.status !== STATUS.SELF_REVIEW && card.status !== STATUS.PR_REVIEW) throw new Error(`仅自审/PR 评审阶段可写回 PR（当前 ${card.status}）`)
     card.prUrl = reqString(prUrl, 'prUrl')
     card.pendingAuthorization = null
     card.history.push({ type: 'pr-created', prUrl: card.prUrl, staysAt: PR_SUCCESS_STAYS, actor, at: new Date().toISOString() })
@@ -1104,6 +1122,60 @@ export class FactoryStore {
       sha: typeof sha === 'string' ? sha : card.commitSha,
       at: new Date().toISOString(),
     })
+    this._commit()
+    return clone(card)
+  }
+
+  /**
+   * Record an independent self-review verdict with backend-computed head and
+   * findings. Rounds are counted per card and capped; a parked card is no
+   * longer eligible for automatic return-to-build.
+   */
+  recordSelfReviewVerdict(id, { head, verdict, blocking = [], followUps = [], checks = [], note = '', sessionId = null } = {}) {
+    const card = this._card(id)
+    if (card.status !== 'self-review') throw new Error('仅 self-review 阶段可记录自审结论')
+    if (typeof head !== 'string' || !/^[0-9a-f]{40,64}$/i.test(head)) throw new Error('自审 head 必须是完整 SHA')
+    if (!['approved', 'changes-requested', 'verification-incomplete'].includes(verdict)) throw new Error('未知自审结论')
+    const rounds = (card.selfReviewRounds ?? 0) + (verdict === 'approved' ? 0 : 1)
+    card.selfReviewRounds = rounds
+    card.selfReview = {
+      head, verdict, note, sessionId, rounds, limit: card.selfReviewLimit ?? 3,
+      blocking: Array.isArray(blocking) ? blocking : [],
+      followUps: Array.isArray(followUps) ? followUps : [],
+      checks: Array.isArray(checks) ? checks : [],
+      at: new Date().toISOString(),
+    }
+    card.selfReviewDispatchFailures = 0
+    card.history.push({ type: 'self-review-verdict', head, verdict, rounds, actor: 'agent', at: card.selfReview.at })
+    if (card.reviewStale === true && card.reviewStaleInfo?.head === head) this.clearReviewStale(id, 'self-review verdict on new head')
+    this._commit()
+    return clone(card.selfReview)
+  }
+
+  /** Build session committed and pushed the branch; no PR is opened here. */
+  recordBuildPush(id, { sha, message } = {}) {
+    const card = this._card(id)
+    if (card.status !== 'build') throw new Error('仅 build 阶段可记录提交推送')
+    if (card.commitSha) throw new Error('该卡已有提交，不能重复记录 build 推送')
+    card.commitSha = reqString(sha, 'sha')
+    card.commitMessage = typeof message === 'string' ? message : ''
+    card.deliverySource = 'build-session'
+    card.history.push({ type: 'build-push', actor: 'agent', sha: card.commitSha, message: card.commitMessage, at: new Date().toISOString() })
+    this._commit()
+    return clone(card)
+  }
+
+  /** Reviewer opened ONE draft PR from the approved head. */
+  recordDraftPr(id, { url, head, title = '', body = '' } = {}) {
+    const card = this._card(id)
+    if (card.status !== 'self-review' && card.status !== 'pr-review') throw new Error('仅自审通过后阶段可记录草稿 PR')
+    if (card.selfReview?.verdict !== 'approved') throw new Error('没有 approved 自审结论，不能记录 PR')
+    if (typeof head !== 'string' || head !== card.selfReview.head) throw new Error('PR head 与批准 head 不一致')
+    card.prUrl = reqString(url, 'prUrl')
+    card.prHead = head
+    card.deliverySource = 'reviewer-session'
+    card.pendingAuthorization = null
+    card.history.push({ type: 'draft-pr', actor: 'agent', prUrl: card.prUrl, head, title, body, at: new Date().toISOString() })
     this._commit()
     return clone(card)
   }
@@ -1287,6 +1359,30 @@ export class FactoryStore {
     const card = this._card(id)
     card.commitFailures = 0
     card.commitStalled = false
+    this._commit()
+    return clone(card)
+  }
+
+  /**
+   * Count ONE idle independent-review session and audit the redispatch.
+   * Reaching the cap parks the card for a human; it never loosens the
+   * reviewer-only identity gate.
+   */
+  recordSelfReviewDispatchFailure(id, { reason = '' } = {}) {
+    const card = this._card(id)
+    const attempts = (card.selfReviewDispatchFailures ?? 0) + 1
+    const parked = attempts >= SELF_REVIEW_DISPATCH_LIMIT
+    card.selfReviewDispatchFailures = attempts
+    if (parked) card.stalled = true
+    card.history.push({
+      type: 'self-review-idle', actor: 'autoRule', attempts, parked,
+      reason: typeof reason === 'string' ? reason : '', at: new Date().toISOString(),
+    })
+    this.recordEvent({
+      type: 'self-review-idle-redispatch', scope: 'card', targetId: id, actor: 'autoRule',
+      decision: parked ? 'parked' : 'redispatch', attempts,
+      note: typeof reason === 'string' ? reason : '',
+    })
     this._commit()
     return clone(card)
   }

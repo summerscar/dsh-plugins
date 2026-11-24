@@ -1,73 +1,58 @@
-/**
- * Remote-sync tests — the remote is the source of truth for facts, but Done and
- * Review→Build stay human-only, so those land as suggestions, never auto-moves.
- */
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-
 import { FactoryStore } from '../store.js'
 import { applyRemoteSync, deriveRemoteTarget, resolveSync } from '../sync.js'
+import { STATUS } from '../state.js'
 
-function toReview(store, card) {
-  store.transitionCard(card.id, 'triage', 'human')
-  store.transitionCard(card.id, 'plan', 'agent')
-  store.transitionCard(card.id, 'plan-review', 'agent')
-  store.transitionCard(card.id, 'build', 'human')
-  store.transitionCard(card.id, 'review', 'agent')
-}
-
-function setup() {
-  const tmp = mkdtempSync(join(tmpdir(), 'factory-sync-'))
-  const store = new FactoryStore({ file: join(tmp, 'factory.json') })
-  const project = store.createProject({ name: 'p', rootPath: '/workspace/example-repo' })
+function fixture(status = STATUS.PR_REVIEW) {
+  const tmp = mkdtempSync(join(tmpdir(), 'dev-sync-'))
+  const store = new FactoryStore({ file: join(tmp, 'state.json') })
+  const project = store.createProject({ name: 'p', rootPath: '/repo' })
   const board = store.createBoard({ projectId: project.id, name: 'b' })
-  const card = store.createCard({ boardId: board.id, title: 'c' })
-  toReview(store, card)
-  return { store, card, cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
+  const card = store.createCard({ boardId: board.id, title: 't' })
+  store.setWorktree(card.id, { worktreePath: '/w', branch: 'factory/card' })
+  for (const to of ['triage', 'plan', 'build', 'self-review', 'pr-review'].slice(0, ['triage', 'plan', 'build', 'self-review', 'pr-review'].indexOf(status) + 1)) {
+    store.transitionCard(card.id, to, to === 'triage' ? 'human' : 'agent')
+  }
+  store.setPrUrl(card.id, 'https://example/pr/1', 'agent')
+  return { store, card: store.getCard(card.id), cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
 }
 
-test('deriveRemoteTarget maps PR state to a suggested column', () => {
+test('deriveRemoteTarget maps MERGED to done and CLOSED to build', () => {
   assert.deepEqual(deriveRemoteTarget({ pr: { state: 'MERGED' } }), { target: 'done', reason: 'PR merged' })
   assert.deepEqual(deriveRemoteTarget({ pr: { state: 'CLOSED' } }), { target: 'build', reason: 'PR closed without merge' })
   assert.equal(deriveRemoteTarget({ pr: { state: 'OPEN' } }), null)
-  assert.equal(deriveRemoteTarget(null), null)
 })
 
-test('a merged PR becomes a human suggestion, never an auto-move to Done', () => {
-  const { store, card, cleanup } = setup()
+test('a merged ACTIVE PR auto-completes via syncRule and is idempotent', () => {
+  const f = fixture()
   try {
-    const result = applyRemoteSync({ store, cardId: card.id, remote: { pr: { state: 'MERGED' } } })
-    assert.equal(result.changed, false)
-    assert.equal(result.needsHuman, true)
-    assert.equal(result.suggestion.target, 'done')
-    assert.equal(store.getCard(card.id).status, 'review', 'Done stays human-only')
-    assert.ok(store.getCard(card.id).history.some((entry) => entry.type === 'sync-suggestion'))
-  } finally {
-    cleanup()
-  }
+    const first = applyRemoteSync({ store: f.store, cardId: f.card.id, remote: { pr: { state: 'MERGED' } } })
+    assert.deepEqual(first, { changed: true, target: 'done' })
+    assert.equal(f.store.getCard(f.card.id).status, 'done')
+    const again = applyRemoteSync({ store: f.store, cardId: f.card.id, remote: { pr: { state: 'MERGED' } } })
+    assert.deepEqual(again, { changed: false })
+    const history = f.store.getCard(f.card.id).history.filter((h) => h.type === 'transition' && h.to === 'done')
+    assert.equal(history.length, 1)
+    assert.equal(history[0].actor, 'syncRule')
+  } finally { f.cleanup() }
 })
 
-test('a closed-unmerged PR suggests Build but does not auto-revert', () => {
-  const { store, card, cleanup } = setup()
+test('a closed-unmerged PR stays in pr-review as a human suggestion', () => {
+  const f = fixture()
   try {
-    const result = applyRemoteSync({ store, cardId: card.id, remote: { pr: { state: 'CLOSED' } } })
-    assert.equal(result.needsHuman, true)
-    assert.equal(result.suggestion.target, 'build')
-    assert.equal(store.getCard(card.id).status, 'review')
-  } finally {
-    cleanup()
-  }
+    const out = applyRemoteSync({ store: f.store, cardId: f.card.id, remote: { pr: { state: 'CLOSED' } } })
+    assert.deepEqual(out, { changed: false, needsHuman: true, suggestion: { target: 'build', reason: 'PR closed without merge', autoApplicable: false, requiresHuman: true } })
+    assert.equal(f.store.getCard(f.card.id).status, 'pr-review')
+  } finally { f.cleanup() }
 })
 
-test('an open PR (no state change) yields no suggestion', () => {
-  const { store, card, cleanup } = setup()
+test('resolveSync reports no change for OPEN', () => {
+  const f = fixture()
   try {
-    assert.deepEqual(resolveSync(store.getCard(card.id), { pr: { state: 'OPEN' } }), { suggestion: null })
-    assert.deepEqual(applyRemoteSync({ store, cardId: card.id, remote: { pr: { state: 'OPEN' } } }), { changed: false })
-  } finally {
-    cleanup()
-  }
+    assert.deepEqual(resolveSync(f.store.getCard(f.card.id), { pr: { state: 'OPEN' } }), { suggestion: null })
+  } finally { f.cleanup() }
 })

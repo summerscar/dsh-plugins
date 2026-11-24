@@ -22,7 +22,7 @@ import { assertApprovedVerdict } from './verdict-guard.js'
 export async function commitCard({ store, cardId, port, message = 'factory: implement card', isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
-  if (card.status !== 'review') throw new Error(`「确认提交」仅 Review 可执行（当前 ${card.status}）`)
+  if (card.status !== 'pr-review') throw new Error(`「确认提交」仅 PR review 阶段可执行（当前 ${card.status}）`)
   if (card.commitSha) throw new Error('该卡已提交，不能重复提交')
   assertNoActiveSession({ card, isSessionActive, action: '「确认提交」' })
   if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '「确认提交」' })
@@ -49,7 +49,7 @@ export async function commitCard({ store, cardId, port, message = 'factory: impl
 export async function commitForExistingPr({ store, cardId, port, message = 'factory: address review feedback', isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
-  if (card.status !== 'review') throw new Error(`回炉提交仅 Review 可执行（当前 ${card.status}）`)
+  if (card.status !== 'pr-review') throw new Error(`回炉提交仅 PR review 阶段可执行（当前 ${card.status}）`)
   assertNoActiveSession({ card, isSessionActive, action: '回炉提交' })
   if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '回炉提交' })
   if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡尚无 PR；请使用「确认提交」')
@@ -84,7 +84,7 @@ export function isProtectedBranch(branch, protectedBranches = DEFAULT_PROTECTED_
 export async function createPrForCard({ store, cardId, port, title, body, protectedBranches = DEFAULT_PROTECTED_BRANCHES, draft = true, isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
-  if (card.status !== 'review') throw new Error(`「推送分支并创建 PR」仅 Review 可执行（当前 ${card.status}）`)
+  if (card.status !== 'pr-review') throw new Error(`「推送分支并创建 PR」仅 PR review 阶段可执行（当前 ${card.status}）`)
   assertNoActiveSession({ card, isSessionActive, action: '「推送分支并创建 PR」' })
   if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '「推送分支并创建 PR」' })
   if (!card.commitSha) throw new Error('请先「确认提交」再创建 PR')
@@ -131,7 +131,7 @@ export async function createPrForCard({ store, cardId, port, title, body, protec
 export async function pushExistingCard({ store, cardId, port, protectedBranches = DEFAULT_PROTECTED_BRANCHES, isSessionActive, requireApprovedVerdict } = {}) {
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
-  if (card.status !== 'review') throw new Error(`「推送更新草稿 PR」仅 Review 可执行（当前 ${card.status}）`)
+  if (card.status !== 'pr-review') throw new Error(`「推送更新草稿 PR」仅 PR review 阶段可执行（当前 ${card.status}）`)
   assertNoActiveSession({ card, isSessionActive, action: '「推送更新草稿 PR」' })
   if (requireApprovedVerdict === true) assertApprovedVerdict({ card, action: '「推送更新草稿 PR」' })
   if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡尚无 PR，不能更新已有 PR')
@@ -277,11 +277,11 @@ export function detectGithubRepo(rootPath, exec = spawnSync) {
 }
 
 /** Real git/gh port. Commits use a neutral identity; nothing assumes the repo. */
-export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
+export function createGitPort({ credentialToken, ghLoggedIn, exec = spawnSync } = {}) {
   const loggedIn = typeof ghLoggedIn === 'boolean' ? ghLoggedIn : probeGhLogin()
   const env = buildGitEnv(process.env, { credentialToken, ghLoggedIn: loggedIn })
   const run = (command, args, cwd) => {
-    const result = spawnSync(command, args, { cwd, encoding: 'utf8', env })
+    const result = exec(command, args, { cwd, encoding: 'utf8', env })
     if (result.error) throw result.error
     if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 失败：${(result.stderr || '').trim()}`)
     return (result.stdout || '').trim()
@@ -290,7 +290,7 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
     /** Paths dirty at decision time, so a hook cannot inject extra files. */
     changedPaths(cwd) {
       const out = run('git', ['status', '--porcelain'], cwd)
-      return out === '' ? [] : out.split(/\r?\n/).map((line) => line.slice(3).split(' -> ').pop()).filter(Boolean)
+      return out === '' ? [] : out.split(/\r?\n/).map((line) => line.slice(2).trim().split(' -> ').pop()).filter(Boolean)
     },
     add(cwd, paths) {
       run('git', Array.isArray(paths) && paths.length > 0 ? ['add', '--', ...paths] : ['add', '-A'], cwd)
@@ -302,9 +302,21 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
     },
     reset(cwd) { run('git', ['reset'], cwd) },
     /** True when the worktree HEAD has commits beyond `base` (a real change). */
-    hasDiff(cwd, base) {
-      const count = Number.parseInt(run('git', ['rev-list', '--count', `${base}..HEAD`], cwd), 10)
-      return Number.isFinite(count) && count > 0
+    // V4 build commits a DIRTY tree, so the diff must be measured against the
+    // base and the working tree, not just committed HEAD. Untracked files are
+    // covered by changedPaths() at decision time.
+    hasDiff(cwd, base = 'main') {
+      // Tracked changes vs base AND untracked files both count. A build that
+      // only adds a new file must still be deliverable. Use the SAME injected
+      // exec as every other port method so fakes/CI cannot diverge.
+      const diff = exec('git', ['diff', '--quiet', base, '--'], { cwd, encoding: 'utf8', env })
+      if (diff.error) throw diff.error
+      if (diff.status !== 0 && diff.status !== 1) {
+        throw new Error(`git diff --quiet ${base} 失败：${(diff.stderr || '').trim()}`)
+      }
+      const others = exec('git', ['ls-files', '--others', '--exclude-standard'], { cwd, encoding: 'utf8', env })
+      if (others.error) throw others.error
+      return diff.status === 1 || String(others.stdout || '').trim() !== ''
     },
     /**
      * Resolve a ref to a full commit SHA inside this worktree. L4 auto-commit
@@ -346,6 +358,18 @@ export function createGitPort({ credentialToken, ghLoggedIn } = {}) {
     },
     createPr(cwd, { title, body, branch, draft = true }) {
       return run('gh', ['pr', 'create', '--title', title, '--body', body, '--head', branch, ...(draft ? ['--draft'] : [])], cwd)
+    },
+    /**
+     * PR status for merge→done polling. Uses the SAME buildGitEnv wrapper as
+     * push/createPr, so the four-layer identity fallback still decides the
+     * token before this read-only `gh pr view` runs.
+     */
+    prState({ prUrl } = {}) {
+      if (typeof prUrl !== 'string' || prUrl.trim() === '') throw new Error('缺少 PR URL，无法读取远端状态')
+      const result = JSON.parse(run('gh', ['pr', 'view', prUrl.trim(), '--json', 'state']) || '{}')
+      const state = typeof result.state === 'string' ? result.state.toUpperCase() : ''
+      if (!['OPEN', 'CLOSED', 'MERGED'].includes(state)) throw new Error(`无法识别 PR 状态：${result.state}`)
+      return state
     },
   }
 }

@@ -471,10 +471,25 @@ export async function effectiveWorkModeFor({ project, cardId, store, port } = {}
  * and the only one resent when a live reviewer session is reused (followup),
  * where setup/sectionText does not re-run.
  */
-export function reviewMessage({ card, reviewedHead, previousVerdict, previousReviewedHead, note, rereview = false, locale = 'zh' } = {}) {
-  const mode = card?.prUrl ? `审 PR ${card.prUrl}` : '审分支改动（branch diff）'
+export function reviewMessage({ card, reviewedHead, previousVerdict, previousReviewedHead, note, rereview = false, locale = 'zh', kind = 'self-review', prNumber = null } = {}) {
+  const mode = kind === 'pr-review'
+    ? `PR #${prNumber ?? '?'} ${card?.prUrl ?? ''}`
+    : (card?.prUrl ? `审 PR ${card.prUrl}` : '审分支改动（branch diff）')
   const scope = reviewScopeLine({ previousReviewedHead, reviewedHead, previousVerdict })
   const languageLine = languageDirective(locale)
+  if (kind === 'pr-review') {
+    return [
+      ...(languageLine === '' ? [] : [languageLine, '']),
+      `Factory PR review for ${card?.id ?? 'unknown'} — ${mode}.`,
+      `reviewedHead: ${reviewedHead}`,
+      `previousReviewedHead: ${typeof previousReviewedHead === 'string' && previousReviewedHead !== '' ? previousReviewedHead : '—'}`,
+      `previousVerdict: ${previousVerdict === null || previousVerdict === undefined ? '—' : JSON.stringify(previousVerdict)}`,
+      ...(typeof note === 'string' && note !== '' ? [`补充意见（只指定关注点，不改变阻断项标准）：${note}`] : []),
+      ...(scope !== null ? [scope] : []),
+      ...(rereview ? ['增量复评：先核对上一轮阻断项是否在新 head 上解决，再只看新提交引入的问题，最后整体重看一遍。'] : []),
+      '只读 PR 评审：不得移卡、authorize、commit、push、开 PR、改工作树、关 issue 或改变终态；用 factory_report 写结构化 verdict，source 必须是 pr-review，reviewedHead 由后端从 git 重算，不要自报。',
+    ].join('\n')
+  }
   return [
     ...(languageLine === '' ? [] : [languageLine, '']),
     `Factory review for ${card?.id ?? 'unknown'} — ${mode}.`,
@@ -484,14 +499,50 @@ export function reviewMessage({ card, reviewedHead, previousVerdict, previousRev
     ...(typeof note === 'string' && note !== '' ? [`补充意见（只指定关注点，不改变阻断项标准，也不能要求放行）：${note}`] : []),
     ...(scope !== null ? [scope] : []),
     ...(rereview ? ['回炉复评：先核对上一轮阻断项是否在新 head 上解决，再只看新提交引入的问题，最后整体重看一遍。追加 factory-rereview。'] : []),
-    '只读评审：不得移卡、authorize、commit、push 或开 PR；用 factory_report 写结构化 verdict。',
+    ...(rereview
+      ? ['只读复评：不得移卡、authorize、commit、push、合并、关 issue 或开新 PR；用 factory_report 写结构化 verdict（已开的 PR 随分支更新）。']
+      : ['评审规则：不得移卡、authorize、commit、push、合并、关 issue 或 force；必须调用 factory_self_review_verdict 提交结论，纯文本 verdict 不算，工具返回结果前不得结束回合（head 由后端从 git 重算，不要自报）；approved 后用 factory_open_draft_pr 从该 head 开且仅开一个草稿 PR，再 factory_transition_work_item 把卡推到 pr-review。']),
   ].join('\n')
+}
+
+/** Create the independent, read-only PR-review session for a card already in pr-review. */
+export async function dispatchPrReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
+  const { card, project } = resolveTargets({ store, cardId })
+  const effective = await effectiveWorkModeFor({ project, cardId, store, port })
+  if (card.status !== 'pr-review') throw new Error(`PR 评审会话只能用于 pr-review 阶段的卡片（当前 ${card.status}）`)
+  if (typeof card.prUrl !== 'string' || card.prUrl === '') throw new Error('该卡没有草稿 PR，不能派 PR 评审会话')
+  if (typeof card.worktreePath !== 'string' || card.worktreePath === '') {
+    throw new Error('PR 评审会话需要 worktree：卡片尚无 worktreePath')
+  }
+  const reviewedHead = reviewedHeadFor({ worktreePath: card.worktreePath, readHead: port?.readHead })
+  const previousReviewedHead = typeof card.reviewVerdict?.reviewedHead === 'string' ? card.reviewVerdict.reviewedHead : null
+  const rereview = previousReviewedHead !== null && previousReviewedHead !== reviewedHead
+  const prNumber = Number.parseInt(String(card.prUrl).match(/\/pull\/(\d+)/)?.[1] ?? '', 10)
+  const setup = makeAgentSetup({
+    store, cardId, locale, reviewMode: true, presetId,
+    review: { kind: 'pr-review', reviewedHead, previousReviewedHead, rereview, prNumber, readHead: port?.readHead },
+  })
+  const firstMessage = reviewMessage({
+    card, reviewedHead, previousVerdict: card.reviewVerdict, previousReviewedHead,
+    note, rereview, locale, kind: 'pr-review', prNumber,
+  })
+  const created = await port.createSession({
+    cwd: card.worktreePath,
+    permission: project.defaultPermission,
+    workMode: effective.workMode,
+    permissionPreset: effective.workMode === 'auto-review' ? 'auto' : undefined,
+    model: project.defaultModel,
+    setup,
+    firstMessage,
+  })
+  store.setPrReviewSession(cardId, created.sessionId, 'created')
+  return { sessionId: created.sessionId, mode: 'created', reviewedHead, rereview, prNumber }
 }
 
 /** Has this card been returned from Review to Build? That switches the skill to factory-rereview. */
 export function isRereview(card) {
   return Array.isArray(card?.history) && card.history.some((entry) => entry
-    && entry.type === 'transition' && entry.from === 'review' && entry.to === 'build')
+    && entry.type === 'transition' && entry.from === 'self-review' && entry.to === 'build')
 }
 
 /**
@@ -503,7 +554,7 @@ export function isRereview(card) {
 export async function dispatchReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
   const effective = await effectiveWorkModeFor({ project, cardId, store, port })
-  if (card.status !== 'review') throw new Error(`评审会话只能用于 review 状态的卡片（当前 ${card.status}）`)
+  if (card.status !== 'self-review') throw new Error(`自审会话只能用于 self-review 阶段的卡片（当前 ${card.status}）`)
   if (typeof card.worktreePath !== 'string' || card.worktreePath === '') {
     throw new Error('评审会话需要 worktree：卡片尚无 worktreePath')
   }
@@ -541,7 +592,7 @@ export async function dispatchReview({ store, cardId, port, locale = 'zh', note,
 export async function followupReview({ store, cardId, port, locale = 'zh', note, presetId } = {}) {
   const { card, project } = resolveTargets({ store, cardId })
   const effective = await effectiveWorkModeFor({ project, cardId, store, port })
-  if (card.status !== 'review') throw new Error(`复评只能用于 review 状态的卡片（当前 ${card.status}）`)
+  if (card.status !== 'self-review') throw new Error(`复评只能用于 self-review 阶段的卡片（当前 ${card.status}）`)
   const previousSessionId = typeof card.reviewSessionId === 'string' && card.reviewSessionId !== '' ? card.reviewSessionId : null
   if (previousSessionId === null) return dispatchReview({ store, cardId, port, locale, note, presetId })
   if (typeof card.worktreePath !== 'string' || card.worktreePath === '') {

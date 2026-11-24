@@ -218,8 +218,8 @@ test('Q3 release does not dispatch by itself; next tick dispatches under you-app
     const moved = f.store.getCard(card.id)
     assert.equal(moved.status, 'triage', 'dispatched and advanced Inbox->Triage')
     const autoTransition = moved.history.find((h) => h.type === 'transition' && h.to === 'triage')
-    assert.equal(autoTransition.actor, 'autoRule', 'dispatched by the original you-approve tier (autoRule)')
-    assert.equal(autoTransition.tier, 'you-approve', 'transitionMeta carries the semantic tier')
+    assert.equal(autoTransition.actor, 'autoRule', 'dispatched by the engine, never a human')
+    assert.equal(autoTransition.tier, 'phase-rules', 'transitionMeta carries the rule-set tag')
   } finally { f.cleanup() }
 })
 

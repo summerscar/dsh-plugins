@@ -27,6 +27,7 @@ import { createEngineStatus, runTick } from '../autonomy.js'
 import { buildSessionContext, BODY_CHAR_LIMIT } from '../session-context.js'
 import { intakeIssues } from '../intake.js'
 import { collectAudit } from '../audit.js'
+import { applyRemoteSync } from '../sync.js'
 import zh from '../locale/zh.json' with { type: 'json' }
 import en from '../locale/en.json' with { type: 'json' }
 
@@ -160,35 +161,42 @@ test('M3 intake dedup fork: auto card blocks rebuild; manual card does not occup
 // ==============================================================================
 // Source-agnostic flows, run through BOTH sources (matrix completeness)
 // ==============================================================================
-test('M4 full legal chain inbox→…→done for BOTH sources; history actors correct', () => withStore(async (f) => {
+test('M4 full legal chain inbox→…→pr-review for BOTH sources, done only via the syncRule; history actors correct', () => withStore(async (f) => {
   for (const { name, source } of SOURCES) {
     const c = card(f, source, 'body', name)
     const chain = [
-      ['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'],
-      ['build', 'human'], ['review', 'agent'], ['done', 'human'],
+      ['triage', 'human'], ['plan', 'agent'],
+      ['build', 'agent'], ['self-review', 'agent'], ['pr-review', 'agent'],
     ]
     for (const [to, actor] of chain) {
       const res = f.api({ method: 'POST', route: `/cards/${c.id}/transition`, body: { to, actor } })
       assert.equal(res.status, 200, `${name}: ${res.body.error ?? ''}`)
     }
+    // V4: no human/engine edge into done. The merged-PR fact, fed by the
+    // engine's remote sync, is the only way a card completes.
+    f.store.setPrUrl(c.id, 'https://github.com/o/r/pull/7')
+    const sync = applyRemoteSync({ store: f.store, cardId: c.id, remote: { pr: { state: 'MERGED' } } })
+    assert.equal(sync.changed, true, `${name}: the merge fact completes the card`)
     const final = f.store.getCard(c.id)
     assert.equal(final.status, 'done', `${name}: reached done`)
     assert.equal(final.source, source, `${name}: source unchanged through the chain`)
     assert.equal(final.body, 'body', `${name}: body preserved`)
-    const humanDone = final.history.find((h) => h.to === 'done')
-    assert.equal(humanDone.actor, 'human', `${name}: only human reaches done`)
-    assert.ok(!final.history.some((h) => h.to === 'done' && h.actor === 'agent'), `${name}: agent never reaches done`)
+    const done = final.history.find((h) => h.to === 'done')
+    assert.equal(done.actor, 'syncRule', `${name}: only the syncRule reaches done`)
+    assert.ok(!final.history.some((h) => h.to === 'done' && (h.actor === 'human' || h.actor === 'agent' || h.actor === 'autoRule')), `${name}: no human/agent/autoRule edge into done`)
+    // Idempotency: feeding the same fact again performs no write.
+    assert.equal(applyRemoteSync({ store: f.store, cardId: c.id, remote: { pr: { state: 'MERGED' } } }).changed, false, `${name}: repeat feed is a no-op`)
   }
 }))
 
 test('M4 cancel from every non-terminal phase for BOTH sources; source+body kept', () => withStore(async (f) => {
-  const path = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']
+  const path = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
   for (const { name, source } of SOURCES) {
     for (const stop of path) {
       const c = card(f, source, `${name}-${stop}`, `${name}@${stop}`)
       for (let i = 1; i <= path.indexOf(stop); i += 1) {
         const to = path[i]
-        const actor = to === 'triage' || to === 'build' ? 'human' : 'agent'
+        const actor = to === 'triage' ? 'human' : 'agent'
         f.store.transitionCard(c.id, to, actor)
       }
       const res = f.api({ method: 'POST', route: `/cards/${c.id}/transition`, body: { to: 'canceled', actor: 'human' } })

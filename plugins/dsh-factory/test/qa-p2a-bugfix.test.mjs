@@ -18,7 +18,7 @@ import { continueCard } from '../dispatch.js'
 
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 
-function setup({ status = 'review', reviewSessionId = 'reviewer-1' } = {}) {
+function setup({ status = 'self-review', reviewSessionId = 'reviewer-1', prReviewSessionId = null } = {}) {
   const tmp = mkdtempSync(join(tmpdir(), 'qa-bugfix-'))
   const repo = join(tmp, 'repo')
   mkdirSync(repo)
@@ -34,17 +34,18 @@ function setup({ status = 'review', reviewSessionId = 'reviewer-1' } = {}) {
   const card = store.createCard({ boardId: board.id, title: 'review me' })
   store.setWorktree(card.id, { worktreePath: repo, branch: 'factory/test', baseBranch: 'main', sessionId: 'builder-1' })
   // Walk the REAL state machine to the requested phase (fixture only).
-  const path = ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']
-  const actorFor = { triage: 'human', plan: 'agent', 'plan-review': 'agent', build: 'human', review: 'agent' }
+  const path = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
+  const actorFor = { triage: 'human', plan: 'agent', build: 'agent', 'self-review': 'agent', 'pr-review': 'agent' }
   for (let i = 1; i <= path.indexOf(status); i += 1) {
     store.transitionCard(card.id, path[i], actorFor[path[i]])
   }
   if (reviewSessionId) store.setReviewSession(card.id, reviewSessionId, 'created')
+  if (prReviewSessionId) store.setPrReviewSession(card.id, prReviewSessionId, 'created')
   return { store, project, card, repo, head: () => git(repo, 'rev-parse', 'HEAD').trim(), cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
 }
 
-const verdictArgs = (cardId, who = 'reviewer-1') => ({
-  cardId, report: 'structured report', source: 'review', verdict: 'approved',
+const verdictArgs = (cardId, who = 'reviewer-1', source = 'review') => ({
+  cardId, report: 'structured report', source, verdict: 'approved',
   blocking: [], followUps: [], checks: [{ name: 'probe', result: 'pass', tests: 'none' }],
   reviewerSessionId: who,
 })
@@ -53,13 +54,13 @@ const historyOf = (store, id, type) => store.getCard(id).history.filter((h) => h
 
 // ---------- ① identity gate ----------
 
-test('FIX-1 builder in review is REFUSED with a readable error; nothing written', async () => {
+test('FIX-1 builder in self-review is REFUSED with a readable error; nothing written', async () => {
   const f = setup()
   try {
     const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
     await assert.rejects(
       () => tool.execute(verdictArgs(f.card.id, 'builder-1'), execOf('builder-1')),
-      /只有评审会话可以提交结构化 verdict/,
+      /builder 会话不能提交任何结构化 verdict/,
     )
     assert.equal(historyOf(f.store, f.card.id, 'report').length, 0, 'no report on refusal')
     assert.equal(historyOf(f.store, f.card.id, 'verdict').length, 0, 'no verdict on refusal')
@@ -80,27 +81,28 @@ test('FIX-1 reviewer in review succeeds; mirror reviewerSessionId equals reviewS
   } finally { f.cleanup() }
 })
 
-test('FIX-1 review card with no reviewSessionId: readable error, no write', async () => {
+test('FIX-1 a self-review verdict needs a real self-review session: readable error, no write', async () => {
   const f = setup({ reviewSessionId: null })
   try {
     const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
     await assert.rejects(
-      () => tool.execute(verdictArgs(f.card.id), execOf('builder-1')),
-      /尚未派出评审会话/,
+      () => tool.execute(verdictArgs(f.card.id), execOf('outsider')),
+      /尚未派出自审会话/,
+      'no self session means no structured self verdict from any non-builder caller',
     )
     assert.equal(historyOf(f.store, f.card.id, 'report').length, 0)
     assert.equal(historyOf(f.store, f.card.id, 'verdict').length, 0)
   } finally { f.cleanup() }
 })
 
-test('FIX-1 non-review card without a reviewer session rejects structured verdicts', async () => {
+test('FIX-1 non-review card without a self-review session rejects structured self verdicts', async () => {
   const f = setup({ status: 'build', reviewSessionId: null })
   try {
     const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
     await assert.rejects(
-      () => tool.execute(verdictArgs(f.card.id, 'builder-1'), execOf('builder-1')),
-      /尚未派出评审会话/,
-      'hole A: no reviewer session means no review conclusion in ANY phase',
+      () => tool.execute(verdictArgs(f.card.id, 'outsider'), execOf('outsider')),
+      /尚未派出自审会话/,
+      'no self-review session means no structured self verdict in ANY phase',
     )
     assert.equal(historyOf(f.store, f.card.id, 'report').length, 0, 'no free-text report on refusal')
     assert.equal(historyOf(f.store, f.card.id, 'verdict').length, 0, 'no verdict on refusal')
@@ -109,13 +111,13 @@ test('FIX-1 non-review card without a reviewer session rejects structured verdic
 })
 
 test('FIX-1 builder with an existing reviewer session is refused at EVERY stage', async () => {
-  for (const status of ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']) {
+  for (const status of ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']) {
     const f = setup({ status, reviewSessionId: 'reviewer-1' })
     try {
       const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
       await assert.rejects(
         () => tool.execute(verdictArgs(f.card.id, 'builder-1'), execOf('builder-1')),
-        /builder 会话在任何阶段都不能自评/,
+        /builder 会话不能提交任何结构化 verdict/,
         `${status}: builder must never self-certify`,
       )
       assert.equal(historyOf(f.store, f.card.id, 'report').length, 0, `${status}: no report`)
@@ -127,12 +129,12 @@ test('FIX-1 builder with an existing reviewer session is refused at EVERY stage'
 
 test('FIX-1 a forged reviewerSessionId argument cannot impersonate the reviewer', async () => {
   for (const exec of [undefined, execOf('some-other-session')]) {
-    const f = setup({ status: 'review', reviewSessionId: 'reviewer-1' })
+    const f = setup({ status: 'self-review', reviewSessionId: 'reviewer-1' })
     try {
       const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
       await assert.rejects(
         () => tool.execute(verdictArgs(f.card.id, 'reviewer-1'), exec),
-        /当前会话不是本卡的评审会话/,
+        /只有本卡自审会话可以提交自审 verdict/,
       )
       assert.equal(historyOf(f.store, f.card.id, 'verdict').length, 0)
       assert.equal(f.store.getCard(f.card.id).reviewVerdict, null)
@@ -140,8 +142,25 @@ test('FIX-1 a forged reviewerSessionId argument cannot impersonate the reviewer'
   }
 })
 
+test('FIX-1 typed gate: neither review session may submit the other verdict type', async () => {
+  const f = setup({ status: 'pr-review', reviewSessionId: 'self-1', prReviewSessionId: 'pr-1' })
+  try {
+    const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
+    await assert.rejects(
+      () => tool.execute(verdictArgs(f.card.id, 'self-1', 'pr-review'), execOf('self-1')),
+      /自审会话不能代交 PR 评审 verdict/,
+    )
+    await assert.rejects(
+      () => tool.execute(verdictArgs(f.card.id, 'pr-1', 'review'), execOf('pr-1')),
+      /PR 评审会话不能代交自审 verdict/,
+    )
+    assert.equal(historyOf(f.store, f.card.id, 'verdict').length, 0)
+    assert.equal(f.store.getCard(f.card.id).reviewVerdict, null)
+  } finally { f.cleanup() }
+})
+
 test('FIX-1 plain free-text reports are accepted at EVERY stage by the builder', async () => {
-  for (const status of ['inbox', 'triage', 'plan', 'plan-review', 'build', 'review']) {
+  for (const status of ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']) {
     const f = setup({ status, reviewSessionId: 'reviewer-1' })
     try {
       const tool = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s])).get('factory_report')
@@ -205,8 +224,8 @@ test('FIX-2 same reviewer + same head stays idempotent', () => {
 const ADVANCE_RE = /advance through|factory_transition_work_item to advance/i
 const REVIEW_SKILL_RE = /Read the `factory-review` skill|write a structured verdict with factory_report/i
 
-test('FIX-3 builderMode in review yields a WAITING context with no review/advance instructions', () => {
-  const f = setup()
+test('FIX-3 builderMode in pr-review yields a WAITING context with no review/advance instructions', () => {
+  const f = setup({ status: 'pr-review' })
   try {
     const built = buildSessionContext({
       card: f.store.getCard(f.card.id), project: f.project, builderMode: true,
@@ -233,20 +252,20 @@ test('FIX-3 builderMode outside review leaves builder instructions untouched', (
 })
 
 test('FIX-3 reviewMode wins over builderMode', () => {
-  const f = setup()
+  const f = setup({ status: 'self-review' })
   try {
     const built = buildSessionContext({
       card: f.store.getCard(f.card.id), project: f.project, builderMode: true,
       reviewMode: true, review: { reviewedHead: f.head(), sandboxMode: 'read-only' },
     })
-    assert.equal(built.skill, 'factory-review')
+    assert.equal(built.skill, 'factory-self-review')
     assert.match(built.sectionText, /INDEPENDENT REVIEW session/)
     assert.equal(built.sectionText.includes('standing by'), false)
   } finally { f.cleanup() }
 })
 
-test('FIX-3 attached section flips live: review → waiting, review→build → builder again (AC8)', () => {
-  const f = setup()
+test('FIX-3 attached section flips live: pr-review → waiting, pr-review→build → builder again (AC8)', () => {
+  const f = setup({ status: 'pr-review' })
   try {
     const variables = {}
     let section = null
@@ -261,11 +280,11 @@ test('FIX-3 attached section flips live: review → waiting, review→build → 
     assert.equal(typeof dispose, 'function')
     const waiting = section.text()
     assert.match(waiting, /standing by|Do NOT review/i)
-    assert.equal(waiting.includes('factory-review'), false)
+    assert.equal(waiting.includes('factory-self-review'), false)
 
-    // Human sends the card back to build: the SAME session's live section must
+    // A human sends the card back to build: the SAME session's live section must
     // become a builder section again without re-registration.
-    f.store.transitionCard(f.card.id, 'build', 'human')
+    f.store.transitionCard(f.card.id, 'build', 'human', '请补重试上限')
     const builderAgain = section.text()
     assert.match(builderAgain, /advance through|factory_transition_work_item to advance/i)
     assert.equal(builderAgain.includes('standing by'), false)
@@ -273,10 +292,10 @@ test('FIX-3 attached section flips live: review → waiting, review→build → 
   } finally { f.cleanup() }
 })
 
-test('FIX-3/AC8 review→build continuation still uses the ORIGINAL builder session', async () => {
-  const f = setup()
+test('FIX-3/AC8 pr-review→build continuation still uses the ORIGINAL builder session', async () => {
+  const f = setup({ status: 'pr-review' })
   try {
-    f.store.transitionCard(f.card.id, 'build', 'human')
+    f.store.transitionCard(f.card.id, 'build', 'human', '请补重试上限')
     const calls = []
     const port = {
       createWorktree: () => { throw new Error('no worktree on continuation') },

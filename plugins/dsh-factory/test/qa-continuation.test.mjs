@@ -231,19 +231,23 @@ test('refusal: terminal and waiting-for-human statuses never reach the port', as
   const { store, card, cleanup } = setup()
   try {
     const { port, calls } = fakePort({ active: true })
-    // Move to review — a status a human owns, not the agent.
-    store.transitionCard(card.id, 'plan-review', 'agent')
-    store.transitionCard(card.id, 'build', 'human')
-    store.transitionCard(card.id, 'review', 'agent')
+    // V4: builder continuation stops before the independent review stages.
+    // self-review and pr-review are owned by their own sessions, never by the
+    // builder session — a continuation must refuse at both boundaries.
+    store.transitionCard(card.id, 'build', 'agent')
+    store.transitionCard(card.id, 'self-review', 'agent')
+    await assert.rejects(() => continueCard({ store, cardId: card.id, port }), /不可接续|waiting-for-human/, 'builder cannot continue into independent self-review')
+    assert.equal(calls.followup.length, 0, 'no builder followup into self-review')
+    store.transitionCard(card.id, 'pr-review', 'agent')
     await assert.rejects(() => continueCard({ store, cardId: card.id, port }), /不可接续|waiting-for-human/)
     assert.equal(calls.followup.length, 0)
 
     assert.equal(assertDispatchable({ status: 'done' }).reason, 'terminal')
     assert.equal(assertDispatchable({ status: 'canceled' }).reason, 'terminal')
-    assert.equal(assertDispatchable({ status: 'review' }).reason, 'waiting-for-human')
+    assert.equal(assertDispatchable({ status: 'pr-review' }).reason, 'waiting-for-human')
     assert.equal(assertDispatchable({ status: 'inbox' }).ok, true, 'inbox is agent-owned, not waiting')
     assert.equal(assertDispatchable({ status: 'triage' }).ok, true)
-    assert.equal(assertDispatchable({ status: 'plan-review' }).reason, 'waiting-for-human')
+    assert.equal(assertDispatchable({ status: 'self-review' }).reason, 'waiting-for-human', 'independent self-review is not builder-continuable')
     assert.equal(assertDispatchable({ status: 'build' }).ok, true)
     assert.equal(assertDispatchable({ status: 'plan', stalled: true }).reason, 'stalled')
     assert.equal(assertDispatchable(null).reason, 'missing-card')

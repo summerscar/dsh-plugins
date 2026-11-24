@@ -16,7 +16,7 @@
  */
 import { execFileSync } from 'node:child_process'
 
-export const VERDICT_SOURCES = Object.freeze(['review', 'rereview'])
+export const VERDICT_SOURCES = Object.freeze(['review', 'rereview', 'pr-review'])
 export const VERDICT_VALUES = Object.freeze(['approved', 'changes-requested', 'verification-incomplete'])
 
 /** Full git SHA (sha1 = 40 hex, sha256 = 64 hex). Short ids are never accepted. */

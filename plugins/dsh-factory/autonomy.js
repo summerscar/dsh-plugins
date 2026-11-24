@@ -30,10 +30,16 @@
  * `deps` port, so the whole chain is exercised offline with a fake store and
  * fake host — no real timer, no real `gh`, no real sessions.
  */
-import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview, readAutoReviewPluginState, SANDBOX_MODES } from './dispatch.js'
+import { continueCard, createHostPort, dispatchCard, dispatchPrReview, dispatchReview, followupReview, readAutoReviewPluginState, SANDBOX_MODES } from './dispatch.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { localeFromContext } from './session-context.js'
 import { precheckReceipt } from './receipt.js'
+import { applyRemoteSync } from './sync.js'
+import { DEFAULT_PHASE_RULES, phaseAllows, normalizePhaseRules } from './phase-rules.js'
+import { SELF_REVIEW_DISPATCH_LIMIT } from './store.js'
+
+export { DEFAULT_PHASE_RULES }
+export const phaseRulesOf = (project) => normalizePhaseRules(project?.phaseRules ?? {}, DEFAULT_PHASE_RULES)
 
 /** Conservative, overridable defaults. Never hard-code a host-specific path/command. */
 export const DEFAULT_TICK_MS = 60_000
@@ -55,18 +61,11 @@ export const RULE_DELIVER = 'auto-deliver-approved-head'
 /** Hard cap on engine-initiated re-reviews per card for its whole life. */
 export const AUTO_REREVIEW_LIMIT = 3
 
-/** L4 inherits L3's capabilities; the extra delivery power is gated separately. */
-export function canDeliver(level) {
-  return level === AUTO_DELIVERY_TIER
-}
+/** V4: the default is full auto; phase rules may only narrow stages. */
+export function canDeliver() { return true }
 
-/** The level → capabilities map. No switch is read for machine-approve/L4. */
-export function behaviorOf(level) {
-  if (level === 'you-approve') return { intake: true, dispatch: true, approve: false }
-  if (level === 'machine-approve' || level === AUTO_DELIVERY_TIER) {
-    return { intake: true, dispatch: true, approve: true }
-  }
-  return { intake: false, dispatch: false, approve: false }
+export function behaviorOf() {
+  return { intake: true, dispatch: true, approve: true, selfReview: true, remoteSync: true }
 }
 
 /**
@@ -91,9 +90,9 @@ export function autoApprovePlan({ store, cardId, note, ports = {} } = {}) {
   // Re-read live: the status may have changed since the tick snapshot.
   const card = store.getCard(cardId)
   if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
-  if (card.status !== 'plan-review') return { skipped: true, reason: `status=${card.status}` }
+  if (card.status !== 'plan') return { skipped: true, reason: `status=${card.status}` }
   if (card.takenOver === true) return { skipped: true, reason: 'taken-over' }
-  const value = { id: cardId, from: 'plan-review', to: 'build', actor: 'autoRule' }
+  const value = { id: cardId, from: 'plan', to: 'build', actor: 'autoRule' }
   // Same write/receipt boundary as the model-facing tools: precheck, then write.
   precheckReceipt({ name: 'factory_auto_approve', schema: APPROVE_OUTPUT.schema, render: APPROVE_OUTPUT.render, args: {}, value, ports })
   store.transitionCard(cardId, 'build', 'autoRule', note, {
@@ -284,6 +283,13 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
       activeByProject.set(card.projectId, (activeByProject.get(card.projectId) ?? 0) + 1)
     }
     let activeCount = activeSessionIds.size
+    // A session handle can die between the tick snapshot and the decision point.
+    // Idle-review redispatch must re-check live state before sending work.
+    const sessionLiveAtDecision = async (sessionId) => {
+      if (typeof sessionId !== 'string' || sessionId === '') return false
+      if (typeof deps.isSessionActive !== 'function') return false
+      try { return (await deps.isSessionActive(sessionId)) === true } catch { return false }
+    }
 
     // P0-2/P0-3: both signals are read from the LIVE host once per tick, never
     // from config. Fail-closed helpers keep the status honest on offline fakes,
@@ -296,7 +302,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
     for (const project of store.listProjects()) {
       const report = {
         projectId: project.id,
-        autonomy: project.autonomy,
+        autonomy: 'phase-rules',
         action: 'skipped',
         reason: null,
         intakeCreated: 0,
@@ -315,12 +321,8 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         // One source of truth: the stored semantic level decides capabilities.
         // The autoDispatch switch only gates the dispatch capability of
         // you-approve; machine-approve never reads it.
-        const level = project.autonomy
-        const behavior = behaviorOf(level)
-        if (!behavior.intake && !behavior.dispatch && !behavior.approve) {
-          report.reason = `autonomy=${level} (manual: engine does nothing)`
-          continue
-        }
+        const phaseRules = phaseRulesOf(project)
+        const behavior = behaviorOf()
 
         // Shared per-project budget: approval continuations and Inbox dispatch
         // both keep/create active sessions, so they draw from the SAME cap.
@@ -330,13 +332,13 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         // Machine plan-approval is independent of intake config (issueRepo/board):
         // it judges LOCAL card status only. pause / takeover apply immediately.
         // A missing deps.approve port (offline fakes) simply skips.
-        if (behavior.approve && typeof deps.approve === 'function') {
+        if (phaseAllows(phaseRules, 'plan', 'autoApprove') && typeof deps.approve === 'function') {
           const approvalPaused = status.paused === true || project.paused === true
           if (approvalPaused) {
             report.approvalReason = 'paused'
           } else {
             const approvable = allCards
-              .filter((card) => card.projectId === project.id && card.status === 'plan-review')
+              .filter((card) => card.projectId === project.id && card.status === 'plan')
               .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
             // A continue that reuses a still-live session (followup) adds no
             // new session and needs no slot; a resume/fresh fallback does.
@@ -423,7 +425,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
             }
             const approvalBase = report.approved > 0
               ? `approved ${report.approved} plan(s)`
-              : approvable.length === 0 ? 'no plan-review card' : 'none approved'
+              : approvable.length === 0 ? 'no plan card' : 'none approved'
             report.approvalReason = report.approvalHeld > 0
               ? `${approvalBase}; ${report.approvalHeld} held for capacity`
               : approvalBase
@@ -437,39 +439,13 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         // cards whose commit result is { ok:true } proceed to review + delivery.
         // Without the port wired (offline fakes / older hosts) this is a no-op
         // and review+delivery run unchanged.
-        const wantsCommit = canDeliver(level) && typeof deps.autoCommit === 'function'
-          && status.paused !== true && project.paused !== true
-        const committedOk = new Set()
-        if (wantsCommit) {
-          const reviewCards = allCards.filter((card) => card.projectId === project.id
-            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true)
-          for (const card of reviewCards) {
-            try {
-              const outcome = await deps.autoCommit({ store, cardId: card.id })
-              if (outcome?.ok === true) {
-                committedOk.add(card.id)
-                if (outcome.committed === true) report.autoCommitted += 1
-              }
-            } catch (error) {
-              errors += 1
-              const message = error instanceof Error ? error.message : String(error)
-              status.lastError = `L4 auto-commit failed for card ${card.id}: ${message}`
-            }
-          }
-        }
-        const commitPassed = (card) => !wantsCommit || committedOk.has(card.id)
-
-        // L4 auto-review: a Review card cannot be delivered until a reviewer
-        // produces a verdict. Dispatch one independent read-only review session
-        // for cards that have no reviewer yet; idempotent on reviewSessionId
-        // (dispatchReview only records that id after createSession succeeds).
-        // A failed dispatch leaves no half-session and is recorded in lastError;
-        // a later tick may retry, same as first-dispatch failures do.
-        if (canDeliver(level) && typeof deps.reviewDispatch === 'function'
+        // V4 independent self-review: dispatch ONE reviewer on the pushed
+        // branch. The reviewer (not the engine) later opens the draft PR from
+        // the approved head via factory_open_draft_pr.
+        if (phaseAllows(phaseRules, 'self-review', 'autoStart') && typeof deps.reviewDispatch === 'function'
           && status.paused !== true && project.paused !== true) {
           const needReview = allCards.filter((card) => card.projectId === project.id
-            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true
-            && commitPassed(card)
+            && card.status === 'self-review' && card.takenOver !== true && card.needsHumanInfo !== true
             && (card.reviewSessionId === null || card.reviewSessionId === undefined || card.reviewSessionId === ''))
           for (const card of needReview) {
             try {
@@ -477,28 +453,78 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
               report.reviewDispatched += 1
             } catch (error) {
               errors += 1
-              const message = error instanceof Error ? error.message : String(error)
-              status.lastError = `auto-review dispatch failed for card ${card.id}: ${message}`
+              status.lastError = `self-review dispatch failed for card ${card.id}: ${error instanceof Error ? error.message : String(error)}`
             }
           }
         }
 
-        // L4 auto re-review: a verdict that went stale (engine committed a new
-        // HEAD after the last verdict) is re-reviewed automatically, bounded by
-        // AUTO_REREVIEW_LIMIT per card for life. Uses followupReview so an alive
-        // reviewer is reused before a resume/new session; the old verdict stays
-        // as previousVerdict context. Mutually exclusive with first review:
-        // first review needs NO reviewer, this path needs one + reviewStale.
-        // Idempotent per head: followupReview calls setReviewSession, which
-        // clears reviewStale, so the same head is never dispatched twice. Count
-        // on ATTEMPT (before the call) so a failing session can't burn attempts
-        // every tick forever — 3 tries then fully manual. Manual redispatch goes
-        // through the HTTP route and never touches this counter.
-        if (canDeliver(level) && typeof deps.reviewRereview === 'function'
+        // An independent reviewer can end its turn without calling any tool.
+        // The identity gate stays strict; we only redispatch a DEAD reviewer
+        // with a bounded budget, then park for a human.
+        if (phaseAllows(phaseRules, 'self-review', 'autoStart') && typeof deps.reviewDispatch === 'function'
           && status.paused !== true && project.paused !== true) {
+          const idleReviews = allCards.filter((card) => card.projectId === project.id
+            && card.status === 'self-review' && card.takenOver !== true && card.needsHumanInfo !== true
+            && card.stalled !== true && card.selfReview == null && !card.prUrl
+            && typeof card.reviewSessionId === 'string' && card.reviewSessionId !== ''
+            && (card.selfReviewDispatchFailures ?? 0) < SELF_REVIEW_DISPATCH_LIMIT)
+          for (const card of idleReviews) {
+            if (await sessionLiveAtDecision(card.reviewSessionId)) continue
+            const reason = `self-review session ${card.reviewSessionId} ended without a verdict or PR`
+            const outcome = store.recordSelfReviewDispatchFailure(card.id, { reason })
+            if (outcome.stalled === true) continue
+            try {
+              await deps.reviewDispatch({ store, cardId: card.id, note: reason })
+              report.reviewDispatched += 1
+            } catch (error) {
+              errors += 1
+              status.lastError = `idle self-review redispatch failed for card ${card.id}: ${error instanceof Error ? error.message : String(error)}`
+            }
+          }
+        }
+
+        // V4 part (3): one independent PR-review session per PR. Idle PR
+        // reviewers are NEVER auto-redispatched (Q4) — only audited and
+        // surfaced for the human redispatch button.
+        if (phaseAllows(phaseRules, 'pr-review', 'autoStart') && typeof deps.prReviewDispatch === 'function'
+          && status.paused !== true && project.paused !== true) {
+          const needsPrReview = allCards.filter((card) => card.projectId === project.id
+            && card.status === 'pr-review' && typeof card.prUrl === 'string' && card.prUrl !== ''
+            && card.takenOver !== true && card.needsHumanInfo !== true && card.stalled !== true
+            && card.prReviewIdle !== true
+            && !(typeof card.prReviewSessionId === 'string' && card.prReviewSessionId !== ''))
+          let prSlots = Math.max(0, Math.min(
+            projectMax - (activeByProject.get(project.id) ?? 0),
+            globalMax - activeCount,
+          ))
+          for (const card of needsPrReview) {
+            if (prSlots <= 0) break
+            try {
+              await deps.prReviewDispatch({ store, cardId: card.id })
+              report.reviewDispatched += 1
+              activeCount += 1
+              activeByProject.set(project.id, (activeByProject.get(project.id) ?? 0) + 1)
+              prSlots -= 1
+            } catch (error) {
+              errors += 1
+              status.lastError = `pr-review dispatch failed for card ${card.id}: ${error instanceof Error ? error.message : String(error)}`
+            }
+          }
+        }
+        const idlePrReviews = allCards.filter((card) => card.projectId === project.id
+          && card.status === 'pr-review' && typeof card.prUrl === 'string' && card.prUrl !== ''
+          && card.prReviewIdle !== true
+          && typeof card.prReviewSessionId === 'string' && card.prReviewSessionId !== '')
+        for (const card of idlePrReviews) {
+          if (await sessionLiveAtDecision(card.prReviewSessionId)) continue
+          store.recordPrReviewIdle(card.id, { reason: `pr-review session ${card.prReviewSessionId} ended without a verdict` })
+        }
+
+        // Stale self-review: bound rounds are recorded by the verdict tool;
+        // here we only offer a re-review when the head moved and the cap allows.
+        if (typeof deps.reviewRereview === 'function' && status.paused !== true && project.paused !== true) {
           const needRereview = allCards.filter((card) => card.projectId === project.id
-            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true
-            && commitPassed(card)
+            && card.status === 'self-review' && card.takenOver !== true && card.needsHumanInfo !== true
             && card.reviewStale === true
             && !(card.reviewSessionId === null || card.reviewSessionId === undefined || card.reviewSessionId === '')
             && (card.autoRereviewCount ?? 0) < AUTO_REREVIEW_LIMIT)
@@ -509,27 +535,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
               report.autoRereviewed += 1
             } catch (error) {
               errors += 1
-              const message = error instanceof Error ? error.message : String(error)
-              status.lastError = `auto re-review failed for card ${card.id}: ${message}`
-            }
-          }
-        }
-
-        // P3: L4 auto-delivery. The gate lives in delivery.js, NOT here: this
-        // loop only offers Review cards. Pause/takeover are checked again by
-        // the gate, so a stale tick snapshot cannot widen the permission.
-        if (canDeliver(level) && typeof deps.deliver === 'function' && status.paused !== true && project.paused !== true) {
-          const deliverable = allCards.filter((card) => card.projectId === project.id
-            && card.status === 'review' && card.takenOver !== true && card.needsHumanInfo !== true
-            && commitPassed(card))
-          for (const card of deliverable) {
-            try {
-              const outcome = await deps.deliver({ store, cardId: card.id })
-              if (outcome?.delivered === true) report.delivered += 1
-            } catch (error) {
-              errors += 1
-              const message = error instanceof Error ? error.message : String(error)
-              status.lastError = `auto-delivery failed for card ${card.id}: ${message}`
+              status.lastError = `auto re-review failed for card ${card.id}: ${error instanceof Error ? error.message : String(error)}`
             }
           }
         }
@@ -561,7 +567,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
           if (typeof deps.ghPortFor === 'function') ghPort = await deps.ghPortFor(project)
           const result = await deps.intake({
             store, projectId: project.id, boardId, repo,
-            ghPort, origin: intakeOrigin(level),
+            ghPort, origin: intakeOrigin('machine-approve'),
             // Per-project poll cap; null/undefined means "port default (100)".
             // Bounds a single tick against a busy upstream (no card flood).
             limit: Number.isInteger(project.intakeLimit) && project.intakeLimit > 0 ? project.intakeLimit : undefined,
@@ -573,11 +579,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
         }
 
         const paused = status.paused === true || project.paused === true
-        // auto-delivery inherits machine-approve's dispatch behavior; its
-        // stored autoDispatch is forced false by normalizeAutonomy, so the tier
-        // itself must participate here (the switch is only for you-approve).
-        const autoDispatch = behavior.dispatch
-          && (level === 'machine-approve' || level === AUTO_DELIVERY_TIER || project.autoDispatch === true)
+        const autoDispatch = behavior.dispatch && phaseAllows(phaseRules, 'inbox', 'autoStart')
         const projectCards = allCards.filter((card) => card.projectId === project.id)
         const inbox = projectCards
           .filter((card) => card.status === 'inbox')
@@ -593,7 +595,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
 
         if (paused || !autoDispatch || dispatchable.length === 0) {
           report.action = paused || !autoDispatch ? 'discover-only' : 'idle'
-          report.reason = paused ? 'paused' : (!autoDispatch ? 'autoDispatch=false' : 'no eligible Inbox card')
+          report.reason = paused ? 'paused' : (!autoDispatch ? 'inbox autoStart=false' : 'no eligible Inbox card')
           report.queued = inbox.length
           continue
         }
@@ -614,7 +616,7 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
             const result = await deps.dispatch({
               store, cardId: card.id,
               transitionActor: 'autoRule',
-              transitionMeta: dispatchMeta(level),
+              transitionMeta: { actor: 'autoRule', tier: 'phase-rules', rule: RULE_DISPATCH, channel: AUTO_CHANNEL },
             })
             // `already-dispatched` is a successfully handled card, NOT a failure
             // to retry or to shout about (PRD §9.1). Only a real creation wins a
@@ -638,6 +640,33 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
       }
     }
 
+    // V4 merge→done: poll the ACTIVE PR of each pr-review card and feed the
+    // existing remote-sync port. Multi-PR cards are deliberately keyed to
+    // card.prUrl only; another PR cannot finish them early. Network failure is
+    // isolated so the next tick self-heals.
+    if (typeof deps.remoteSync === 'function') {
+      for (const card of allCards) {
+        if (card.status !== 'pr-review' || typeof card.prUrl !== 'string' || card.prUrl === '') continue
+        try {
+          // Prefer the same per-project git port used by push/createPr. It
+          // runs buildGitEnv with the resolved identity, preserving the four
+          // fallback layers. ghPortFor remains a compatibility fallback for
+          // older hosts/fakes that only expose the issue-list port.
+          let port = deps.ghPort
+          if (typeof deps.gitPortFor === 'function') port = await deps.gitPortFor(store.getProject(card.projectId))
+          else if (typeof deps.ghPortFor === 'function') port = await deps.ghPortFor(store.getProject(card.projectId))
+          if (typeof port?.prState !== 'function') continue
+          const state = await port.prState({ prUrl: card.prUrl })
+          if (typeof state !== 'string') continue
+          const outcome = await deps.remoteSync({ store, cardId: card.id, remote: { pr: { state } } })
+          if (outcome?.changed === true) status.lastSyncDone = card.id
+        } catch (error) {
+          errors += 1
+          status.lastError = `remote sync failed for card ${card.id}: ${error instanceof Error ? error.message : String(error)}`
+        }
+      }
+    }
+
     status.orphans = await reconcileOrphans({ store, deps })
     status.projects = projectReports
     status.ticks += 1
@@ -655,12 +684,13 @@ export async function runTick({ store, status, deps, config = {}, now = () => ne
  * that one card (caught by runTick), never the whole tick. Injectable `deps` let
  * QA exercise the same runTick with a fake store and fake host, offline.
  */
-export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor, deliver, autoCommit } = {}) {
+export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortFor, gitPortFor, deliver, autoCommit } = {}) {
   return {
     intake: intakeIssues,
     // Per-project gh port from the identity ladder (PGH-9). The host supplies it
     // via index.js; when absent, runTick falls back to the single `ghPort` above.
     ...(typeof ghPortFor === 'function' ? { ghPortFor } : {}),
+    ...(typeof gitPortFor === 'function' ? { gitPortFor } : {}),
     dispatch: (args) => dispatchCard({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
     // Machine plan-approval: same store gate as a human button, write-before-
     // receipt prechecked, actor=autoRule. Ports left default (the approval value
@@ -673,7 +703,9 @@ export function defaultEngineDeps({ ctx, store, ghPort = createGhPort(), ghPortF
     // L4 auto-review: an independent read-only reviewer session, wired with the
     // same lazy host port. Only consumes a slot when the tick offers a Review
     // card with no reviewer; a profile without `agents` fails only that card.
+    remoteSync: applyRemoteSync,
     reviewDispatch: (args) => dispatchReview({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
+    prReviewDispatch: (args) => dispatchPrReview({ ...args, port: createHostPort({ ctx }), locale: localeFromContext(ctx, store) }),
     // L4 auto re-review: reuse the existing reviewer (followup → resume → new)
     // for a card whose verdict went stale. Same lazy host port; counting and
     // the per-card cap live in runTick, not here.

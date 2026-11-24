@@ -78,5 +78,5 @@ test('Dev-ReviewLang: noVerdict red notice is suppressed while review session ru
   const block = client.slice(client.indexOf('const noVerdict ='), client.indexOf('const rereviewExhausted ='))
   assert.match(block, /!reviewWorking/, 'noVerdict branch excludes reviewWorking')
   // The working class/dot must still be driven by reviewWorking (no regression).
-  assert.match(client, /reviewWorking === true \? 'df-card df-card-working df-card-review-working'/, 'review-working visual class intact')
+  assert.match(client, /reviewWorking === true \|\| prReviewWorking === true \? 'df-card df-card-working df-card-review-working'/, 'review-working visual class intact')
 })

@@ -10,7 +10,8 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { FactoryStore } from '../store.js'
-import { buildGitEnv, commitCard, createPrForCard, createGitPort, probeEnv, probeGhLogin } from '../git-exec.js'
+import { buildGitEnv, createGitPort, probeEnv, probeGhLogin } from '../git-exec.js'
+import { makeFixture, makeTools, HEAD, SHA } from './dev-v4-support.mjs'
 
 function setup() {
   const tmp = mkdtempSync(join(tmpdir(), 'factory-git-'))
@@ -45,125 +46,83 @@ function fakePort(overrides = {}) {
   }
 }
 
-test('AG-1: no authorization ⇒ commit writes nothing to git', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: non-builder session writes nothing', async () => {
+  const f = makeFixture()
   try {
-    const { port, calls } = fakePort()
-    await assert.rejects(() => commitCard({ store, cardId: card.id, port }), /缺少「确认提交」授权|仅 Review/)
-    assert.equal(calls.length, 0, 'the git port must not be touched without authorization')
-  } finally {
-    cleanup()
-  }
+    const t = makeTools(f)
+    await assert.rejects(() => t.find('factory_push_branch').execute({ cardId: f.card.id, message: 'm' }, t.other), /builder 会话/)
+    assert.deepEqual(t.calls, [], 'all refusals happen before git reads or writes')
+  } finally { f.cleanup() }
 })
 
-test('AG-1: no authorization ⇒ PR creates no push and no PR', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: builder commits frozen dirty paths and pushes, without opening a PR', async () => {
+  const f = makeFixture()
   try {
-    const { port, calls } = fakePort()
-    await assert.rejects(() => createPrForCard({ store, cardId: card.id, port }), /请先「确认提交」|缺少/)
-    assert.equal(calls.length, 0)
-  } finally {
-    cleanup()
-  }
+    const t = makeTools(f)
+    const out = await t.find('factory_push_branch').execute({ cardId: f.card.id, message: 'fix: ship' }, t.builder)
+    assert.equal(out.sha, SHA)
+    assert.equal(out.prUrl, '')
+    assert.deepEqual(t.calls.map((c) => c[0]), ['changedPaths', 'hasDiff', 'add', 'commit', 'push'])
+    assert.deepEqual(t.calls.find((c) => c[0] === 'add')[1], ['README.md'])
+    assert.deepEqual(t.calls.find((c) => c[0] === 'commit')[2], ['README.md'])
+  } finally { f.cleanup() }
 })
 
-test('an authorized commit runs git add + commit and records the sha', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: a failed commit unstages and leaves the card retryable', async () => {
+  const f = makeFixture()
   try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port, calls } = fakePort()
-    const result = await commitCard({ store, cardId: card.id, port, message: 'do it' })
-    assert.equal(result.sha, 'deadbeef')
-    assert.deepEqual(calls.map((c) => c.name), ['add', 'commit'])
-    const fresh = store.getCard(card.id)
-    assert.equal(fresh.commitSha, 'deadbeef')
-    assert.equal(fresh.pendingAuthorization, null, 'authorization is consumed')
-  } finally {
-    cleanup()
-  }
+    const events = []
+    const t = makeTools(f, { gitPort: { commit: () => { events.push('commit'); throw new Error('hook failed') }, reset: () => events.push('reset') } })
+    await assert.rejects(() => t.find('factory_push_branch').execute({ cardId: f.card.id, message: 'm' }, t.builder), /hook failed/)
+    assert.deepEqual(t.calls.map((c) => c[0]), ['changedPaths', 'hasDiff', 'add'])
+    assert.deepEqual(events, ['commit', 'reset'])
+    assert.equal(f.store.getCard(f.card.id).commitSha, null)
+  } finally { f.cleanup() }
 })
 
-test('a failing commit unstages and leaves the authorization armed for retry', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: reviewer commits no code; it only opens a draft PR', async () => {
+  const f = makeFixture({ status: 'self-review' })
   try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port, calls } = fakePort({ commit: () => { throw new Error('commit failed') } })
-    await assert.rejects(() => commitCard({ store, cardId: card.id, port, message: 'x' }), /commit failed/)
-    assert.ok(calls.some((c) => c.name === 'reset'), 'a failed commit resets the index')
-    assert.equal(store.getCard(card.id).commitSha, null)
-    assert.equal(store.getCard(card.id).pendingAuthorization.action, 'confirm-commit', 'still armed to retry')
-  } finally {
-    cleanup()
-  }
+    f.store.recordCommit(f.card.id, { sha: HEAD, message: 'build commit', actor: 'agent' })
+    f.store.setReviewSession(f.card.id, 'reviewer-session', 'created')
+    const t = makeTools(f)
+    await t.find('factory_self_review_verdict').execute({ cardId: f.card.id, head: HEAD, verdict: 'approved', blocking: [], followUps: [], checks: [] }, t.reviewer)
+    const out = await t.find('factory_open_draft_pr').execute({ cardId: f.card.id, title: 'T', body: 'B' }, t.reviewer)
+    assert.equal(out.url, 'https://example/pr/1')
+    assert.deepEqual(t.calls.map((c) => c[0]), ['createPr'])
+    assert.equal(t.calls.find((c) => c[0] === 'createPr')[1].draft, true)
+  } finally { f.cleanup() }
 })
 
-test('an authorized PR pushes + creates it, sets prUrl, and stays in Review', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: PR tool refuses an unapproved self-review before any write', async () => {
+  const f = makeFixture({ status: 'self-review' })
   try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port } = fakePort()
-    await commitCard({ store, cardId: card.id, port, message: 'do it' })
-
-    store.authorize(card.id, 'create-pr')
-    const { port: prPort, calls } = fakePort()
-    const result = await createPrForCard({ store, cardId: card.id, port: prPort })
-    assert.equal(result.url, 'https://example/pr/1')
-    assert.deepEqual(calls.map((c) => c.name), ['push', 'createPr'])
-    const fresh = store.getCard(card.id)
-    assert.equal(fresh.prUrl, 'https://example/pr/1')
-    assert.equal(fresh.status, 'review', 'PR success stays in Review (D6)')
-    assert.equal(fresh.pendingAuthorization, null)
-  } finally {
-    cleanup()
-  }
+    f.store.recordCommit(f.card.id, { sha: HEAD, message: 'build commit', actor: 'agent' })
+    f.store.setReviewSession(f.card.id, 'reviewer-session', 'created')
+    const t = makeTools(f)
+    await assert.rejects(() => t.find('factory_open_draft_pr').execute({ cardId: f.card.id, title: 'T', body: 'B' }, t.reviewer), /approved/)
+    assert.deepEqual(t.calls, [])
+  } finally { f.cleanup() }
 })
 
-test('PR is refused before a commit, and a card cannot be committed twice', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: protected branch is refused with zero git calls', async () => {
+  const f = makeFixture({ branch: 'main' })
   try {
-    const { port } = fakePort()
-    await assert.rejects(() => createPrForCard({ store, cardId: card.id, port }), /请先「确认提交」/)
-
-    store.authorize(card.id, 'confirm-commit')
-    await commitCard({ store, cardId: card.id, port })
-    // Second commit refused even if re-authorized.
-    store.authorize(card.id, 'confirm-commit')
-    await assert.rejects(() => commitCard({ store, cardId: card.id, port }), /已提交/)
-  } finally {
-    cleanup()
-  }
+    const t = makeTools(f)
+    await assert.rejects(() => t.find('factory_push_branch').execute({ cardId: f.card.id, message: 'm' }, t.builder), /受保护分支/)
+    assert.deepEqual(t.calls, [])
+  } finally { f.cleanup() }
 })
 
-test('refuses to push a protected branch (main) with zero git calls', async () => {
-  const { store, card, cleanup } = setup()
+test('V4 git boundary: no diff is refused with zero git calls beyond the check', async () => {
+  const f = makeFixture()
   try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port } = fakePort()
-    await commitCard({ store, cardId: card.id, port })
-    // A misconfigured card branched onto main must never reach the remote.
-    store.setWorktree(card.id, { worktreePath: '/tmp/fake-worktree', branch: 'main' })
-    store.authorize(card.id, 'create-pr')
-    const { port: prPort, calls } = fakePort()
-    await assert.rejects(() => createPrForCard({ store, cardId: card.id, port: prPort }), /受保护分支|base 分支/)
-    assert.equal(calls.length, 0, 'no push/PR happens on a protected branch')
-  } finally {
-    cleanup()
-  }
-})
-
-test('refuses an empty diff (HEAD == base) with zero git calls', async () => {
-  const { store, card, cleanup } = setup()
-  try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port } = fakePort()
-    await commitCard({ store, cardId: card.id, port })
-    store.authorize(card.id, 'create-pr')
-    const { port: prPort, calls } = fakePort({ hasDiff: () => false })
-    await assert.rejects(() => createPrForCard({ store, cardId: card.id, port: prPort }), /无差异|没有可交付/)
-    assert.equal(calls.length, 0, 'no push/PR happens without a real change')
-  } finally {
-    cleanup()
-  }
+    const events = []
+    const t = makeTools(f, { gitPort: { hasDiff: () => { events.push('hasDiff'); return false } } })
+    await assert.rejects(() => t.find('factory_push_branch').execute({ cardId: f.card.id, message: 'm' }, t.builder), /没有可交付的改动/)
+    assert.deepEqual(events, ['hasDiff'])
+    assert.deepEqual(t.calls.map((c) => c[0]), ['changedPaths'])
+  } finally { f.cleanup() }
 })
 
 test('buildGitEnv: an explicit DSH credential wins — set GH_TOKEN, drop inherited GITHUB_TOKEN', () => {

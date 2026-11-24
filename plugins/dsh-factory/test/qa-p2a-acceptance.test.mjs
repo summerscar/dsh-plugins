@@ -31,7 +31,7 @@ function makeRepo() {
   return { dir, head: () => git(dir, 'rev-parse', 'HEAD').trim() }
 }
 
-function setup({ workMode, repo = makeRepo(), status = 'review', prUrl = null, reviewVerdict = null } = {}) {
+function setup({ workMode, repo = makeRepo(), status = 'self-review', prUrl = null, reviewVerdict = null } = {}) {
   const tmp = mkdtempSync(join(tmpdir(), 'qa-p2a-store-'))
   const store = new FactoryStore({ file: join(tmp, 'factory.json') })
   const project = store.createProject({ name: 'p', rootPath: repo.dir, ...(workMode ? { workMode } : {}) })
@@ -41,9 +41,9 @@ function setup({ workMode, repo = makeRepo(), status = 'review', prUrl = null, r
   if (status !== 'inbox') {
     store.transitionCard(card.id, 'triage', 'human')
     store.transitionCard(card.id, 'plan', 'agent')
-    store.transitionCard(card.id, 'plan-review', 'agent')
-    store.transitionCard(card.id, 'build', 'human')
-    store.transitionCard(card.id, 'review', 'agent')
+    store.transitionCard(card.id, 'build', 'agent')
+    store.transitionCard(card.id, 'self-review', 'agent')
+    if (status === 'pr-review') store.transitionCard(card.id, 'pr-review', 'agent')
   }
   if (prUrl) store.setPrUrl(card.id, prUrl)
   if (reviewVerdict) {
@@ -112,7 +112,7 @@ test('P2a-AC4 dispatchReview records reviewSessionId distinct from builder sessi
     assert.equal(card.reviewSessionId, 'reviewer-1')
     assert.notEqual(card.reviewSessionId, card.sessionId)
     assert.equal(card.sessionId, 'builder-session-1', 'builder session must survive')
-    assert.equal(card.status, 'review', 'dispatch never moves the card')
+    assert.equal(card.status, 'self-review', 'dispatch never moves the card')
     assert.deepEqual(reviewSessionRecord(f.store, f.card.id).map((h) => h.mode), ['created'])
     assert.equal(out.reviewedHead, f.repo.head())
     assert.equal(port.calls.create.length, 1)
@@ -143,8 +143,8 @@ test('P2a-AC4 review→build history switches skill to factory-rereview and inje
   } })
   try {
     assert.equal(isRereview(f.store.getCard(f.card.id)), false)
-    f.store.transitionCard(f.card.id, 'build', 'human')
-    f.store.transitionCard(f.card.id, 'review', 'agent')
+    f.store.transitionCard(f.card.id, 'build', 'agent', 'findings')
+    f.store.transitionCard(f.card.id, 'self-review', 'agent')
     const card = f.store.getCard(f.card.id)
     assert.equal(isRereview(card), true)
     const built = buildSessionContext({ card, project: f.project, reviewMode: true, review: {
@@ -188,7 +188,7 @@ test('P2a-AC5 live reviewer is reused, message carries head + previousVerdict, s
     assert.match(port.calls.followup[0].message, /changes-requested/)
     assert.match(port.calls.followup[0].message, /factory-rereview/)
     assert.equal(port.calls.create.length, 0)
-    assert.equal(f.store.getCard(f.card.id).status, 'review')
+    assert.equal(f.store.getCard(f.card.id).status, 'self-review')
     assert.deepEqual(reviewSessionRecord(f.store, f.card.id).map((h) => h.mode), ['created', 'reused'])
   } finally { f.cleanup() }
 })
@@ -207,7 +207,7 @@ test('P2a-AC5 dead reviewer: resume first, then fresh create; both keep previous
       assert.equal(out.sessionId, newId, label)
       assert.match(port.calls.resume[0].firstMessage, /verification-incomplete/)
       const card = f.store.getCard(f.card.id)
-      assert.equal(card.status, 'review')
+      assert.equal(card.status, 'self-review')
       assert.notEqual(card.sessionId, card.reviewSessionId)
       assert.equal(reviewSessionRecord(f.store, f.card.id).at(-1).mode, 'recreated')
     } finally { f.cleanup() }
@@ -228,7 +228,7 @@ test('P2a-AC5 no reviewer yet → followupReview dispatches a fresh review sessi
 // AC 6/7/8 — reviewer restrictions, builder continuation
 // ===========================================================================
 
-test('P2a-AC7 a reviewer session cannot move the card through the tool (both id shapes)', async () => {
+test('P2a-AC7 reviewer session moves only the two V4 reviewer edges; other targets are refused', async () => {
   for (const exec of [
     { agent: { session: { id: 'reviewer-1' } } },
     { agent: { id: 'reviewer-1' } },
@@ -237,36 +237,50 @@ test('P2a-AC7 a reviewer session cannot move the card through the tool (both id 
     try {
       f.store.setReviewSession(f.card.id, 'reviewer-1', 'created')
       const specs = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s]))
+      // The two legal reviewer moves:
+      await specs.get('factory_transition_work_item').execute({ cardId: f.card.id, to: 'build', note: 'findings' }, exec)
+      assert.equal(f.store.getCard(f.card.id).status, 'build', 'self-review → build (changes requested) is the reviewer\'s own move')
+      f.store.transitionCard(f.card.id, 'self-review', 'agent')
+      // pr-review without a draft PR is refused by the approved-head gate, not by the session gate.
       await assert.rejects(
-        () => specs.get('factory_transition_work_item').execute({ cardId: f.card.id, to: 'build' }, exec),
-        /评审会话不能移卡/,
+        () => specs.get('factory_transition_work_item').execute({ cardId: f.card.id, to: 'pr-review' }, exec),
+        /没有草稿 PR/,
       )
-      assert.equal(f.store.getCard(f.card.id).status, 'review')
+      // Any other target (e.g. inbox) is refused for the reviewer session.
+      await assert.rejects(
+        () => specs.get('factory_transition_work_item').execute({ cardId: f.card.id, to: 'inbox' }, exec),
+        /评审会话/,
+      )
     } finally { f.cleanup() }
   }
 })
 
-test('P2a-AC7 builder session is NOT blocked; state machine keeps review→build human-only', async () => {
+test('P2a-AC7 builder session is NOT blocked; self-review→build is machine-owned, pr-review→build stays human-only', async () => {
   const f = setup({ status: 'build' })
   try {
     f.store.setReviewSession(f.card.id, 'reviewer-1', 'created')
     const specs = new Map(factoryToolSpecs({ store: f.store }).map((s) => [s.name, s]))
-    // build→review is agent-legal; the builder's session id must not be blocked.
+    // build→self-review is agent-legal; the builder\'s session id must not be blocked.
     await specs.get('factory_transition_work_item').execute(
-      { cardId: f.card.id, to: 'review' },
+      { cardId: f.card.id, to: 'self-review' },
       { agent: { session: { id: 'builder-session-1' } } },
     )
-    assert.equal(f.store.getCard(f.card.id).status, 'review')
-    // The reverse edge stays human-only for every actor, including the reviewer.
-    assert.throws(() => f.store.transitionCard(f.card.id, 'build', 'agent'), /不允许由 agent 触发|非法/)
+    assert.equal(f.store.getCard(f.card.id).status, 'self-review')
+    // V4: changes-requested returns to build by the reviewer (agent) or the engine (autoRule).
+    assert.equal(f.store.transitionCard(f.card.id, 'build', 'agent', 'findings').status, 'build')
+    f.store.transitionCard(f.card.id, 'self-review', 'agent')
+    // …but not by a human, and pr-review→build stays a human-only edge.
+    assert.throws(() => f.store.transitionCard(f.card.id, 'build', 'human', 'x'), /不允许由 human 触发/)
+    f.store.transitionCard(f.card.id, 'pr-review', 'agent')
+    assert.throws(() => f.store.transitionCard(f.card.id, 'build', 'agent', 'x'), /不允许由 agent 触发/)
   } finally { f.cleanup() }
 })
 
-test('P2a-AC8 review→build continuation uses the ORIGINAL builder session, not the reviewer', async () => {
-  const f = setup()
+test('P2a-AC8 pr-review→build continuation uses the ORIGINAL builder session, not the reviewer', async () => {
+  const f = setup({ status: 'pr-review' })
   try {
     f.store.setReviewSession(f.card.id, 'reviewer-1', 'created')
-    f.store.transitionCard(f.card.id, 'build', 'human')
+    f.store.transitionCard(f.card.id, 'build', 'human', '请补重试上限')
     const calls = []
     const port = {
       createWorktree: () => { throw new Error('continuation must not create a worktree') },
@@ -350,7 +364,7 @@ test('P2a dispatchReview follows project workMode and backend git head into setu
 // AC 31–34 — work modes
 // ===========================================================================
 
-test('P2a-AC31 work mode defaults, validates and is orthogonal to autonomy', () => {
+test('P2a-AC31 work mode defaults, validates and is orthogonal to stage rules', () => {
   assert.deepEqual([...WORK_MODES], ['workspace-write', 'full-access', 'auto-review'])
   assert.equal(DEFAULT_WORK_MODE, 'workspace-write')
   assert.equal(normalizeWorkMode(undefined), 'workspace-write')
@@ -360,14 +374,16 @@ test('P2a-AC31 work mode defaults, validates and is orthogonal to autonomy', () 
   const f = setup({ status: 'inbox' })
   try {
     assert.equal(f.store.getProject(f.project.id).workMode, 'workspace-write')
-    const before = f.store.getProject(f.project.id).autonomy
+    assert.equal('autonomy' in f.store.getProject(f.project.id), false, 'V4 projects carry no tier field')
+    const before = f.store.getProject(f.project.id).phaseRules
     f.store.updateWorkMode(f.project.id, { workMode: 'full-access' })
     const after = f.store.getProject(f.project.id)
     assert.equal(after.workMode, 'full-access')
-    assert.equal(after.autonomy, before, 'workMode write never moves the tier')
-    f.store.updateAutonomy(f.project.id, { autonomy: 'machine-approve' })
-    assert.equal(f.store.getProject(f.project.id).workMode, 'full-access', 'autonomy write never moves workMode')
-    assert.equal(f.store.getProject(f.project.id).autonomy, 'machine-approve')
+    assert.deepEqual(after.phaseRules, before, 'workMode write never moves the stage rules')
+    f.store.updatePhaseRules(f.project.id, { plan: { autoApprove: false } })
+    const narrowed = f.store.getProject(f.project.id)
+    assert.equal(narrowed.workMode, 'full-access', 'phaseRules write never moves workMode')
+    assert.equal(narrowed.phaseRules.plan.autoApprove, false)
     assert.ok(Array.isArray(collectAudit(f.store, { type: 'work-mode' })))
   } finally { f.cleanup() }
 })
@@ -376,9 +392,9 @@ test('P2a-AC31/33 API PATCH keeps workMode separate and disables auto-review whe
   const f = setup({ status: 'inbox' })
   try {
     const api = createApi({ store: f.store, workModeAvailability: () => ({ available: false, reason: '实验性插件未开启' }) })
-    const mixed = api({ method: 'PATCH', route: `/projects/${f.project.id}`, body: { workMode: 'full-access', autonomy: 'machine-approve' } })
+    const mixed = api({ method: 'PATCH', route: `/projects/${f.project.id}`, body: { workMode: 'full-access', phaseRules: { plan: { autoApprove: false } } } })
     assert.equal(mixed.status, 400)
-    assert.match(mixed.body.error, /workMode/)
+    assert.match(mixed.body.error, /workMode|混改/)
     const denied = api({ method: 'PATCH', route: `/projects/${f.project.id}`, body: { workMode: 'auto-review' } })
     assert.equal(denied.status, 400)
     assert.match(denied.body.error, /自动审查不可选/)

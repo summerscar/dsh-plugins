@@ -157,37 +157,28 @@ test('POST /projects/inspect reports an illegal rootPath clearly without writing
   }
 })
 
-test('PATCH /projects/:id writes autonomy separately from preparation', () => {
+test('PATCH /projects/:id writes phaseRules separately from preparation (V4)', () => {
   const { store, api, cleanup } = setup()
   try {
     const created = api({ method: 'POST', route: '/projects', body: { name: 'auto', rootPath: '/workspace/dsh-plugins' } })
     const id = created.body.project.id
-    assert.equal(created.body.project.autonomy, 'manual', 'a new project starts with the engine off')
-    assert.equal('autoDispatch' in created.body.project, true, 'semantic switch field present')
-    assert.equal(created.body.project.autoDispatch, false)
+    assert.equal('autonomy' in created.body.project, false, 'the L0–L4 field is gone')
+    assert.equal('autoDispatch' in created.body.project, false)
+    assert.equal(created.body.project.phaseRules.plan.autoApprove, true, 'new projects start full auto')
 
-    const patched = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'you-approve', autoDispatch: true } })
-    assert.equal(patched.status, 200)
-    assert.equal(patched.body.project.autonomy, 'you-approve')
-    assert.equal(patched.body.project.autoDispatch, true)
-    assert.equal('autoApprove' in patched.body.project, false, 'legacy switch never stored')
+    const narrow = api({ method: 'PATCH', route: `/projects/${id}`, body: { phaseRules: { plan: { autoApprove: false } } } })
+    assert.equal(narrow.status, 200)
+    assert.equal(narrow.body.project.phaseRules.plan.autoApprove, false, 'advanced rules may narrow a stage')
+    assert.equal(narrow.body.project.phaseRules.build.autoStart, true, 'other stages stay full auto')
 
-    // machine-approve ignores the switch (single source of truth is the level).
-    const machine = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'machine-approve', autoDispatch: true } })
-    assert.equal(machine.body.project.autonomy, 'machine-approve')
-    assert.equal(machine.body.project.autoDispatch, false, 'machine-approve never stores a switch')
+    const attempt = api({ method: 'PATCH', route: `/projects/${id}`, body: { phaseRules: {}, rootPath: '/etc' } })
+    assert.equal(attempt.body.project.rootPath, '/workspace/dsh-plugins', 'rootPath is ignored and never retargeted')
 
-    // Identity and rootPath are not writable through this route.
-    const attempt = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'manual', rootPath: '/etc' } })
-    assert.equal(attempt.body.project.rootPath, '/workspace/dsh-plugins', 'rootPath must stay put')
-
-    // Dirty values are refused, never normalised into "running".
-    const bad = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'L9' } })
+    const bad = api({ method: 'PATCH', route: `/projects/${id}`, body: { phaseRules: { plan: { widenWrite: true } } } })
     assert.equal(bad.status, 400)
-    assert.match(String(bad.body.error), /autonomy/)
+    assert.match(String(bad.body.error), /收窄|未知/)
 
-    // Mixing the two concerns in one PATCH is refused.
-    const mixed = api({ method: 'PATCH', route: `/projects/${id}`, body: { autonomy: 'you-approve', copyFiles: ['a'] } })
+    const mixed = api({ method: 'PATCH', route: `/projects/${id}`, body: { phaseRules: {}, copyFiles: ['a'] } })
     assert.equal(mixed.status, 400)
   } finally { cleanup() }
 })

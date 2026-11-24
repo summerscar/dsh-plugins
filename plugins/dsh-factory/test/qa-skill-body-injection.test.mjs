@@ -55,6 +55,7 @@ const BODIES = {
   'factory-triage': 'TRIAGE_BODY_MARKER: verify the issue, classify, then move to plan.',
   'factory-plan': 'PLAN_BODY_MARKER: write a phased plan and submit for approval.',
   'factory-build': 'BUILD_BODY_MARKER: implement in the worktree, prove with tests.',
+  'factory-self-review': 'SELF_REVIEW_BODY_MARKER: independent review of the build, record a structured verdict.',
   'factory-review': 'REVIEW_BODY_MARKER: independent review, record verdict.',
 }
 function fakeReadSkill(map) {
@@ -65,7 +66,7 @@ function fakeReadSkill(map) {
 // Criterion 1: sectionText contains the CURRENT stage's body inside <skill_content>
 // ---------------------------------------------------------------------------
 test('sectionText injects the current stage skill body inside <skill_content>', () => {
-  for (const [status, skill] of [['triage', 'factory-triage'], ['plan', 'factory-plan'], ['build', 'factory-build'], ['review', 'factory-review']]) {
+  for (const [status, skill] of [['inbox', 'factory-triage'], ['triage', 'factory-triage'], ['plan', 'factory-plan'], ['build', 'factory-build'], ['self-review', 'factory-self-review'], ['pr-review', 'factory-review']]) {
     const { agentCtx, captured } = fakeAgentCtx()
     attachSessionContext({ agentCtx, store: fakeStore(status), cardId: 'card-1', readSkill: fakeReadSkill(BODIES) })
     const text = captured.section.text()

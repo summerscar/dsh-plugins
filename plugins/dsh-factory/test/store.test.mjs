@@ -62,40 +62,31 @@ test('a new card starts in Inbox and only legal edges move it (C3/C4)', () => wi
   assert.throws(() => store.transitionCard(card.id, 'build', 'human'), /非法转移/)
 }))
 
-test('the delivery buttons are Review-only and leave an audit record (AG-2/D4)', () => withStore((file) => {
+test('V4 stage writes are recorded only in their own phases and audited', () => withStore((file) => {
   const store = new FactoryStore({ file })
   const { card } = projectWithBoardAndCard(store)
-
-  // From Inbox, authorizing a delivery action is refused.
-  assert.throws(() => store.authorize(card.id, 'create-pr'), /仅 Review/)
-
-  // Drive the card to Review via the legal path, then authorize.
-  store.transitionCard(card.id, 'triage', 'human')
-  store.transitionCard(card.id, 'plan', 'agent')
-  store.transitionCard(card.id, 'plan-review', 'agent')
-  store.transitionCard(card.id, 'build', 'human')
-  store.transitionCard(card.id, 'review', 'agent')
-
-  const entry = store.authorize(card.id, 'confirm-commit')
-  assert.equal(entry.actor, 'human')
-  assert.equal(entry.statusSnapshot, 'review')
-  assert.ok(typeof entry.at === 'string' && entry.at.length > 0)
+  assert.throws(() => store.recordBuildPush(card.id, { sha: 'a'.repeat(40), message: 'm' }), /build/)
+  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['build', 'agent']]) store.transitionCard(card.id, to, actor)
+  const pushed = store.recordBuildPush(card.id, { sha: 'a'.repeat(40), message: 'm' })
+  assert.equal(pushed.deliverySource, 'build-session')
+  assert.equal(pushed.prUrl, null)
+  assert.equal(pushed.history.at(-1).type, 'build-push')
+  assert.throws(() => store.recordBuildPush(card.id, { sha: 'b'.repeat(40), message: 'm' }), /已有提交/)
 }))
 
-test('a created PR keeps the card in Review; Done is still a separate human step (D6)', () => withStore((file) => {
+test('a draft PR keeps the card in pr-review; only syncRule can finish it', () => withStore((file) => {
   const store = new FactoryStore({ file })
   const { card } = projectWithBoardAndCard(store)
-  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'human'], ['review', 'agent']]) {
+  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['build', 'agent'], ['self-review', 'agent']]) {
     store.transitionCard(card.id, to, actor)
   }
-  const after = store.setPrUrl(card.id, 'https://github.com/x/y/pull/1')
-  assert.equal(after.status, 'review', 'PR success stays in Review')
-  assert.equal(after.prUrl, 'https://github.com/x/y/pull/1')
-
-  // The card cannot skip straight to Done by an agent.
-  assert.throws(() => store.transitionCard(card.id, 'done', 'agent'), /不允许由 agent 触发/)
-  // A human marks it done explicitly.
-  assert.equal(store.transitionCard(card.id, 'done', 'human').status, 'done')
+  store.recordSelfReviewVerdict(card.id, { head: 'a'.repeat(40), verdict: 'approved', blocking: [], followUps: [], checks: [] })
+  store.recordDraftPr(card.id, { url: 'https://github.com/x/y/pull/1', head: 'a'.repeat(40), title: 'T', body: 'B' })
+  assert.equal(store.getCard(card.id).status, 'self-review', 'recording a PR does not itself advance the card')
+  store.transitionCard(card.id, 'pr-review', 'agent')
+  assert.equal(store.getCard(card.id).prUrl, 'https://github.com/x/y/pull/1')
+  assert.throws(() => store.transitionCard(card.id, 'done', 'human'), /非法转移/)
+  assert.equal(store.transitionCard(card.id, 'done', 'syncRule').status, 'done')
 }))
 
 test('uiLocale persists a BCP 47 id and can be cleared', () => withStore((file) => {
@@ -116,8 +107,7 @@ test('a project under the data root is accepted with a warning; defaults are san
   const project = store.createProject({ name: 'under-data', rootPath: join(dataRoot, 'home', 'default', 'repo') })
   assert.match(project.warning, /数据根/)
   assert.equal(project.defaultPermission, 'workspace-write')
-  assert.equal(project.autonomy, 'manual')
-  assert.equal(project.autoDispatch, false)
-  assert.equal('autoStart' in project, false)
-  assert.equal('autoApprove' in project, false)
+  assert.equal('autonomy' in project, false)
+  assert.equal('autoDispatch' in project, false)
+  assert.equal(project.phaseRules.plan.autoApprove, true, 'default is full auto')
 })))

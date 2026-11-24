@@ -1,133 +1,85 @@
-/**
- * Dev self-check: an API git write must not happen without an approved review
- * verdict. The flag is opt-in so internal/offline callers keep their history;
- * the HTTP layer turns it on for the four human write routes.
- */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import test from 'node:test'
+import { clientSource, makeFixture, makeTools, HEAD, STALE } from './dev-v4-support.mjs'
+import { assertManualWritesAllowed } from '../verdict-guard.js'
 
-import { createApi } from '../api.js'
-import { commitCard, commitForExistingPr, createPrForCard, pushExistingCard } from '../git-exec.js'
-import { FactoryStore } from '../store.js'
-import { assertApprovedVerdict } from '../verdict-guard.js'
-
-const HEAD = 'a'.repeat(40)
-
-function setup({ verdict = null, blocking = [] } = {}) {
-  const tmp = mkdtempSync(join(tmpdir(), 'factory-verdict-guard-'))
-  const store = new FactoryStore({ file: join(tmp, 'factory.json') })
-  const project = store.createProject({ name: 'p', rootPath: '/workspace/example-repo' })
-  const board = store.createBoard({ projectId: project.id, name: 'b' })
-  const card = store.createCard({ boardId: board.id, title: 'Ship it' })
-  store.setWorktree(card.id, { worktreePath: '/tmp/fake-worktree', branch: 'factory/card' })
-  for (const [to, actor] of [['triage', 'human'], ['plan', 'agent'], ['plan-review', 'agent'], ['build', 'human'], ['review', 'agent']]) {
-    store.transitionCard(card.id, to, actor)
-  }
-  store.setReviewSession(card.id, 'rev-1', 'created')
-  if (verdict !== null) {
-    store.appendReportWithVerdict(card.id, 'review', {
-      cardId: card.id, source: 'review', verdict, reviewedHead: HEAD,
-      blocking, followUps: [], checks: [], reviewerSessionId: 'rev-1',
-    }, 'agent')
-  }
-  return { store, card: store.getCard(card.id), cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
-}
-
-function fakePort() {
-  const calls = []
-  const record = (name) => (...args) => { calls.push({ name, args }) }
-  return {
-    calls,
-    port: {
-      add: record('add'),
-      commit: () => { calls.push({ name: 'commit' }); return 'deadbeef' },
-      reset: record('reset'),
-      hasDiff: () => true,
-      push: record('push'),
-      createPr: () => { calls.push({ name: 'createPr' }); return 'https://example/pr/1' },
-    },
-  }
-}
-
-test('Dev-Verdict: human done needs a verdict, canceled does not, approved done succeeds', () => {
-  const none = setup()
+test('Dev-Guard: V4 manual HTTP writes are refused until the card is taken over', () => {
+  const f = makeFixture({ status: 'pr-review' })
   try {
-    const api = createApi({ store: none.store, build: 'test', requireApprovedVerdict: true })
-    const route = (to) => ({ method: 'POST', route: `/cards/${none.card.id}/transition`, body: { to, actor: 'human' } })
-    const done = api(route('done'))
-    assert.equal(done.status, 400, 'no-verdict done refused')
-    assert.match(done.body.error, /没有 approved 评审结论/)
-    assert.equal(none.store.getCard(none.card.id).status, 'review', 'no status written by refusal')
-    const canceled = api(route('canceled'))
-    assert.equal(canceled.status, 200, 'cancel is not a verdict-gated action')
-    assert.equal(none.store.getCard(none.card.id).status, 'canceled')
-  } finally { none.cleanup() }
-
-  const approved = setup({ verdict: 'approved' })
-  try {
-    const api = createApi({ store: approved.store, build: 'test', requireApprovedVerdict: true })
-    const res = api({ method: 'POST', route: `/cards/${approved.card.id}/transition`, body: { to: 'done', actor: 'human' } })
-    assert.equal(res.status, 200, 'approved verdict allows done')
-    assert.equal(approved.store.getCard(approved.card.id).status, 'done')
-  } finally { approved.cleanup() }
-})
-
-test('Dev-Verdict: helper accepts only an approved, unblocked verdict', () => {
-  assert.throws(() => assertApprovedVerdict({ card: {} }), /没有 approved 评审结论/)
-  assert.throws(() => assertApprovedVerdict({
-    card: { reviewVerdict: { verdict: 'changes-requested' } },
-  }), /没有 approved 评审结论/)
-  assert.throws(() => assertApprovedVerdict({
-    card: { reviewVerdict: { verdict: 'approved', blocking: [{ file: 'a', line: 1, reason: 'x' }] } },
-  }), /阻断项/)
-  assert.doesNotThrow(() => assertApprovedVerdict({
-    card: { reviewVerdict: { verdict: 'approved', blocking: [] } },
-  }))
-})
-
-test('Dev-Verdict: commit without an approved verdict writes nothing and keeps the authorization', async () => {
-  const { store, card, cleanup } = setup()
-  try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port, calls } = fakePort()
-    await assert.rejects(
-      () => commitCard({ store, cardId: card.id, port, requireApprovedVerdict: true }),
-      /没有 approved 评审结论/,
+    const card = f.store.getCard(f.card.id)
+    assert.throws(
+      () => assertManualWritesAllowed({ card, project: f.store.getProject(f.project.id), action: '确认提交' }),
+      /接手|接管/,
     )
-    assert.equal(calls.length, 0, 'git port untouched')
-    assert.notEqual(store.getCard(card.id).pendingAuthorization, null, 'authorization still armed')
-  } finally { cleanup() }
+    f.store.takeOverCard(f.card.id, 'human')
+    assert.doesNotThrow(() => assertManualWritesAllowed({
+      card: f.store.getCard(f.card.id),
+      project: f.store.getProject(f.project.id),
+      action: '确认提交',
+    }))
+  } finally { f.cleanup() }
 })
 
-test('Dev-Verdict: an approved verdict allows the same commit and consumes the authorization', async () => {
-  const { store, card, cleanup } = setup({ verdict: 'approved' })
+test('Dev-Verdict: self-review verdict requires the registered reviewer session', async () => {
+  const f = makeFixture({ status: 'self-review' })
   try {
-    store.authorize(card.id, 'confirm-commit')
-    const { port, calls } = fakePort()
-    const result = await commitCard({ store, cardId: card.id, port, requireApprovedVerdict: true })
-    assert.equal(result.sha, 'deadbeef')
-    assert.deepEqual(calls.map((c) => c.name), ['add', 'commit'])
-    assert.equal(store.getCard(card.id).pendingAuthorization, null)
-  } finally { cleanup() }
+    const t = makeTools(f)
+    await assert.rejects(() => t.find('factory_self_review_verdict').execute({ cardId: f.card.id, head: HEAD, verdict: 'approved', blocking: [], followUps: [], checks: [] }, t.builder), /评审会话/)
+    assert.deepEqual(t.calls, [])
+  } finally { f.cleanup() }
 })
 
-test('Dev-Verdict: PR creation, push-existing and rework commit all refuse without a verdict', async () => {
-  const { store, card, cleanup } = setup({ verdict: 'changes-requested' })
+test('Dev-Verdict: verdict is bound to the backend-read HEAD', async () => {
+  const f = makeFixture({ status: 'self-review' })
   try {
-    store.recordCommit(card.id, { sha: 'deadbeef', message: 'first' })
-    store.setPrUrl(card.id, 'https://example/pr/1')
-    for (const [action, run] of [
-      ['create-pr', (port) => createPrForCard({ store, cardId: card.id, port, requireApprovedVerdict: true })],
-      ['push-existing', (port) => pushExistingCard({ store, cardId: card.id, port, requireApprovedVerdict: true })],
-      ['confirm-commit', (port) => commitForExistingPr({ store, cardId: card.id, port, requireApprovedVerdict: true })],
-    ]) {
-      store.authorize(card.id, action)
-      const { port, calls } = fakePort()
-      await assert.rejects(() => run(port), /没有 approved 评审结论/, `${action} refused`)
-      assert.equal(calls.length, 0, `${action} wrote nothing`)
-    }
-  } finally { cleanup() }
+    f.store.setReviewSession(f.card.id, 'reviewer-session', 'created')
+    const t = makeTools(f, { readHead: () => HEAD })
+    await assert.rejects(() => t.find('factory_self_review_verdict').execute({ cardId: f.card.id, head: STALE, verdict: 'approved', blocking: [], followUps: [], checks: [] }, t.reviewer), /不一致/)
+  } finally { f.cleanup() }
+})
+
+test('Dev-Verdict: blocking findings are stored with the verdict', async () => {
+  const f = makeFixture({ status: 'self-review' })
+  try {
+    f.store.setReviewSession(f.card.id, 'reviewer-session', 'created')
+    const t = makeTools(f)
+    const out = await t.find('factory_self_review_verdict').execute({
+      cardId: f.card.id, head: HEAD, verdict: 'changes-requested',
+      blocking: [{ file: 'a.js', line: 1, reason: 'bug' }], followUps: [{ text: 'nits' }], checks: [],
+    }, t.reviewer)
+    assert.equal(out.verdict, 'changes-requested')
+    assert.equal(f.store.getCard(f.card.id).selfReview.blocking.length, 1)
+  } finally { f.cleanup() }
+})
+
+test('Dev-Verdict: only approved verdict unlocks a draft PR', async () => {
+  const f = makeFixture({ status: 'self-review' })
+  try {
+    f.store.recordCommit(f.card.id, { sha: HEAD, message: 'build', actor: 'agent' })
+    f.store.setReviewSession(f.card.id, 'reviewer-session', 'created')
+    const t = makeTools(f)
+    await t.find('factory_self_review_verdict').execute({ cardId: f.card.id, head: HEAD, verdict: 'changes-requested', blocking: [{ file: 'a', line: 1, reason: 'b' }], followUps: [], checks: [] }, t.reviewer)
+    await assert.rejects(() => t.find('factory_open_draft_pr').execute({ cardId: f.card.id, title: 'T', body: 'B' }, t.reviewer), /approved/)
+    assert.deepEqual(t.calls, [])
+  } finally { f.cleanup() }
+})
+
+test('Dev-Verdict: no human done route remains in the API source', () => {
+  const api = clientSource('api.js')
+  assert.doesNotMatch(api, /assertApprovedVerdict|AUTO_DELIVERY_TIER/)
+  assert.match(api, /remote-sync/)
+})
+
+test('Dev-Verdict: done is only reachable from pr-review by syncRule', () => {
+  const f = makeFixture({ status: 'pr-review' })
+  try {
+    assert.throws(() => f.store.transitionCard(f.card.id, 'done', 'human'), /非法转移/)
+    assert.equal(f.store.transitionCard(f.card.id, 'done', 'syncRule').status, 'done')
+  } finally { f.cleanup() }
+})
+
+test('Dev-Verdict: no manual review verdict tool writes from the builder', () => {
+  const t = makeTools(makeFixture())
+  assert.equal(t.names.includes('factory_record_review_verdict'), false)
+  assert.equal(t.names.includes('factory_self_review_verdict'), true)
 })

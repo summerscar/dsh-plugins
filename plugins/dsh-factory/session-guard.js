@@ -31,11 +31,15 @@ export function sessionActiveFor(ctx, sessionId) {
   }
 }
 
-/** Which of the card's two sessions are live. Absent checker means no session. */
+/** Which of the card's stage sessions are live. Absent checker means none. */
 export function activeSessionsFor(card, isSessionActive) {
   const live = (id) => typeof id === 'string' && id !== '' && typeof isSessionActive === 'function'
     && isSessionActive(id) === true
-  return { builder: live(card?.sessionId), reviewer: live(card?.reviewSessionId) }
+  return {
+    builder: live(card?.sessionId),
+    reviewer: live(card?.reviewSessionId),
+    prReviewer: live(card?.prReviewSessionId),
+  }
 }
 
 /**
@@ -44,8 +48,9 @@ export function activeSessionsFor(card, isSessionActive) {
  * refusal is retryable as soon as the session ends.
  */
 export function assertNoActiveSession({ card, isSessionActive, action = '该操作' } = {}) {
-  const { builder, reviewer } = activeSessionsFor(card, isSessionActive)
-  if (builder !== true && reviewer !== true) return { builder: false, reviewer: false }
-  const which = builder === true && reviewer === true ? '构建与评审' : builder === true ? '构建' : '评审'
-  throw new Error(`${action}被拒绝：${which}会话仍在进行，请等会话结束后再操作`)
+  const sessions = activeSessionsFor(card, isSessionActive)
+  const { builder, reviewer, prReviewer } = sessions
+  if (builder !== true && reviewer !== true && prReviewer !== true) return sessions
+  const liveNames = [builder && '构建', reviewer && '自审', prReviewer && 'PR 评审'].filter(Boolean)
+  throw new Error(`${action}被拒绝：${liveNames.join('与')}会话仍在进行，请等会话结束后再操作`)
 }

@@ -18,12 +18,15 @@ const packageRoot = resolve(here, '..')
 
 // Every UI key client.js resolves via t(): literal keys plus the column labelKeys
 // used through t(column.labelKey).
+// V4 matrix: no human git-write / mark-done buttons; the self-review column is
+// labelled by the stage dictionary key, and card actions are dispatch/resupply,
+// return, takeover/release, cancel and terminal delete.
 const REQUIRED_UI_KEYS = [
   'navLabel', 'refresh', 'loading', 'errorPrefix',
   'noProjects', 'projectName', 'rootPath', 'newBoard', 'newCard',
   'create', 'project', 'board', 'inbox', 'inboxEmpty',
-  'colPlanning', 'colAwaiting', 'colBuilding', 'colReview', 'colDone', 'canceled', 'emptyColumn',
-  'actDispatch', 'actApprovePlan', 'actConfirmCommit', 'actCreatePr', 'actMarkDone',
+  'colPlanning', 'colBuilding', 'colReview', 'colDone', 'stageSelfReview', 'canceled', 'emptyColumn',
+  'actDispatch', 'actResupply', 'actReturnToInbox', 'takeover', 'cancelCard', 'actDeleteCard',
 ]
 
 test('every UI key client.js uses exists in both zh and en dictionaries', () => {

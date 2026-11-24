@@ -119,13 +119,16 @@ test('client mirrors the resolved display language to the host', () => {
   assert.match(code, /ctx\.locale\.subscribe\(mirrorLocale\)/, 'follows live language changes')
 })
 
-test('approve-plan waits for the session to finish', () => {
+test('V4 client has stage rules, stage strip, and no manual finish buttons', () => {
   const code = readFileSync(join(packageRoot, 'client.js'), 'utf8')
-  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, reviewWorking, onToast, onModal, tier, orphan \}\)/)
+  assert.match(code, /function CardActions\(\{ card, run, t, busy, working, reviewWorking, prReviewWorking, onToast, onModal, tier, orphan \}\)/)
   assert.match(code, /disabled: busy \|\| extra\.disabled === true/)
-  assert.match(code, /card\.history\.some\(\(entry\) => entry && entry\.type === 'report'\)/, 'requires a plan report')
-  assert.match(code, /\(working \|\| !hasReport\) \? \{ disabled: true, title: working \? t\('approvePlanWaiting'\) : t\('approvePlanNoReport'\) \}/)
-  assert.match(code, /h\(CardActions, \{ key: 'actions', card, run, t, busy, working, reviewWorking, onToast/)
+  assert.match(code, /function StageConfigSection\(/, 'phase rules replace the L0–L4 slider')
+  assert.match(code, /h\(StageStrip, /, 'stage strip is visible on cards')
+  assert.match(code, /t\('writeBoundaryNotice'\)/, 'write boundary redline is visible')
+  assert.doesNotMatch(code, /actMarkDone\)/, 'no human mark-done action')
+  assert.doesNotMatch(code, /actCommitExisting|actPushExisting/, 'no four manual git-write actions')
+  assert.match(code, /statuses: \['pr-review'\]/, 'the review column is pr-review')
 })
 
 test('session and report entries are part of the card body', () => {

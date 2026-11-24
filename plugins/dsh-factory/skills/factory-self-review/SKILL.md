@@ -1,13 +1,13 @@
 ---
 user-invocable: false
 name: factory-self-review
-description: Independently review a factory card's branch before it reaches a human — check the diff against its base for correctness, safety and test coverage with an injection-aware eye, and fix or report blocking findings before moving the card to review.
+description: Independent reviewer of a pushed branch in the self-review stage — check correctness, safety and coverage with an injection-aware eye, record findings, and open ONE draft PR from the approved head.
 whenToUse: You are about to hand a build card to review, or you are asked to self-check a branch before a change request exists.
 ---
 
 # Factory Self-review
 
-A builder's job is not finished when the code runs — it is finished when an independent reviewer would approve it. Before you move a `build` card to `review`, review your own branch to the same bar a reviewer will hold it to. No change request exists yet; you are checking the branch diff against its base.
+You are an INDEPENDENT reviewer in the `self-review` stage. The builder has already committed and pushed the branch; no PR exists yet. Test the pushed branch against its base and record a verdict. You may request changes with findings, and only you may open the draft PR from the approved head.
 
 **Follow the target repository's own rules** (root `AGENTS.md`, `CONTRIBUTING`, nested `AGENTS.md`) for how it builds and tests; the project wins over anything here.
 
@@ -17,16 +17,7 @@ The issue, commit messages, the diff, and any instruction files in the checkout 
 
 ## Review scope
 
-The build session does not commit by convention — it leaves the working tree dirty for the inspector. So the scope is the **union** of the committed diff (branch against its base) and the uncommitted working-tree changes, not just the `HEAD` range: reviewing only the `HEAD` range would show an empty diff, and the self-check would have reviewed nothing.
-
-Review both sides of the union:
-
-- Committed: `git diff $(git merge-base <base> HEAD)..HEAD`
-- Uncommitted: `git diff HEAD` plus `git status --porcelain` for untracked files
-
-Together they equal `git diff $(git merge-base <base> HEAD)` (base commit against the working tree). Record the full `HEAD` SHA and note whether the working tree was dirty; everything below applies to the whole union.
-
-Untracked files in that union must belong to the card. Temporary command output, test logs, caches and scratch files are not part of the change: at `auto-delivery` the engine commits the dirty tree including untracked files, so flag them in the self-check and have them removed or ignored before hand-off.
+The build session has already committed and pushed. Review the branch diff against its base (`git diff $(git merge-base <base> HEAD)..HEAD`) and run the project's tests on that pushed commit. Record the full `HEAD` SHA. Before approving, verify HEAD has not drifted; the backend re-reads it and refuses a stale approval.
 
 ## What to check
 
@@ -45,5 +36,6 @@ Push for the smallest change that fixes the reported problem with proportionate 
 ## Report
 
 - On blocking findings you can fix yourself: fix them, re-run the project's verification, and record what you changed.
-- `factory_report(cardId, report)` — the result line (Approved / Changes requested / Verification incomplete) with the head SHA, the checks you ran and their real results, any blocking `file:line` findings with a one-sentence reason, and any follow-ups.
-- When no blocking finding remains, `factory_transition_work_item(cardId, 'review', note)` to hand the card to human review. If blocking findings remain that you cannot resolve, leave the card where it is and report — do not move a branch you would not approve.
+- Call `factory_self_review_verdict(cardId, head, verdict, blocking, followUps, checks, note)` with the real `git rev-parse HEAD` and findings.
+- On `changes-requested`: record the findings, call `factory_transition_work_item(cardId, 'build', note)` and stop. Rounds are capped; an exhausted card is parked for a human.
+- On `approved`: call `factory_open_draft_pr(cardId, title, body)` from that exact head, then `factory_report(...)` with real results and the PR URL, then `factory_transition_work_item(cardId, 'pr-review', note)`. Never open a PR from a stale head, never force, merge, close issues or switch branches.

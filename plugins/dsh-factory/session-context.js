@@ -145,7 +145,7 @@ function bodyBlock(card, locale) {
   return lines
 }
 
-const APPROVED_PHASES = new Set(['build', 'review', 'done'])
+const APPROVED_PHASES = new Set(['build', 'self-review', 'pr-review', 'done'])
 
 /**
  * Stage → packaged skill that drives it. The dispatched session must be TOLD
@@ -160,7 +160,8 @@ const PHASE_SKILL = Object.freeze({
   triage: 'factory-triage',
   plan: 'factory-plan',
   build: 'factory-build',
-  review: 'factory-review',
+  'self-review': 'factory-self-review',
+  'pr-review': 'factory-review',
 })
 
 /** The skill a session should load for its current phase, or null. */
@@ -264,14 +265,14 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
   // the card enters Review its context must NOT become a reviewer's — that
   // directly caused builder self-verdicts. It is told to wait for the human and
   // will become a builder again if the card is sent back to build (AC8).
-  if (builderMode === true && card.status === 'review' && reviewMode !== true) {
+  if (builderMode === true && ['self-review', 'pr-review'].includes(card.status) && reviewMode !== true) {
     fields.skill = null
     fields.nextPhases = []
     const waitingText = [
       ...bodyLines,
       ...(bodyLines.length === 0 ? [] : ['']),
       ...(languageLine === '' ? [] : [languageLine, '']),
-      'You are the BUILDER session for this card. The card has entered Review. Do NOT review it, do NOT submit a structured verdict, and do NOT move the card. Wait for the human decision; if the card is returned to Build, continue building in this same session.',
+      'You are the BUILDER session for this card. The card has left Build for self-review / PR review. Standing by: Do NOT review it, do NOT submit a structured verdict, do NOT load the review skill, and do NOT move the card. If the card is returned to Build, continue building in this same session.',
       `- cardId: ${fields.cardId}`,
       `- phase: ${fields.phase}`,
       `- repo: ${show(fields.repo)}`,
@@ -280,8 +281,8 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `- prUrl: ${show(fields.prUrl)}`,
     ].join('\n')
     const waitingFirst = [
-      `Factory card ${fields.cardId} is now in Review.`,
-      'Builder session standing by: do not review, do not write a verdict, do not move the card. Wait for the human.',
+      `Factory card ${fields.cardId} has left Build for ${fields.phase}.`,
+      'Builder session standing by: do not review, do not submit a verdict, do not load a review skill, do not move the card. Wait for the card to return to Build.',
     ].join('\n')
     return { ...fields, sectionText: waitingText, firstMessage: waitingFirst }
   }
@@ -292,8 +293,8 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
   // move the card". reviewMode is explicit so P2 can wire it to its dedicated
   // review dispatch; the builder path stays byte-for-byte unchanged.
   if (reviewMode === true) {
-    if (card.status !== 'review') {
-      throw new Error(`评审会话上下文要求卡片处于 review 阶段，当前为 ${card.status ?? '未知'}；拒绝降级为普通会话`)
+    if (card.status !== 'self-review' && card.status !== 'pr-review') {
+      throw new Error(`评审会话上下文要求卡片处于 self-review / pr-review 阶段，当前为 ${card.status ?? '未知'}；拒绝降级为普通会话`)
     }
     const head = review.reviewedHead ?? reviewedHeadFor({
       worktreePath: card.worktreePath,
@@ -311,20 +312,33 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
     fields.previousReviewedHead = previousReviewedHead
     fields.commitSha = card.commitSha ?? null
     fields.nextPhases = []
+    const isPrReview = review.kind === 'pr-review'
+    fields.prReviewNumber = typeof review.prNumber === 'number' && Number.isFinite(review.prNumber)
+      ? review.prNumber
+      : (typeof card.prUrl === 'string' ? (Number.parseInt(card.prUrl.match(/\/pull\/(\d+)/)?.[1] ?? '', 10) || null) : null)
     const scope = reviewScopeLine({ previousReviewedHead, reviewedHead: head, previousVerdict: fields.previousVerdict })
     // A review→build return OR a head that moved past the last verdict both
     // require the incremental re-review skill. The two signals are independent:
     // the engine can commit a new HEAD inside Review without a review→build edge.
-    fields.skill = (review.rereview === true || scope !== null)
-      ? 'factory-rereview' : skillForPhase('review')
+    fields.skill = isPrReview
+      ? ((review.rereview === true || scope !== null) ? 'factory-rereview' : skillForPhase('pr-review'))
+      : ((review.rereview === true || scope !== null) ? 'factory-rereview' : skillForPhase('self-review'))
     const previous = fields.previousVerdict === null ? '—' : JSON.stringify(fields.previousVerdict)
     const prevHeadLine = previousReviewedHead !== null ? previousReviewedHead : '—'
-    const skillLine = `Read the \`${fields.skill}\` skill below first. Report with \`factory_report\` using its structured verdict fields (source, verdict, blocking, followUps, checks, reviewerSessionId); reviewedHead is computed by the factory from git and must NOT be supplied by you.`
+    const skillLine = fields.skill === 'factory-self-review'
+      ? `Read the \`${fields.skill}\` skill below first. You MUST call \`factory_self_review_verdict\`; a text-only verdict is not accepted and you must not end the turn before the tool result. The backend recomputes the head from git, so never supply one yourself. On \`approved\`, open exactly ONE draft PR from that exact head with \`factory_open_draft_pr\`, then move the card to \`pr-review\` with \`factory_transition_work_item\`. Never merge, force, close issues, or write to another branch.`
+      : (isPrReview
+        ? `Read the \`${fields.skill}\` skill below first. Record the verdict with \`factory_report\` and source='pr-review' (structured fields: verdict, blocking, followUps, checks); reviewedHead is computed by the factory from git and must NOT be supplied by you. This session is read-only: never change card or repository state.`
+        : `Read the \`${fields.skill}\` skill below first. Report with \`factory_report\` using its structured verdict fields (source, verdict, blocking, followUps, checks, reviewerSessionId); reviewedHead is computed by the factory from git and must NOT be supplied by you.`)
     const sectionText = [
       ...bodyLines,
       ...(bodyLines.length === 0 ? [] : ['']),
       ...(languageLine === '' ? [] : [languageLine, '']),
-      'You are an INDEPENDENT REVIEW session on exactly ONE factory card. Do not move the card, authorize git actions, commit, push or open a PR — the human decides after reading your verdict.',
+      ...(fields.skill === 'factory-self-review'
+        ? ['You are an INDEPENDENT REVIEW session on exactly ONE factory card. You never move the card yourself, authorize git actions, commit, push, merge, close issues, or write to another branch. Your only write: after an approved verdict, open exactly ONE draft PR from the approved head with factory_open_draft_pr — the human decides merge after reading your verdict.']
+        : (isPrReview
+          ? ['You are a READ-ONLY PR REVIEW session on exactly ONE factory card. Never change card or repository state; only report a structured verdict with source pr-review.']
+          : ['You are an INDEPENDENT REVIEW session on exactly ONE factory card. Do not move the card, authorize git actions, commit, push or open a PR — the human decides after reading your verdict.'])),
       `- cardId: ${fields.cardId}`,
       `- title: ${fields.title}`,
       `- phase: ${fields.phase}`,
@@ -332,6 +346,7 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `- branch: ${show(fields.branch)}`,
       `- worktreePath: ${show(fields.worktreePath)}`,
       `- prUrl: ${show(fields.prUrl)}`,
+      ...(isPrReview ? [`- prReviewNumber: ${show(fields.prReviewNumber)}`] : []),
       `- reviewedHead: ${fields.reviewedHead}`,
       `- previousReviewedHead: ${prevHeadLine}`,
       `- previousVerdict: ${previous}`,
@@ -350,17 +365,24 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       `previousVerdict: ${previous}`,
       ...(scope !== null ? [scope] : []),
       `commitSha: ${show(fields.commitSha)}`,
-      `This is an independent review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the ${fields.skill} skill and record a structured verdict with factory_report.`,
+      ...(fields.skill === 'factory-self-review'
+        ? [`This is an independent review: do NOT move the card, authorize, merge, close issues, or write to another branch. Follow the ${fields.skill} skill: you MUST call factory_self_review_verdict and wait for its result — a text-only verdict does not count; on approved, open exactly ONE draft PR from that head with factory_open_draft_pr, then move the card to pr-review.`]
+        : (isPrReview
+          ? [`This is a read-only PR review: never change card or repository state. Follow the ${fields.skill} skill and record a structured verdict with factory_report source pr-review.`]
+          : [`This is an independent review: do NOT advance or move the card, authorize, commit, push or open a PR. Follow the ${fields.skill} skill and record a structured verdict with factory_report.`])),
     ].join('\n')
     return { ...fields, sectionText, firstMessage }
   }
 
+  const buildWriteRule = fields.skill === 'factory-build'
+    ? 'In build, commit and push your branch with factory_push_branch — it never opens a PR. Then report with factory_report and move the card to self-review with factory_transition_work_item: the independent review session records the verdict and opens the draft PR. No other stage writes git.'
+    : 'Never commit, push or open a PR yourself — git writes happen only in the build stage.'
   const sectionText = [
     ...bodyLines,
     ...(bodyLines.length === 0 ? [] : ['']),
     ...(languageLine === '' ? [] : [languageLine, '']),
     'You are working on exactly ONE factory card. Do not touch any other card.',
-    'Advance through the agent-owned stages (\`triage\`, \`plan\`, \`build\`, \`review\`) continuously within this single session — finish the current stage and move the card yourself; do not end your turn expecting another session to take over. Only \`plan-review\`, \`done\` and \`canceled\` are stop-and-wait states where a human acts.',
+    'Use factory_transition_work_item to advance within triage / plan / build in this same session: finish the current stage and move the card yourself. After a successful push the card stops here; self-review runs in its own independent review session, and pr-review only polls the draft PR for merge. Only done / canceled wait for a human.',
     `- cardId: ${fields.cardId}`,
     `- title: ${fields.title}`,
     `- phase: ${fields.phase}`,
@@ -376,7 +398,7 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
       ? ['This phase is waiting for a human or is terminal — do NOT advance it yourself.']
       : [
           `Read the \`${fields.skill}\` skill below first — its full instructions are included for this phase.`,
-          `The \`${fields.skill}\` skill defines what this stage must produce. Advance the card with factory_transition_work_item and report with factory_report. Never commit, push or open a PR yourself — a human does that.`,
+          `The \`${fields.skill}\` skill defines what this stage must produce. Advance the card with factory_transition_work_item and report with factory_report. ${buildWriteRule}`,
         ]),
   ].join('\n')
 
@@ -386,13 +408,13 @@ export function buildSessionContext({ card, project, locale = 'zh', reviewMode =
     `worktree: ${show(fields.worktreePath)}`,
     `repo: ${show(fields.repo)}${fields.branch ? ` (branch ${fields.branch})` : ''}`,
     ...(languageLine === '' ? [] : [languageLine]),
-    'Stages triage / plan / build / review continue in this same session — finish the current one and advance the card yourself; only plan-review / done / canceled wait for a human.',
+    'Stages triage / plan / build continue in this same session — finish the current one and advance the card yourself. Self-review and pr-review do not run here: after a successful push the card moves to self-review, which runs in its own independent review session. Only done / canceled wait for a human.',
     '',
     ...(fields.skill === null
       ? ['This phase waits for a human or is terminal — do not advance it yourself.']
       : [
           `Read and follow the \`${fields.skill}\` skill for this phase first — its instructions are in your system context (skill: ${fields.skill}).`,
-          `Work inside ${show(fields.worktreePath)}. The \`${fields.skill}\` skill defines what this stage must produce; use factory_transition_work_item to advance and factory_report to report. Do not commit/push/open a PR.`,
+          `Work inside ${show(fields.worktreePath)}. The \`${fields.skill}\` skill defines what this stage must produce; use factory_transition_work_item to advance and factory_report to report. ${buildWriteRule}`,
         ]),
   ].join('\n')
 

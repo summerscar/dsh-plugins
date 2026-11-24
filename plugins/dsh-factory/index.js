@@ -21,12 +21,13 @@ import { createEngineStatus, defaultEngineDeps, startEngine } from './autonomy.j
 import { createDeliveryCopyGenerator } from './ai-copy.js'
 import { createApi } from './api.js'
 import { registerFactoryCommands } from './commands.js'
-import { continueCard, createHostPort, dispatchCard, dispatchReview, followupReview } from './dispatch.js'
+import { continueCard, createHostPort, dispatchCard, dispatchPrReview, dispatchReview, followupReview } from './dispatch.js'
 import { commitCard, commitForExistingPr, createGitPort, createPrForCard, pushExistingCard } from './git-exec.js'
 import { runAutoDelivery, ensureCommittedForAutoDelivery } from './delivery.js'
 import { localeFromContext } from './session-context.js'
 import { assertNoActiveSession, sessionActiveFor } from './session-guard.js'
-import { assertApprovedVerdict } from './verdict-guard.js'
+import { readHeadFromGit } from './verdict.js'
+import { assertApprovedVerdict, assertManualWritesAllowed } from './verdict-guard.js'
 import { createGhPort, intakeIssues } from './intake.js'
 import { inspectRepo } from './project-proposal.js'
 import { registerFactorySkills } from './skills.js'
@@ -42,7 +43,7 @@ export { FactoryStore } from './store.js'
 export { createApi } from './api.js'
 export * as autonomy from './autonomy.js'
 export { dispatchCard, continueCard, createHostPort } from './dispatch.js'
-export { dispatchReview, followupReview } from './dispatch.js'
+export { dispatchPrReview, dispatchReview, followupReview } from './dispatch.js'
 export { sandboxModeForWorkMode, readAutoReviewPluginState } from './dispatch.js'
 export { commitCard, createPrForCard, createGitPort } from './git-exec.js'
 export { commitForExistingPr, pushExistingCard } from './git-exec.js'
@@ -62,7 +63,7 @@ export {
 } from './github-api.js'
 
 /** Which build of this module is loaded. Bump on every host-side change. */
-export const BUILD = 'factory-2026-11-20.46'
+export const BUILD = 'factory-2026-11-20.57'
 
 export const name = 'dsh-factory'
 
@@ -188,6 +189,14 @@ export function apply(ctx, config = {}) {
       ctx, store,
       ghPort: createGhPort(),
       ghPortFor: async (project) => createGhPort((await resolveIdentity(project)).git),
+      // PR status uses the SAME git wrapper as push/createPr. Pass an explicit
+      // ghLoggedIn boolean from the identity decision (false for env/none) so
+      // createGitPort never re-probes and overrides the resolved four-layer
+      // fallback with a stray gh CLI login.
+      gitPortFor: async (project) => {
+        const git = (await resolveIdentity(project))?.git ?? {}
+        return createGitPort({ ...git, ghLoggedIn: git.ghLoggedIn === true })
+      },
       // L4 review-entry commit: real git port from the identity ladder, same
       // authorization boundary as deliver (pre-authorized L4, no forged
       // pendingAuthorization). ensureCommitted... gates on tier/branch/dirty
@@ -291,7 +300,19 @@ export function apply(ctx, config = {}) {
               console.error(`[dsh-factory] receipt precheck blocked ${tool} (${stage}) before write: ${reason}`)
             },
           }
-          for (const spec of factoryToolSpecs({ store, receiptPorts })) {
+          const buildGitPortFor = async (card) => {
+            const project = card?.projectId ? store.getProject(card.projectId) : undefined
+            const identity = await resolveIdentity(project)
+            return createGitPort(identity.git)
+          }
+          for (const spec of factoryToolSpecs({
+            store, receiptPorts, readHead: readHeadFromGit, buildGitPortFor, isSessionActive,
+            closePrFor: async (card) => {
+              const project = card?.projectId ? store.getProject(card.projectId) : undefined
+              const identity = await resolveIdentity(project)
+              createGhPort(identity.git).closePr({ prUrl: card.prUrl, reason: 'dsh-factory: approved head drifted; draft PR closed' })
+            },
+          })) {
             disposers.push(toolsService.register(defineTool(spec)))
           }
           runtime.toolsRegistered = true
@@ -395,7 +416,7 @@ export function apply(ctx, config = {}) {
         // continuations (deps.continue) never pass through this HTTP route.
         const cardId = decodeURIComponent(continuation[1])
         if (store.getCard(cardId)?.status === 'build') {
-          store.transitionCard(cardId, 'plan-review', 'agent', 'continuation failed; retry')
+          store.transitionCard(cardId, 'plan', 'agent', 'continuation failed; retry')
           // continueCard's failure path records a dispatch failure; after 3
           // tries that latches stalled=true. A synthetic rollback is not a
           // real dispatch failure, so clear the counter here too — otherwise
@@ -436,6 +457,25 @@ export function apply(ctx, config = {}) {
       }
       return
     }
+    const prReviewDispatch = /^\/cards\/([^/?]+)\/pr-review-dispatch(?:\?.*)?$/.exec(route)
+    if (method === 'POST' && prReviewDispatch !== null) {
+      try {
+        store.clearPrReviewIdle(decodeURIComponent(prReviewDispatch[1]))
+        const port = createHostPort({ ctx })
+        const result = await dispatchPrReview({
+          store, cardId: decodeURIComponent(prReviewDispatch[1]), port,
+          locale: localeFromContext(ctx, store),
+          note: typeof body.note === 'string' ? body.note : undefined,
+          presetId: typeof config.reviewPresetId === 'string' ? config.reviewPresetId : undefined,
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[dsh-factory] pr-review dispatch failed:', message)
+        sendJson(res, 400, { error: message || 'pr-review dispatch failed' })
+      }
+      return
+    }
     const reviewContinue = /^\/cards\/([^/?]+)\/review-continue(?:\?.*)?$/.exec(route)
     if (method === 'POST' && reviewContinue !== null) {
       try {
@@ -462,7 +502,7 @@ export function apply(ctx, config = {}) {
     if (method === 'POST' && reviewToBuild !== null && body.to === 'build') {
       const cardId = decodeURIComponent(reviewToBuild[1])
       const current = store.getCard(cardId)
-      if (current?.status === 'review') {
+      if (current?.status === 'pr-review') {
         try {
           assertNoActiveSession({ card: current, isSessionActive, action: '「退回构建」' })
           const note = typeof body.note === 'string' ? body.note.trim() : ''
@@ -528,7 +568,7 @@ export function apply(ctx, config = {}) {
       const text = typeof body.note === 'string' ? body.note.trim() : ''
       if (text === '') { sendJson(res, 400, { error: '修改意见必填，不能为空' }); return }
       const before = store.getCard(cardId)
-      if (before?.status !== 'plan-review') { sendJson(res, 400, { error: `退回修改计划仅 Plan-review 可执行（当前 ${before?.status ?? '未知'}）` }); return }
+      if (before?.status !== 'plan') { sendJson(res, 400, { error: `退回修改计划仅 Plan-review 可执行（当前 ${before?.status ?? '未知'}）` }); return }
       try {
         assertNoActiveSession({ card: before, isSessionActive, action: '「退回修改计划」' })
         const feedback = store.getCard(cardId).history.filter((h) => h && h.type === 'plan-feedback').at(-1) ?? null
@@ -547,7 +587,7 @@ export function apply(ctx, config = {}) {
           // AC24: a failed continuation must leave the card retryable in
           // plan-review. plan→plan-review is an agent-only edge, so this is a
           // deliberate synthetic rollback, not a permission widening.
-          store.transitionCard(cardId, 'plan-review', 'agent', 'continuation failed; retry')
+          store.transitionCard(cardId, 'plan', 'agent', 'continuation failed; retry')
           const message = continueError instanceof Error ? continueError.message : String(continueError)
           store.recordEvent({
             type: 'return-to-plan-continue-failed', scope: 'card', targetId: cardId,
@@ -599,6 +639,7 @@ export function apply(ctx, config = {}) {
         const cardId = decodeURIComponent(draftCommit[1])
         const card = store.getCard(cardId)
         if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
+        assertManualWritesAllowed({ card, project: card.projectId ? store.getProject(card.projectId) : undefined, action: '生成提交信息' })
         assertNoActiveSession({ card, isSessionActive, action: '生成提交信息' })
         assertApprovedVerdict({ card, action: '生成提交信息' })
         const fallback = card.commitSha ? 'factory: address review feedback' : 'factory: implement card'
@@ -615,6 +656,7 @@ export function apply(ctx, config = {}) {
         const cardId = decodeURIComponent(draftPr[1])
         const card = store.getCard(cardId)
         if (card === undefined || card === null) throw new Error(`卡片不存在：${cardId}`)
+        assertManualWritesAllowed({ card, project: card.projectId ? store.getProject(card.projectId) : undefined, action: '生成 PR 文案' })
         assertNoActiveSession({ card, isSessionActive, action: '生成 PR 文案' })
         assertApprovedVerdict({ card, action: '生成 PR 文案' })
         if (!card.commitSha || card.prUrl) throw new Error('仅首次建 PR 可生成 PR 文案')
@@ -631,11 +673,14 @@ export function apply(ctx, config = {}) {
     const commitExisting = /^\/cards\/([^/?]+)\/commit-existing(?:\?.*)?$/.exec(route)
     if (method === 'POST' && commitExisting !== null) {
       try {
+        const cardId = decodeURIComponent(commitExisting[1])
+        const card = store.getCard(cardId)
+        assertManualWritesAllowed({ card, project: card?.projectId ? store.getProject(card.projectId) : undefined, action: '回炉提交' })
         const port = createGitPort()
         // Human git writes are gated on an approved review verdict; L4's
         // separate delivery path has its own gate and never reaches here.
         const result = await commitForExistingPr({
-          store, cardId: decodeURIComponent(commitExisting[1]), port, message: body.message,
+          store, cardId, port, message: body.message,
           isSessionActive, requireApprovedVerdict: true,
         })
         sendJson(res, 200, result)
@@ -650,6 +695,7 @@ export function apply(ctx, config = {}) {
         const cardId = decodeURIComponent(pushExisting[1])
         const card = store.getCard(cardId)
         const project = card?.projectId ? store.getProject(card.projectId) : undefined
+        assertManualWritesAllowed({ card, project, action: '推送更新草稿 PR' })
         const decision = await resolveIdentity(project)
         const result = await pushExistingCard({ store, cardId, port: createGitPort(decision.git), isSessionActive, requireApprovedVerdict: true })
         sendJson(res, 200, result)
@@ -665,8 +711,11 @@ export function apply(ctx, config = {}) {
     const commitMatch = /^\/cards\/([^/?]+)\/commit(?:\?.*)?$/.exec(route)
     if (method === 'POST' && commitMatch !== null) {
       try {
+        const cardId = decodeURIComponent(commitMatch[1])
+        const card = store.getCard(cardId)
+        assertManualWritesAllowed({ card, project: card?.projectId ? store.getProject(card.projectId) : undefined, action: '确认提交' })
         const port = createGitPort()
-        const result = await commitCard({ store, cardId: decodeURIComponent(commitMatch[1]), port, message: body.message, isSessionActive, requireApprovedVerdict: true })
+        const result = await commitCard({ store, cardId, port, message: body.message, isSessionActive, requireApprovedVerdict: true })
         sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -683,6 +732,7 @@ export function apply(ctx, config = {}) {
         // One decision, one env construction — the push chain uses the SAME
         // resolver as engine/manual intake (PGH-9, pitfall ①). buildGitEnv itself
         // is untouched; it only receives the winner's argument group.
+        assertManualWritesAllowed({ card, project, action: '推送分支并创建 PR' })
         const decision = await resolveIdentity(project)
         const port = createGitPort(decision.git)
         const result = await createPrForCard({ store, cardId, port, title: body.title, body: body.body, isSessionActive, requireApprovedVerdict: true })

@@ -1,15 +1,15 @@
 ---
 user-invocable: false
 name: factory-plan
-description: Turn a triaged factory card into a phased, verifiable implementation plan, submit it for approval by moving the card to plan-review, and leave the plan as the builder's handoff.
+description: Turn a triaged factory card into a phased, verifiable implementation plan and post it as the builder's handoff; the card's plan exit is decided by the project's phase rules (default: engine auto-approve), not by this session.
 whenToUse: The dispatched card is in the plan phase.
 ---
 
 # Factory Plan
 
-You are working exactly one factory card whose phase is `plan`. Produce a phased, verifiable implementation plan, write it into the conversation, post it as a report, then submit it by moving the card to `plan-review` — a human approves it there before any building starts.
+You are working exactly one factory card whose phase is `plan`. Produce a phased, verifiable implementation plan, write it into the conversation and post it as a report. Then you are done: the card leaves `plan` by the project's phase rules — by default the engine auto-approves and dispatches the build; if the project has narrowed the plan exit to human review, the card stays in `plan` until a human approves it in the UI. You never start building, open a PR, or write git in this stage.
 
-You are the **same session** that carried this card through `triage`. The agent-owned stages — `triage`, `plan`, `build`, `review` — run back to back in one continuous session; reaching `plan` is not a stopping point and does not mean another session takes over. Do not end your turn here. Finish the plan now, post it with `factory_report`, and move the card to `plan-review` yourself with `factory_transition_work_item`. `plan-review` is where this session stops and waits for a human; `done` and `canceled` are the other terminal states.
+You are the **same session** that carried this card through `triage`. The agent-owned stages — `triage`, `plan`, `build` — run back to back in one continuous session; reaching `plan` is not a stopping point and does not mean another session takes over. Do not end your turn before the plan is done. Finish the plan now and post it with `factory_report`, then end: plan→build is driven by the engine (auto-approve) or by a human (when the plan exit is narrowed to review) — never by this session. Self-review and pr-review run in their own sessions, not here. `done` and `canceled` are the terminal states.
 
 Read the injected context first (cardId, title, phase, nextPhases, repo, branch, worktreePath, planStatus). Work only on this card and only inside `worktreePath`.
 
@@ -28,7 +28,7 @@ Before your first edit (if you write the plan or a scratch file into the checkou
 3. Compare the issue's file paths and project with this checkout — a matching remote alone is not enough if the issue clearly targets a different project.
 4. If the target is missing, the remote/root does not match, or the paths contradict the checkout, stop without editing and report the expected target and the observed remote and root.
 
-You do not push in this plugin (a human does), but the builder acting on your plan repeats this guard — make the expected target repository explicit in the plan.
+There are no git writes in this stage — commit, push and PR happen only in the build stage — but the builder acting on your plan repeats this guard: make the expected target repository explicit in the plan.
 
 ## Continuity
 
@@ -53,7 +53,7 @@ Write for an executor who has only this plan. Use the project's own test, lint a
 
 ## Submit
 
-Call `factory_report(cardId, plan)` with the plan, then `factory_transition_work_item(cardId, 'plan-review', note)`. That completes the `plan` stage: the card now waits at `plan-review` for a human to approve it into `build`. This stage being done is not the session ending on a whim — it is the human gate. You cannot approve it yourself and must not move it further. If it comes back from review with feedback, address the feedback and submit again.
+Call `factory_report(cardId, plan)` with the plan, then `factory_transition_work_item(cardId, 'build', note)`. That completes the `plan` stage: the engine's autoApprove rule has approved it, so the same session continues into `build`. If the stage rule narrows plan to human approval, stop at the parked point instead and let a human approve.
 
 ## Decide and record
 

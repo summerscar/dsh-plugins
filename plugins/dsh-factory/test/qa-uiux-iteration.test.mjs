@@ -132,14 +132,21 @@ test('AC-1.5: every key keeps an explicit placeholder contract, mirrored byte-fo
     setupPathMissing: ['{path}'],
     toastSwitched: ['{name}'],
     wtRootResolved: ['{path}'],
-    currentLevel: ['{level}'],
-    ariaLevel: ['{n}', '{ordinal}'],
     autoDeliveryFailedNotice: ['{reason}'],
+    selfReviewApproved: ['{sha}'],
+    selfReviewChanges: ['{n}', '{total}'],
+    prReviewApproved: ['{verdict}'],
+    prReviewChanges: ['{n}'],
+    stageNextBy: ['{actor}'],
   }
   const keys = Object.keys(current.zh).sort()
   assert.deepEqual(keys, Object.keys(current.en).sort(), 'zh/en templates share one key set')
   for (const added of ADDED_KEYS) assert.ok(keys.includes(added), `placeholder contract: ${added} present`)
   for (const templated of Object.keys(PLACEHOLDERS)) assert.ok(keys.includes(templated), `template key ${templated} present`)
+  // V4 PR-review copy is part of the template contract now, in all four carriers.
+  for (const added of ['prReviewRunning', 'prReviewApproved', 'prReviewChanges', 'prReviewIncomplete', 'prReviewIdle', 'prReviewWaitMerge', 'actRedispatchPrReview']) {
+    assert.ok(keys.includes(added), `placeholder contract: ${added} present`)
+  }
   for (const lang of ['zh', 'en']) {
     const ui = localeJson(lang)
     for (const key of keys) {
@@ -148,6 +155,35 @@ test('AC-1.5: every key keeps an explicit placeholder contract, mirrored byte-fo
       assert.deepEqual(placeholders(ui[key]), expected, `${lang}.${key}: locale mirror token set drifted`)
     }
   }
+})
+
+test('AC-V4: three session entries read their own ids; pr-review hints are chosen by state', () => {
+  const code = source('client.js')
+  const current = inlineDictionaries(code)
+  for (const lang of ['zh', 'en']) {
+    const ui = localeJson(lang)
+    assert.match(current[lang].openReviewSession, /自审|self-review/i, `${lang}: self-review session entry is labelled as such`)
+    assert.ok(Object.hasOwn(current[lang], 'openPrReviewSession'), `${lang}: PR-review session entry exists`)
+    assert.ok(Object.hasOwn(ui, 'openPrReviewSession'), `${lang}: locale carries the PR-review session entry`)
+    assert.equal(Object.hasOwn(current[lang], 'openSelfReviewSession'), false, `${lang}: the cancelled third key stays absent`)
+    assert.equal(Object.hasOwn(ui, 'openSelfReviewSession'), false, `${lang}: locale keeps the cancelled third key absent`)
+  }
+  assert.equal(code.includes('openSelfReviewSession'), false, 'client does not resurrect the cancelled third entry')
+  // Guard the actual decision path, not a whole-file regex: only the
+  // cardFlowHintKey body is inspected for state-based pr-review selection.
+  const begin = code.indexOf('function cardFlowHintKey(ctx) {')
+  assert.notEqual(begin, -1, 'cardFlowHintKey exists')
+  const end = code.indexOf('\n    }\n', begin)
+  const fn = code.slice(begin, end)
+  assert.match(fn, /status === 'pr-review'/, 'pr-review gets its own hint branch')
+  for (const key of ['prReviewIdle', 'prReviewApproved', 'prReviewChanges', 'prReviewIncomplete', 'prReviewRunning', 'prReviewWaitMerge']) {
+    assert.ok(fn.includes(`return '${key}'`), `pr-review may show ${key}`)
+  }
+  assert.equal(fn.includes("return 'flowMergedDone'"), false, 'pr-review no longer shows the merged/done hint')
+  // Three entries bind three different ids; a missing id must not open another session.
+  assert.match(code, /card\.sessionId/, 'builder entry reads builder id')
+  assert.match(code, /card\.reviewSessionId/, 'self-review entry reads reviewSessionId')
+  assert.match(code, /card\.prReviewSessionId/, 'PR-review entry reads prReviewSessionId')
 })
 
 const BANNED = [
@@ -567,10 +603,17 @@ test('AC-bind-4: manual rebind persists, clears reason, rejects dirty/mixed PATC
     assert.equal(empty.body.project.issueRepo, null)
     assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'clear persisted')
 
-    const mixed = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'a/b', autonomy: 'you-approve' } })
+    // V4: the disjoint PATCH shapes are phaseRules / preparation / intake /
+    // workMode. A legacy tier key is inert, so the mix guard is exercised with
+    // the shape that actually exists now.
+    const mixed = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'a/b', phaseRules: { plan: { autoApprove: false } } } })
     assert.equal(mixed.status, 400)
     assert.match(mixed.body?.error ?? '', /混改/)
     assert.equal(new FactoryStore({ file: join(f.dir, 'factory.sqlite') }).getProject(id).issueRepo, null, 'failed PATCH changed nothing')
+    const inert = f.api({ method: 'PATCH', route: `/projects/${id}`, body: { issueRepo: 'a/b', autonomy: 'you-approve' } })
+    assert.equal(inert.status, 200, 'a legacy tier key is inert: it no longer forms a PATCH shape')
+    assert.equal(inert.body.project.issueRepo, 'a/b')
+    assert.equal('autonomy' in inert.body.project, false, 'the inert key is not stored')
   } finally { f.cleanup(); rmSync(dir, { recursive: true, force: true }) }
 })
 
