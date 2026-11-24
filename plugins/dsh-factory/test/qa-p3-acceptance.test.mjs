@@ -220,13 +220,21 @@ test('P3-B2 tier copy is gone from all four dictionaries; stage keys are new and
     assert.equal(k in enDict, false, `en locale deleted ${k}`)
   }
   for (const k of ['stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview', 'stageConfigTitle',
-    'stageConfigPurpose', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel', 'whenAdvancedTitle', 'whenAdvancedHint',
-    'whenNoNarrow', 'resetDefault', 'stageSaved', 'writeBoundaryNotice', 'writeBoundaryDetail', 'stageSafetyTitle',
+    'stageConfigPurpose', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
+    'resetDefault', 'stageSaved', 'writeBoundaryNotice', 'writeBoundaryDetail', 'stageSafetyTitle',
     'stageStripTitle', 'stageStripHint', 'selfReviewApproved', 'selfReviewChanges', 'selfReviewParked', 'flowMergedDone']) {
     assert.equal(typeof zhDict[k], 'string', `zh has ${k}`)
     assert.equal(typeof enDict[k], 'string', `en has ${k}`)
   }
-  assert.match(zhDict.whenAdvancedHint, /收窄|更保守|不能放宽/, 'narrowing-only rule stated in zh')
+  for (const k of ['whenAdvancedTitle', 'whenAdvancedHint', 'whenNoNarrow']) {
+    assert.equal(k in zhDict, false, `zh locale dead key ${k} removed`)
+    assert.equal(k in enDict, false, `en locale dead key ${k} removed`)
+  }
+  const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
+  assert.doesNotMatch(section, /whenAdvancedTitle|whenAdvancedHint|whenNoNarrow|setAdvance|advance \?/, 'advanced read-only area removed')
+  assert.match(section, /\['autoStart', 'autoApprove'\]/, 'stage toggles remain')
+  assert.match(zhDict.stageConfigPurpose, /默认全速自动.*停等人/, 'zh purpose states default full auto + pause by uncheck')
+  assert.match(enDict.stageConfigPurpose, /Full auto by default.*uncheck a stage/i, 'en purpose states default full auto + pause by uncheck')
   assert.match(zhDict.writeBoundaryDetail, /草稿 PR|draft/i, 'boundary stops at draft PR in zh')
   assert.match(enDict.writeBoundaryNotice, /draft PR/i, 'boundary stops at draft PR in en')
   assert.match(zhDict.writeBoundaryNotice, /不合并|不关 issue|不强制推送/, 'zh boundary: no merge, no issue close, no force')

@@ -248,12 +248,19 @@ test('B4 no L0–L4 slider or level copy; stage rules are checkboxes in all four
   assert.doesNotMatch(clientSrc, /role: 'switch', 'aria-checked': autoDispatch/, 'no independent autoDispatch switch')
   assert.match(clientSrc, /StageConfigSection/, 'the stage-rule section replaced the slider')
   for (const k of ['stageConfigTitle', 'stageConfigPurpose', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
-    'whenAdvancedTitle', 'whenAdvancedHint', 'whenNoNarrow', 'resetDefault', 'stageSaved']) {
+    'resetDefault', 'stageSaved']) {
     assert.equal(typeof zh[k], 'string', `zh locale has ${k}`)
     assert.equal(typeof en[k], 'string', `en locale has ${k}`)
   }
-  assert.match(en.whenAdvancedHint, /narrow|cannot be widened|cannot widen/i, 'the narrowing-only rule is stated in en')
-  assert.match(zh.whenAdvancedHint, /收窄|不能放宽/, 'the narrowing-only rule is stated in zh')
+  for (const k of ['whenAdvancedTitle', 'whenAdvancedHint', 'whenNoNarrow']) {
+    assert.equal(zh[k], undefined, `zh dead key ${k} removed`)
+    assert.equal(en[k], undefined, `en dead key ${k} removed`)
+  }
+  const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
+  assert.doesNotMatch(section, /whenAdvancedTitle|whenAdvancedHint|whenNoNarrow|setAdvance|advance \?/, 'advanced fold removed')
+  assert.match(section, /\['autoStart', 'autoApprove'\]/, 'stage checkboxes remain')
+  assert.match(zh.stageConfigPurpose, /默认全速自动.*停等人/, 'narrowing semantics survive in zh purpose')
+  assert.match(en.stageConfigPurpose, /Full auto by default.*uncheck a stage/i, 'narrowing semantics survive in en purpose')
 })
 
 // ==============================================================================

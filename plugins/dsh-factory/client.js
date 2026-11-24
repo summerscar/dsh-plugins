@@ -208,7 +208,7 @@ window.__ModuleLoader__.load({
       engineResume: "恢复引擎",
       engineRunning: "引擎运行中",
       enginePaused: "引擎已暂停",
-      pauseSem: "暂停只挡新的自动派发；正在跑的会话继续，恢复后不会补跑跳过的卡。",
+      pauseSem: "暂停后引擎不再自动推进任何阶段（含派发、批准计划、自审与交付）；正在跑的会话继续，恢复后不补跑跳过的卡。",
       pauseScopeNote: "暂停作用于整个项目；想只停某张卡，在卡片上点「我来接手」，随时可「交还引擎」。",
       takeover: "我来接手",
       concTitle: "并发上限",
@@ -439,13 +439,10 @@ window.__ModuleLoader__.load({
       stageStripHint: "下一阶段由机器、独立评审或合并事件自动推进。",
       stageNextBy: "下一步：{actor}",
       stageConfigTitle: "自动化流程",
-      stageConfigPurpose: "默认全速自动；高级设置只收窄。",
+      stageConfigPurpose: "默认全速自动；取消某阶段的勾选即可让它停等人。",
       stageDefaultBadge: "默认：全速自动",
       autoStartLabel: "自动启动",
       autoApproveLabel: "自动批准",
-      whenAdvancedTitle: "高级：收窄状态（只读）",
-      whenAdvancedHint: "取消上面阶段的勾选即可让它停等人；此处只显示当前收窄摘要，不可编辑。",
-      whenNoNarrow: "未设置收窄条件，按默认全自动推进。",
       resetDefault: "恢复默认",
       stageSaved: "流程设置已保存",
       writeBoundaryNotice: "写权限边界：只推本卡分支的草稿 PR，不合并、不关 issue、不强制推送。",
@@ -578,7 +575,7 @@ window.__ModuleLoader__.load({
       engineResume: "Resume engine",
       engineRunning: "Engine running",
       enginePaused: "Engine paused",
-      pauseSem: "Pause only blocks new automatic dispatch; running sessions continue, and skipped cards are not caught up after resuming.",
+      pauseSem: "Pause stops all engine automation (dispatch, plan approval, self-review, delivery); running sessions continue, and skipped cards are not caught up after resuming.",
       pauseScopeNote: "Pause affects the whole project. To stop a single card, use Take over on that card — you can Return to engine anytime.",
       takeover: "Take over",
       concTitle: "Concurrency cap",
@@ -809,13 +806,10 @@ window.__ModuleLoader__.load({
       stageStripHint: "The next stage advances automatically by the engine, an independent reviewer, or the merge.",
       stageNextBy: "Next: {actor}",
       stageConfigTitle: "Automation workflow",
-      stageConfigPurpose: "Full auto by default; advanced rules only narrow it.",
+      stageConfigPurpose: "Full auto by default; uncheck a stage to pause it for a human.",
       stageDefaultBadge: "Default: full auto",
       autoStartLabel: "Auto-start",
       autoApproveLabel: "Auto-approve",
-      whenAdvancedTitle: "Advanced: narrowing status (read-only)",
-      whenAdvancedHint: "Uncheck a stage above to pause it for a human; this area only shows the current narrowing summary and is read-only.",
-      whenNoNarrow: "No narrowing rules; everything runs automatically.",
       resetDefault: "Restore defaults",
       stageSaved: "Workflow settings saved",
       writeBoundaryNotice: "Write boundary: a draft PR on this card's branch only — never merge, close issues, or force-push.",
@@ -1941,7 +1935,6 @@ window.__ModuleLoader__.load({
         'pr-review': { autoStart: true, autoApprove: true },
       }
       const [rules, setRules] = useState(project?.phaseRules ?? defaults)
-      const [advance, setAdvance] = useState(false)
       const [saving, setSaving] = useState(false)
       const [message, setMessage] = useState('')
       const [error, setError] = useState('')
@@ -1965,17 +1958,6 @@ window.__ModuleLoader__.load({
             h('span', { key: 'text' }, t(action === 'autoStart' ? 'autoStartLabel' : 'autoApproveLabel')),
           ])),
         ])),
-        h('button', { key: 'advanced', type: 'button', onClick: () => setAdvance(!advance), style: { alignSelf: 'flex-start', minHeight: 32, background: 'transparent', border: 'none', color: T.accentInk, cursor: 'pointer', fontSize: 12, padding: 0 } }, t('whenAdvancedTitle')),
-        advance ? h('div', { key: 'advancedBody', style: { fontSize: 11, color: T.mutedInk, lineHeight: 1.6 } }, [
-          h('div', { key: 'hint' }, t('whenAdvancedHint')),
-          ...(stages.some(([key]) => rules?.[key]?.autoStart === false || rules?.[key]?.autoApprove === false)
-            ? stages.filter(([key]) => rules?.[key]?.autoStart === false || rules?.[key]?.autoApprove === false)
-              .map(([key, label]) => h('div', { key }, `${t(label)}：${[
-                rules?.[key]?.autoStart === false ? t('autoStartLabel') : null,
-                rules?.[key]?.autoApprove === false ? t('autoApproveLabel') : null,
-              ].filter(Boolean).join(' / ')}`))
-            : [h('div', { key: 'none' }, t('whenNoNarrow'))]),
-        ]) : null,
         h('div', { key: 'safety', style: { marginTop: 6, padding: '8px 10px', borderRadius: T.radiusSm, background: T.accentWash, fontSize: 11, lineHeight: 1.6 } }, [
           h('div', { key: 'h', style: { fontWeight: 700 } }, t('stageSafetyTitle')),
           h('div', { key: 'b' }, t('writeBoundaryNotice')),

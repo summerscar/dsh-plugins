@@ -157,11 +157,11 @@
 
 - **一块看板、两段评审、一个远端终点。** 合法边是 `inbox → triage → plan → build → self-review → pr-review`，另有人工／agent 退回 `build` 与 `canceled` 终态。`pr-review → done` 刻意不在普通 actor 表里：只有 `syncRule` 能走这条边，且只在远端 PR 状态为 `MERGED` 时（`SYNC_AUTO_EDGES`）。PR 未合并就关闭只生成退回 `build` 的建议，绝不自动移卡。没有自动合并、关 issue 的工具、语义化分支名（分支保持 `factory/<card id>`）、GitLab 流程，也没有运行时生效的兼容档位。
 - **每一步各自持有写入。** 构建会话调用 `factory_push_branch`：冻结脏路径、只提交这些路径、推送卡片分支后停下，**不开 PR**。独立自审会话用 `factory_self_review_verdict` 写结构化结论，`approved` 后用 `factory_open_draft_pr` 从后端重读的 head 开出唯一草稿 PR，再报告并把卡移到 `pr-review`。PR 评审会话按角色只读：提示词禁止改卡片或仓库状态，唯一可提交的结论是 `factory_report` 且 `source='pr-review'`。合并与完成永远不是机器动作。
-- **自动化是阶段规则，不是落盘的 L0–L4 档位。** 新项目持久化 `inbox` / `triage` / `plan` / `build` / `self-review` / `pr-review` 六段的 `phaseRules`，每段有 `autoStart` 与 `autoApprove`。默认全为 `true`（全速）；界面勾选框只能把某段**关掉**、让它停等人，「高级：收窄状态」区只有只读摘要、没有规则编辑器。没有任何字段能把写入放宽到 draft PR 边界之外。旧档位 id 只是迁移输入：加载旧项目时改写为阶段规则并删掉旧字段；`updateAutonomy` 只是写入兼容 shim，不是运行期档位。
+- **自动化是阶段规则，不是落盘的 L0–L4 档位。** 新项目持久化 `inbox` / `triage` / `plan` / `build` / `self-review` / `pr-review` 六段的 `phaseRules`，每段有 `autoStart` 与 `autoApprove`。默认全为 `true`（全速）；界面勾选框只能把某段**关掉**、让它停等人；此前的「高级：收窄状态」只读摘要因重复且点开像空白已被移除。没有任何字段能把写入放宽到 draft PR 边界之外。旧档位 id 只是迁移输入：加载旧项目时改写为阶段规则并删掉旧字段；`updateAutonomy` 只是写入兼容 shim，不是运行期档位。暂停会挡住所有引擎阶段动作——派发、批准计划、自审、交付与自动复评——但不打断在跑会话、也不补跑跳过的卡；接管仍是独立的单卡闸门。
 - **verdict 身份按类型绑定，不靠 `||`。** `VERDICT_SOURCES` 为 `['review', 'rereview', 'pr-review']`。卡片保留两个独立会话字段——自审的 `reviewSessionId` 与 PR 评审的 `prReviewSessionId`——以及一个无 stage 字段的结构化结论镜像 `reviewVerdict`。自审结论（`review` / `rereview`）只认 `reviewSessionId`，`pr-review` 结论只认 `prReviewSessionId`，builder 会话任何结构化结论都不能交。两个交叉拒交方向都有直接断言，不存在 `reviewSessionId || prReviewSessionId` 兜底。自审轮次与批准 head 另存于 `selfReview` / `selfReviewRounds`，所以「一个结论镜像」不等于「没有其他评审状态」。
 - **两段评审都是独立会话，只有一段会停住。** `dispatchReview` / `followupReview` 与 `dispatchPrReview` 各建或复用自己的会话 id，不覆盖 `card.sessionId`。两者都跟随项目配置的工作模式，让评审者能执行命令；PR 评审的只读是角色与闸门约束，不是写死的沙箱档。自审会话空转会在有限次数内重派，之后停住；PR 评审会话空转只做一次性审计（`prReviewIdle`），**绝不自动重派**；人工「重派 PR 评审」按钮走手动路由，先清掉 idle 标记。
 - **V4 写路径 fail closed。** `activeSessionsFor` 覆盖 builder、自审与 PR 评审三个会话，任一在跑时写入路由都拒绝。`factory_push_branch` 在判 `hasDiff` 前先冻结 `changedPaths`；`hasDiff` 用注入的 git 端口并把未跟踪文件算进去，所以只新增文件的改动也能交付。同一路由还拒绝对不上基线 tip 的无记录 HEAD、以及删掉超过 20 个已跟踪文件的工作树。`delivery.js` 删掉 `deliverySource === 'session'` 死分支；`sync.js` 的 Done 注释改为自动完成；`createGitPort.prState()` 让 PR 状态读取走与 push／开 PR 同一个环境封装，四层身份裁决因此仍适用于这条只读轮询。
-- **评审文案按角色分开。** 看板列名与阶段名 `colReview` / `stagePrReview` 用「PR 评审」；`openReviewSession` 明确为「打开自审会话」，`openPrReviewSession` 为「打开 PR 评审会话」。`reviewWorking`、`verdictMissing`、`reviewStaleNotice` 等通用 key 有意不动：有的指自审、有的两段共用或属遗留，一刀切成「PR 评审」会误导。高级区标题改成「高级：收窄状态（只读）」，hint 说明取消勾选会让阶段停等人、此处只读；`whenNoNarrow` 保持原有空态文案。四处载体（内联中英字典与 locale 中英 JSON）同值。
+- **评审文案按角色分开。** 看板列名与阶段名 `colReview` / `stagePrReview` 用「PR 评审」；`openReviewSession` 明确为「打开自审会话」，`openPrReviewSession` 为「打开 PR 评审会话」。`reviewWorking`、`verdictMissing`、`reviewStaleNotice` 等通用 key 有意不动：有的指自审、有的两段共用或属遗留，一刀切成「PR 评审」会误导。此前的「高级：收窄状态（只读）」折叠块（`whenAdvancedTitle` / `whenAdvancedHint` / `whenNoNarrow`）已从四处载体移除；`stageConfigPurpose` 改为「默认全速自动；取消某阶段的勾选即可让它停等人。」四处载体（内联中英字典与 locale 中英 JSON）同值。
 - **验证如实记录。** QA 报告整包全绿，随新增 self-check 用例从 724 增至 727；Review 专项合计 33/33。QA 还报告了真机 V4 全链：构建 → 自审停等 → 草稿 PR → `pr-review` verdict → 人工合并 → 自动 done。真机交叉拒交三条路径都取不到证据：没有提交 verdict 的 HTTP tool 路由，恢复的会话被 active write handle 拒绝，模型按注入防御拒绝调用错误工具。该边界如实记为**真机未取得**，依据只有双向单测、变异与 Review 源码审，不冒充真机轨迹。PR 评审第三入口真机 DOM 未验（源码与 UI 测试覆盖）；四层身份降级真机只走到 env/none 一层。另有一处非阻塞观察：删掉 `deliverySource === 'session'` 死分支后，旧引擎路径没有显式「已交付不重复」护栏；该路径当前不可达，但若将来给新项目补 autonomy 必须重审。见 §5.1。
 
 ## 3. 已经定死、不必再争的设计
@@ -201,7 +201,7 @@
 | L4 自动提交遇到意外 HEAD、活会话或大量删除时 fail closed，只提交决策时冻结的路径 | 没有已记录提交的卡必须仍停在基线 tip；游离的夹具提交不是交付 head。钩子后生成的文件不在评审认证的树里，绝不能进提交（§4 P11） |
 | 停滞的交付失败由人重新武装，不由引擎自己重试 | 三次提交失败是停止信号，不是继续重试的理由；显式重试路由让人决定修正后的工作树何时重新进入管线 |
 | Git 钩子先剥掉 Git 导出的环境变量，再跑嵌套 git 命令 | `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` 等会让夹具的 `git init` / `git commit` 悄悄写到正在提交的仓库；全量闸门还只隐藏一个会造成已知环境假红的重复 token 变量 |
-| V4 用只能收窄的阶段规则，不用能提权的档位字段 | 默认全速、高级区只读摘要；旧档位只在加载时一次性改写成规则，运行期没有兼容档位可泄漏额外写权力 |
+| V4 用只能收窄的阶段规则，不用能提权的档位字段 | 默认全速、阶段勾选网格是唯一 UI 控制；此前的只读摘要面板已作为冗余移除；旧档位只在加载时一次性改写成规则，运行期没有兼容档位可泄漏额外写权力 |
 | verdict 身份按 `reviewSessionId` 与 `prReviewSessionId` 类型绑定 | source 决定谁能提交；`||` 兜底会让一个评审冒充另一个，因此两个交叉拒交方向都测试、builder verdict 直接拒绝 |
 | PR 评审空转只停一次，不自动重派 | 空转评审没有可据以行动的证据；一次审计加一个人工按钮既止住会话空烧，又保留显式恢复路径 |
 | `done` 只来自远端合并事实 | `syncRule` 是独立 actor、只有一条窄边；agent、人工按钮与自动规则都不能标完成，远端同步权限边界因此仍闭合 |
@@ -260,7 +260,7 @@
 
 **落地了什么：**
 - **档位三选一。** 单个分段控件切 `manual` / `you-approve` / `machine-approve`（互斥），命名**手动 / 你批准 / 机器批准**（Manual / You approve / Machine approves）。判据是「谁批准计划」——不用「半自动 / Assisted」这类抽象词。每档下方随选择切换一张两行说明卡（「机器会做 / 你要做」），完全不懂的人也能分清三档；从他档切到 `machine-approve` 先弹保守边界说明（不碰 git、不建 PR、不标完成）再确认，切离它不弹。**状态徽标只读 `autonomy` 档位**，所以「档位已回手动、开关还开着」仍显示「手动」。`autoDispatch` 开关只在「你批准」档显示——另外两档隐藏、不是置灰。
-- **暂停 / 接管，两个作用域。** 项目级暂停/恢复与全局引擎暂停/恢复（与顶栏开关保持同步）；卡片级接管只在卡片操作区。暂停文案白话说明作用域：只挡之后的 tick、不补跑跳过的卡、不动运行中会话，另有一条纯说明指出接管是单卡动作。「需要你处理 / Needs attention」条是 `status.engine` 的只读聚合。
+- **暂停 / 接管，两个作用域。** 项目级暂停/恢复与全局引擎暂停/恢复（与顶栏开关保持同步）；卡片级接管只在卡片操作区。当时的暂停文案说它只挡之后的 tick、不补跑跳过的卡、不动运行中会话；后来已更正为挡住所有引擎自动阶段动作（见 §2.16）。另有一条纯说明指出接管是单卡动作。「需要你处理 / Needs attention」条是 `status.engine` 的只读聚合。
 - **并发上限。** 项目级 `maxActiveSessions`（可编辑，留空=用默认）与全局级 `globalMaxActive`（可编辑——写入口见 §5）。有效名额取两者较小，数值与来源都从后端读回渲染、绝不写死。
 - **删项目连带清 worktree。** 删项目真会先清掉该项目的所有 worktree（dirty 检查保留未提交改动）再删登记。
 - **配置按作用域分离。** 全局与项目设置分两个抽屉 pane、互不串写；每块各自保存，失败把后端原文原样透出。
@@ -351,7 +351,7 @@ P8 之后的纯显示层增量，在单文件客户端里完成，未改后端�
 - **生命周期与自动化。** `state.js` 增加 `self-review` / `pr-review` 阶段，`pr-review -> done` 只留给 `syncRule` 的合并事实。`phase-rules.js` 存六段 `phaseRules`（`autoStart` / `autoApprove`），默认全开且拒绝未知键；旧档位 id 只在加载时改写为规则。构建会话经 `factory_push_branch` 提交并推送、不开 PR；自审评审人从批准 head 开唯一草稿 PR；PR 评审只写结论；人合并后由 `syncRule` 完成卡片。
 - **类型化身份闸。** `verdict.js` 接受 `review` / `rereview` / `pr-review`；`tools.js` 把它们绑定到 `reviewSessionId` 或 `prReviewSessionId`，两个方向都明确拒绝、builder verdict 一律拒绝。`store.js` 保留一个无 stage 字段的 `reviewVerdict` 镜像，自审轮次另存，空转 PR 评审只做一次性 `prReviewIdle` 审计并由手动路由清除。
 - **Review 六项修复，均在 .57。** 活会话闸 `activeSessionsFor` 覆盖 builder／自审／PR 评审；`hasDiff` 走注入 git 端口并计入未跟踪文件；`factory_push_branch` 先冻结路径再判 diff，遇到游离 HEAD 或超过 20 个已跟踪文件删除就拒；`delivery.js` 删除 `deliverySource === 'session'` 死分支；交叉拒交第二个方向补直接断言；`sync.js` 注释改为自动完成。`createGitPort.prState()` 让 PR 状态读取走同一环境封装，四层身份裁决因此保留。
-- **文案决策。** `colReview` / `stagePrReview` 四载体为「PR 评审」；`whenAdvancedTitle` / `whenAdvancedHint` 改为「高级：收窄状态（只读）」并说清取消勾选；`whenNoNarrow` 不动。通用评审 key 与自审专用 key 保持现状，因为语义不是 PR 评审。`factory-review` 技能正文已改用 `source='pr-review'`，与类型闸和注入上下文一致。
+- **文案决策。** `colReview` / `stagePrReview` 四载体为「PR 评审」；`whenAdvancedTitle` / `whenAdvancedHint` / `whenNoNarrow` 后来随折叠块一起删除；`stageConfigPurpose` 改为「默认全速自动；取消某阶段的勾选即可让它停等人。」通用评审 key 与自审专用 key 保持现状，因为语义不是 PR 评审。`factory-review` 技能正文已改用 `source='pr-review'`，与类型闸和注入上下文一致。
 - **验证如实记录。** QA 报告整包全绿（724 → 727，随新增 self-check 用例增长），Review 专项合计 33/33；QA 还报告真机 V4 跑到合并 → 自动 done。真机交叉拒交没有取得证据；PR 评审第三入口真机 DOM 未验；四层身份降级真机只走到 env/none 一层。另有一处非阻塞观察：删掉死分支后旧引擎路径没有显式「已交付不重复」护栏，当前不可达，但若将来给新项目补 autonomy 必须重审。
 
 ### TODO — 候选下一轮（**仅记录，未排期**）

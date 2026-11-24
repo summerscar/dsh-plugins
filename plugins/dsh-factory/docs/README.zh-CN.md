@@ -45,7 +45,7 @@ dsh plugin --profile web add @summerscar/dsh-factory
 6. 独立自审会话检查已推送分支；`approved` 时从后端重读的准确 head 开出唯一 **draft** PR，再把卡移到 `pr-review`。另有只读的 PR 评审会话在那里写结论，它不合并、不移卡。你仍可接管卡片做人工 git 写入，但正常路径不需要提交／建 PR 按钮。
 7. 满意后由你合并 draft PR。宿主观察到 PR 已合并时，`syncRule` 自动把卡移到 `done`；PR 未合并就关闭只生成退回 `build` 的建议。
 8. 从某个项目打开设置会直接落在**该项目**的设置页；「全局设置」页签（或项目页上的「全局设置 ›」入口）里是 worktrees 根目录、GitHub 连接、全局并发与引擎开关。没有项目时，抽屉打开即全局设置。
-9. 用「视图」在侧栏与顶栏标签之间切换，刷新后仍保持。项目卡上的 GitHub 按钮只跳到全局连接设置——连接只在全局页做，不在项目里发起。项目设置是阶段规则勾选网格：`triage`、`plan`、`build`、`self-review`、`pr-review` 各有自动启动与自动批准两项，默认全开；它们只能把某段**关掉**让它停等人。「高级：收窄状态（只读）」区只列出收窄了什么，没有规则编辑器。保存后有短暂的 toast 提示。
+9. 用「视图」在侧栏与顶栏标签之间切换，刷新后仍保持。项目卡上的 GitHub 按钮只跳到全局连接设置——连接只在全局页做，不在项目里发起。项目设置是阶段规则勾选网格：`triage`、`plan`、`build`、`self-review`、`pr-review` 各有自动启动与自动批准两项，默认全开；它们只能把某段**关掉**让它停等人，阶段说明写明「默认全速自动；取消某阶段的勾选即可让它停等人。」。保存后有短暂的 toast 提示。
 
 ## 命令
 
@@ -80,7 +80,7 @@ dsh plugin --profile web add @summerscar/dsh-factory
 ## 主要限制
 
 - **自动 git 内置于流水线，但边界固定。** 构建会话提交并推送自己的分支；自审评审人从批准 head 开出唯一 draft PR。任何路径都不合并、关 issue、强推或写别的分支。阶段规则只能让某段停下，不能放宽这个边界。合并由你完成，`syncRule` 依据远端合并事实把卡片标记为完成。
-- **暂停不会停掉已在跑的会话。** 全局与项目级的暂停/恢复、卡片级接管现在在设置界面都有入口；暂停只挡之后的 tick，所以已在跑的会话会接着跑。接口仍是 `POST /api/dsh-factory/engine/pause` / `.../resume` 与 `POST /api/dsh-factory/cards/<卡片 id>/takeover`（是 `takeover`，不是 `take-over`）。
+- **暂停不会停掉已在跑的会话。** 全局与项目级的暂停/恢复、卡片级接管现在在设置界面都有入口；暂停后引擎不再自动推进任何阶段（含派发、批准计划、自审与交付），已在跑的会话继续，恢复后不补跑跳过的卡。接口仍是 `POST /api/dsh-factory/engine/pause` / `.../resume` 与 `POST /api/dsh-factory/cards/<卡片 id>/takeover`（是 `takeover`，不是 `take-over`）。
 - **手动远端同步只生成建议、不自动应用。** `POST /api/dsh-factory/cards/<卡片 id>/remote-sync` 接收远端 PR 快照，只记录一条建议——不改变卡片列、也不替你批准计划。引擎另有 PR 状态轮询，只在真实 `MERGED` 事实上记 `done`。
 - **没有 webhook。** 走 `gh` 与轮询，所以 issue 变化不是实时的，取决于轮询间隔。
 - **只支持 GitHub。** GitLab 的评审流程尚未实现。

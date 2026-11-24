@@ -27,11 +27,12 @@ test('Dev-UI: work mode remains a separate permission boundary', () => {
   assert.doesNotMatch(source, /与自动化档位无关/)
 })
 
-test('Dev-UI: stage rules panel is the automation control', () => {
+test('Dev-UI: stage rules panel is the automation control, with no advanced fold', () => {
   assert.match(source, /stageConfigTitle/)
   assert.match(source, /autoStartLabel/)
   assert.match(source, /autoApproveLabel/)
-  assert.match(source, /whenAdvancedTitle/)
+  assert.doesNotMatch(source, /whenAdvancedTitle|whenAdvancedHint|whenNoNarrow/)
+  assert.doesNotMatch(source, /setAdvance\(|key: 'advanced'|advancedBody/)
 })
 
 test('Dev-UI: no legacy axisTitle or slider remains', () => {

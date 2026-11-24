@@ -171,9 +171,18 @@ test('naming: tier level and badge names are gone; stage-rule keys are mirrored 
     assert.equal(typeof en[k], 'string', `en has ${k}`)
     assert.doesNotMatch(en[k], /Assisted|L[0-4]/i, `${k} en is plain language`)
   }
-  // The narrowing-only rule is stated in both languages.
-  assert.match(zh.whenAdvancedHint, /收窄|不能放宽/, 'zh states the narrowing-only rule')
-  assert.match(en.whenAdvancedHint, /narrow|cannot be widened/i, 'en states the narrowing-only rule')
+  // V4.58: the advanced read-only fold was removed as dead UI. The narrowing
+  // semantics survive in stageConfigPurpose + the per-stage checkboxes.
+  for (const k of ['whenAdvancedTitle', 'whenAdvancedHint', 'whenNoNarrow']) {
+    assert.equal(k in zh, false, `zh dead key ${k} removed`)
+    assert.equal(k in en, false, `en dead key ${k} removed`)
+  }
+  const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
+  assert.doesNotMatch(section, /whenAdvancedTitle|whenAdvancedHint|whenNoNarrow|setAdvance|advance \?/, 'no advanced fold or expanded area')
+  assert.match(section, /t\('stageConfigPurpose'\)/, 'purpose still rendered')
+  assert.match(section, /\['autoStart', 'autoApprove'\]/, 'per-stage checkboxes remain')
+  assert.match(zh.stageConfigPurpose, /默认全速自动.*停等人/, 'zh purpose states default full auto and pause by uncheck')
+  assert.match(en.stageConfigPurpose, /Full auto by default.*uncheck a stage/i, 'en purpose states default full auto and pause by uncheck')
   // No 半自动 / Assisted copy survives anywhere in either dictionary value.
   for (const [k, v] of Object.entries(zh)) if (typeof v === 'string') assert.doesNotMatch(v, /半自动/, `${k} zh value`)
   for (const [k, v] of Object.entries(en)) if (typeof v === 'string') assert.doesNotMatch(v, /Assisted/i, `${k} en value`)
