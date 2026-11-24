@@ -247,7 +247,8 @@ test('B4 no L0–L4 slider or level copy; stage rules are checkboxes in all four
   assert.doesNotMatch(clientSrc, /type: 'range', min: '0', max: '4'/, 'no tier slider')
   assert.doesNotMatch(clientSrc, /role: 'switch', 'aria-checked': autoDispatch/, 'no independent autoDispatch switch')
   assert.match(clientSrc, /StageConfigSection/, 'the stage-rule section replaced the slider')
-  for (const k of ['stageConfigTitle', 'stageConfigPurpose', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
+  for (const k of ['stageInbox', 'stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview',
+    'stageConfigTitle', 'stageConfigPurpose', 'stageRuleLockedHint', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
     'resetDefault', 'stageSaved']) {
     assert.equal(typeof zh[k], 'string', `zh locale has ${k}`)
     assert.equal(typeof en[k], 'string', `en locale has ${k}`)
@@ -259,8 +260,23 @@ test('B4 no L0–L4 slider or level copy; stage rules are checkboxes in all four
   const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
   assert.doesNotMatch(section, /whenAdvancedTitle|whenAdvancedHint|whenNoNarrow|setAdvance|advance \?/, 'advanced fold removed')
   assert.match(section, /\['autoStart', 'autoApprove'\]/, 'stage checkboxes remain')
-  assert.match(zh.stageConfigPurpose, /默认全速自动.*停等人/, 'narrowing semantics survive in zh purpose')
-  assert.match(en.stageConfigPurpose, /Full auto by default.*uncheck a stage/i, 'narrowing semantics survive in en purpose')
+  const stageArray = /const stages = \[([\s\S]*?)\n\s*\]/.exec(section)?.[1] ?? ''
+  let at = -1
+  for (const stage of ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']) {
+    const found = stageArray.indexOf(`'${stage}'`, at + 1)
+    assert.ok(found >= 0, `stage ${stage} rendered in order`)
+    at = found
+  }
+  assert.match(section, /t\('stageRuleLockedHint'\)/, 'greyed checkboxes carry the locked hint')
+  assert.match(section, /disabled:\s*true/, 'greyed checkboxes are disabled')
+  for (const label of ['收件箱-自动启动', '规划-自动批准', '自审-自动启动', 'PR 评审-自动启动', '置灰不可改']) {
+    assert.ok(zh.stageConfigPurpose.includes(label), `zh purpose names ${label}`)
+  }
+  assert.doesNotMatch(zh.stageConfigPurpose, /取消某阶段勾选即可停等人/, 'zh no longer promises every checkbox stops a stage')
+  for (const label of ['Inbox auto-start', 'Planning auto-approve', 'Self-review auto-start', 'PR review auto-start', 'greyed out']) {
+    assert.match(en.stageConfigPurpose, new RegExp(label, 'i'), `en purpose names ${label}`)
+  }
+  assert.doesNotMatch(en.stageConfigPurpose, /uncheck a stage/i, 'en no longer promises every checkbox stops a stage')
 })
 
 // ==============================================================================
@@ -312,11 +328,18 @@ test('B6 tier keys are deleted residue-free and stage-rule keys exist in all fou
   for (const [key, value] of Object.entries(inline.en)) assert.equal(en[key], value, `en locale mirrors inline: ${key}`)
   assert.equal(Object.keys(inline.zh).length, Object.keys(inline.en).length, 'zh/en inline key sets match')
   assert.equal(Object.keys(zh).length - 1, Object.keys(inline.zh).length, 'locale = UI + meta')
-  // The new stage keys are present and mirrored.
-  for (const k of ['stageSelfReview', 'stagePrReview', 'stageConfigTitle', 'writeBoundaryNotice', 'writeBoundaryDetail']) {
+  // The new stage keys are present and mirrored in all four carriers.
+  for (const k of ['stageInbox', 'stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview',
+    'stageConfigTitle', 'stageConfigPurpose', 'stageRuleLockedHint', 'writeBoundaryNotice', 'writeBoundaryDetail']) {
+    assert.equal(typeof inline.zh[k], 'string', `inline zh has ${k}`)
+    assert.equal(typeof inline.en[k], 'string', `inline en has ${k}`)
     assert.equal(inline.zh[k], zh[k], `${k} inline=locale zh`)
     assert.equal(inline.en[k], en[k], `${k} inline=locale en`)
   }
+  assert.equal(inline.zh.stageInbox, '收件箱', 'inline zh stageInbox value')
+  assert.equal(inline.en.stageInbox, 'Inbox', 'inline en stageInbox value')
+  assert.equal(inline.zh.stageRuleLockedHint, '该阶段目前没有可单独关闭的自动步骤，此勾选固定开启、不可修改。', 'inline zh locked hint')
+  assert.equal(inline.en.stageRuleLockedHint, 'This stage has no separately switchable automatic step; this checkbox is fixed on and cannot be changed.', 'inline en locked hint')
 })
 
 // ==============================================================================

@@ -38,9 +38,9 @@ test('Dev-UI: advanced fold and its three dictionary keys are gone', () => {
   assert.match(source, /key: 'reset'/)
 })
 
-test('Dev-Copy: stage purpose explains unchecking pauses a stage for a human', () => {
-  const purposeZh = '默认全速自动；取消某阶段的勾选即可让它停等人。'
-  const purposeEn = 'Full auto by default; uncheck a stage to pause it for a human.'
+test('Dev-Copy: stage purpose names the four switchable gates and explains the locked ones', () => {
+  const purposeZh = '默认全速自动。只有这 4 个勾选可取消，取消后该段停下等人：收件箱-自动启动、规划-自动批准、自审-自动启动、PR 评审-自动启动。其余勾选固定开启、置灰不可改——这些阶段当前没有可单独关闭的自动步骤。'
+  const purposeEn = 'Full auto by default. Only four checkboxes can be turned off, pausing that stage for a human: Inbox auto-start, Planning auto-approve, Self-review auto-start, PR review auto-start. The rest are fixed on and greyed out — those stages currently have no separately switchable automatic step.'
   assert.equal(zh.stageConfigPurpose, purposeZh)
   assert.equal(en.stageConfigPurpose, purposeEn)
   assert.ok(source.includes(`stageConfigPurpose: "${purposeZh}"`))
@@ -49,6 +49,6 @@ test('Dev-Copy: stage purpose explains unchecking pauses a stage for a human', (
   assert.doesNotMatch(JSON.stringify(en), /advanced rules only narrow it/)
 })
 
-test('Dev-Build: build marker is .58 for real-machine distinction', () => {
-  assert.match(indexSource, /export const BUILD = 'factory-2026-11-20\.58'/)
+test('Dev-Build: build marker is .59 for real-machine distinction', () => {
+  assert.match(indexSource, /export const BUILD = 'factory-2026-11-20\.59'/)
 })

@@ -204,9 +204,19 @@ test('P3-B1 no L0–L4 slider or level badges; a stage-rule panel drives PATCH p
   assert.doesNotMatch(clientSrc, /type: 'range', min: '0', max: '4'/, 'no tier range slider')
   assert.doesNotMatch(clientSrc, /LEVEL_TIERS/, 'no five-level mapping')
   assert.match(clientSrc, /StageConfigSection/, 'stage-rule section exists')
-  assert.match(clientSrc, /\{ phaseRules: next \}/, 'saves via PATCH phaseRules')
-  assert.match(clientSrc, /'stagePrReview'/, 'pr-review stage rendered')
-  for (const action of ['autoStart', 'autoApprove']) assert.match(clientSrc, new RegExp(`'${action}'`), `${action} toggle present`)
+  assert.match(clientSrc, /callApi\('PATCH'[\s\S]{0,240}phaseRules:/, 'saves via PATCH phaseRules')
+  const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
+  const stageArray = /const stages = \[([\s\S]*?)\n\s*\]/.exec(section)?.[1] ?? ''
+  let at = -1
+  for (const stage of ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']) {
+    const found = stageArray.indexOf(`'${stage}'`, at + 1)
+    assert.ok(found >= 0, `stage ${stage} is rendered in order`)
+    at = found
+  }
+  assert.match(section, /'stageInbox'/, 'inbox row has its own label key')
+  for (const action of ['autoStart', 'autoApprove']) assert.match(section, new RegExp(`'${action}'`), `${action} toggle present`)
+  assert.match(section, /disabled:\s*true/, 'non-editable toggles are disabled')
+  assert.match(section, /t\('stageRuleLockedHint'\)/, 'greyed toggles explain why they are fixed')
   assert.match(clientSrc, /writeBoundaryNotice/, 'write boundary is always visible in settings')
 })
 
@@ -219,8 +229,8 @@ test('P3-B2 tier copy is gone from all four dictionaries; stage keys are new and
     assert.equal(k in zhDict, false, `zh locale deleted ${k}`)
     assert.equal(k in enDict, false, `en locale deleted ${k}`)
   }
-  for (const k of ['stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview', 'stageConfigTitle',
-    'stageConfigPurpose', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
+  for (const k of ['stageInbox', 'stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview',
+    'stageConfigTitle', 'stageConfigPurpose', 'stageRuleLockedHint', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
     'resetDefault', 'stageSaved', 'writeBoundaryNotice', 'writeBoundaryDetail', 'stageSafetyTitle',
     'stageStripTitle', 'stageStripHint', 'selfReviewApproved', 'selfReviewChanges', 'selfReviewParked', 'flowMergedDone']) {
     assert.equal(typeof zhDict[k], 'string', `zh has ${k}`)
@@ -233,8 +243,18 @@ test('P3-B2 tier copy is gone from all four dictionaries; stage keys are new and
   const section = clientSrc.slice(clientSrc.indexOf('function StageConfigSection'), clientSrc.indexOf('function PauseSection'))
   assert.doesNotMatch(section, /whenAdvancedTitle|whenAdvancedHint|whenNoNarrow|setAdvance|advance \?/, 'advanced read-only area removed')
   assert.match(section, /\['autoStart', 'autoApprove'\]/, 'stage toggles remain')
-  assert.match(zhDict.stageConfigPurpose, /默认全速自动.*停等人/, 'zh purpose states default full auto + pause by uncheck')
-  assert.match(enDict.stageConfigPurpose, /Full auto by default.*uncheck a stage/i, 'en purpose states default full auto + pause by uncheck')
+  assert.match(zhDict.stageInbox, /收件箱/, 'zh inbox stage label')
+  assert.equal(enDict.stageInbox, 'Inbox', 'en inbox stage label')
+  assert.match(zhDict.stageRuleLockedHint, /固定开启、不可修改/, 'zh locked tooltip says fixed on')
+  assert.match(enDict.stageRuleLockedHint, /fixed on and cannot be changed/i, 'en locked tooltip says fixed on')
+  for (const label of ['收件箱-自动启动', '规划-自动批准', '自审-自动启动', 'PR 评审-自动启动', '置灰不可改']) {
+    assert.ok(zhDict.stageConfigPurpose.includes(label), `zh purpose names ${label}`)
+  }
+  assert.doesNotMatch(zhDict.stageConfigPurpose, /取消某阶段勾选即可停等人/, 'zh no longer promises every stage can be unchecked')
+  for (const label of ['Inbox auto-start', 'Planning auto-approve', 'Self-review auto-start', 'PR review auto-start', 'greyed out']) {
+    assert.match(enDict.stageConfigPurpose, new RegExp(label, 'i'), `en purpose names ${label}`)
+  }
+  assert.doesNotMatch(enDict.stageConfigPurpose, /uncheck a stage/i, 'en no longer promises every stage can be unchecked')
   assert.match(zhDict.writeBoundaryDetail, /草稿 PR|draft/i, 'boundary stops at draft PR in zh')
   assert.match(enDict.writeBoundaryNotice, /draft PR/i, 'boundary stops at draft PR in en')
   assert.match(zhDict.writeBoundaryNotice, /不合并|不关 issue|不强制推送/, 'zh boundary: no merge, no issue close, no force')
