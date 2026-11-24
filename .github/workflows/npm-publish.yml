@@ -100,11 +100,12 @@ jobs:
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
       # A push made with GITHUB_TOKEN does not trigger other workflows, so the
-      # writeback above cannot wake Pages on its own. Dispatch it explicitly.
-      # Pages' concurrency group serializes this run behind any push-triggered
-      # one, so the dispatch always builds the writeback commit's index.json.
+      # writeback above cannot wake Pages on its own. Dispatch it explicitly,
+      # only when a release actually landed (writeback moved HEAD). Pages'
+      # concurrency group serializes this run behind any push-triggered one,
+      # so the dispatch builds the writeback commit's index.json.
       - name: Trigger Pages rebuild after publish
-        if: steps.source.outputs.current == 'true'
+        if: steps.writeback.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --ref main
