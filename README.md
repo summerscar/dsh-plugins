@@ -12,6 +12,7 @@ DeepSeek Harness (DSH) plugins by summerscar. Browse install commands and each p
 | Package | What it does |
 | --- | --- |
 | [`@summerscar/dsh-connect-agentscope-platform`](plugins/dsh-connect-agentscope-platform/README.md) | AgentScope Platform: manage several platform accounts (switch the billing account by hand, pick one by remaining Credits, probe and flag unhealthy ones), an optional OpenAI-compatible model provider whose catalog you can fetch and edit row by row, an available-Credits and redeemable-contribution readout under the composer, and a settings panel for the daily check-in, the balance, contribution grants, usage detail and the price list. Switching accounts affects new requests only. |
+| [`@summerscar/dsh-factory`](plugins/dsh-factory/README.md) | Project Factory: a multi-project development factory for DSH — manage projects on kanban boards, dispatch each card into its own session and git worktree, with six phase skills plus a skill that adds a repository as a project; delivery is gated by autonomy tier, with human approval at every tier except an explicit auto-delivery tier that stops at a draft PR. |
 | [`@summerscar/dsh-mnemon-sync`](plugins/dsh-mnemon-sync/README.md) | Sync backup: back up dsh-mnemon memory spaces, project documents, runtime memory and user-level skill files to S3-compatible storage or WebDAV, with scheduled backups and selective restore. |
 
 ## Install

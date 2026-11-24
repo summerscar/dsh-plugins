@@ -118,6 +118,54 @@
           }
         }
       ]
+    },
+    {
+      "name": "@summerscar/dsh-factory",
+      "title": {
+        "zh": "项目工厂",
+        "en": "Project Factory"
+      },
+      "description": {
+        "zh": "面向 DSH 的多项目开发工厂：以看板管理项目，每张卡派发到独立会话与 git worktree，随包提供六个阶段 skill 和一个添加项目的 skill，交付按自治档位设闸——除显式的「自动交付」档止于 draft PR 外，各档都要人工批准。",
+        "en": "A multi-project development factory for DSH: manage projects on kanban boards, dispatch each card into its own session and git worktree, ship six phase skills plus a skill that adds a repository as a project, and gate delivery by autonomy tier — human approval at every tier but an explicit auto-delivery tier that stops at a draft PR."
+      },
+      "author": "summerscar",
+      "homepage": "https://summerscar.github.io/dsh-plugins/plugins/factory/",
+      "repository": {
+        "url": "https://github.com/summerscar/dsh-plugins",
+        "directory": "plugins/dsh-factory"
+      },
+      "metadata": {
+        "category": "tool",
+        "keywords": [
+          "dsh",
+          "dsh-plugin",
+          "deepseek-harness",
+          "deepseek-harness-plugin",
+          "cordis",
+          "factory",
+          "kanban",
+          "board",
+          "multi-project",
+          "worktree",
+          "session",
+          "orchestration",
+          "pull-request",
+          "dsh-plugins"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.0.2",
+          "publishTimestamp": 1795514469,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.1"
+          }
+        }
+      ]
     }
   ]
 }
