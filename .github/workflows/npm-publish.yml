@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,12 +88,26 @@ jobs:
         if: steps.source.outputs.current == 'true'
         run: node scripts/publish-npm.mjs publish
       - name: Write package versions and the market index back to main
+        id: writeback
         if: steps.source.outputs.current == 'true'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          before=$(git rev-parse HEAD)
           pnpm site:market
           node scripts/publish-npm.mjs commit
+          if [ "$(git rev-parse HEAD)" != "$before" ]; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+      # A push made with GITHUB_TOKEN does not trigger other workflows, so the
+      # writeback above cannot wake Pages on its own. Dispatch it explicitly.
+      # Pages' concurrency group serializes this run behind any push-triggered
+      # one, so the dispatch always builds the writeback commit's index.json.
+      - name: Trigger Pages rebuild after publish
+        if: steps.source.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
       - name: Preserve plan and release archives
         if: always() && steps.source.outputs.current == 'true'
         uses: actions/upload-artifact@v4
