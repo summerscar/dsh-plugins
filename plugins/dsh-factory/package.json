@@ -1,6 +1,6 @@
 {
   "name": "@summerscar/dsh-factory",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A DSH-native development factory: multi-project kanban boards that dispatch each card into its own session and git worktree, with six bundled phase skills plus a skill that adds a repository as a project, and delivery gated by autonomy tier — human approval at every tier but an explicit auto-delivery tier that stops at a draft PR.",
   "type": "module",
   "main": "index.js",
@@ -145,6 +145,6 @@
     "@deepseek-ai/dsh-home-paths": "0.2.2-rc.3"
   },
   "dshRelease": {
-    "contentHash": "610601ee96787ae8438763413d2bae46b67104a99257fd324e9ffce405510b88"
+    "contentHash": "871562f36be24799df20619e78e2308c6ce3ee66d22a720c1d4f71bfd422255d"
   }
 }
