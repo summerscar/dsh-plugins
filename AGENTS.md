@@ -7,6 +7,10 @@
 
 功能异常时**先检查本仓库的插件代码**：查相关插件源码、配置、依赖声明和最近改动（`git log` / `git diff`），确认本仓实现正常后再对照 DSH 运行时和第三方插件。涉及宿主或上游的结论以实测证据为准。
 
+**何时查 dsh-doc**：问题落在 DSH 宿主/上游本身——某个功能、设置、插件/bundle 机制、agent preset、工具定义、Cordis API 怎么用，或要开发、调试、升级 DSH 插件与 profile——而不是本仓插件代码时，加载 `dsh-doc` skill，按它给的顺序找事实（能用 `cordis_inspect` 先看运行时 → 读已安装版本的文档与源码 → 只能靠 live API 且读不到就明说未验证），**不要凭记忆答 DSH 事实**。本仓代码问题仍先查本仓；加载该 skill 不等于授权改动，改 DSH 或其 profile 仍需用户明确要求。
+
+`dsh-doc` 上游：`github:deepseek-ai/deepseek-harness@ca33fd6843b205e279c7ccb6cb73a472c78f5760:packages/preset/agent-preset/skills/dsh-doc`（public）。锁定版本记在各 agent 的 `.openbot/skills-lock.json`；上游默认分支是 `master`，要看最新版把 URL 里的 sha 换成 `master`。要更新时对比上游与本地再决定，别直接覆盖安装副本（会让锁定哈希失配、被标记 modified）。
+
 ## 文档
 
 文档只写给用户看，代码本身就是开发文档。
