@@ -16,7 +16,7 @@ function setup() {
   const tmp = mkdtempSync(join(tmpdir(), 'factory-api-'))
   const store = new FactoryStore({ file: join(tmp, 'factory.json') })
   const api = createApi({ store, build: 'test' })
-  return { store, api, cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
+  return { tmp, store, api, cleanup: () => rmSync(tmp, { recursive: true, force: true }) }
 }
 
 test('project / board / card round-trip through the API', () => {
@@ -158,9 +158,12 @@ test('POST /projects/inspect reports an illegal rootPath clearly without writing
 })
 
 test('PATCH /projects/:id writes phaseRules separately from preparation (V4)', () => {
-  const { store, api, cleanup } = setup()
+  const { tmp, api, cleanup } = setup()
   try {
-    const created = api({ method: 'POST', route: '/projects', body: { name: 'auto', rootPath: '/workspace/dsh-plugins' } })
+    // A repo root under this test's own temp dir: the assertion below compares
+    // against it, so the test never depends on where the checkout lives.
+    const rootPath = join(tmp, 'repo')
+    const created = api({ method: 'POST', route: '/projects', body: { name: 'auto', rootPath } })
     const id = created.body.project.id
     assert.equal('autonomy' in created.body.project, false, 'the L0–L4 field is gone')
     assert.equal('autoDispatch' in created.body.project, false)
@@ -172,7 +175,7 @@ test('PATCH /projects/:id writes phaseRules separately from preparation (V4)', (
     assert.equal(narrow.body.project.phaseRules.build.autoStart, true, 'other stages stay full auto')
 
     const attempt = api({ method: 'PATCH', route: `/projects/${id}`, body: { phaseRules: {}, rootPath: '/etc' } })
-    assert.equal(attempt.body.project.rootPath, '/workspace/dsh-plugins', 'rootPath is ignored and never retargeted')
+    assert.equal(attempt.body.project.rootPath, rootPath, 'rootPath is ignored and never retargeted')
 
     const bad = api({ method: 'PATCH', route: `/projects/${id}`, body: { phaseRules: { plan: { widenWrite: true } } } })
     assert.equal(bad.status, 400)
