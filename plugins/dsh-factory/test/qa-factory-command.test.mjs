@@ -67,8 +67,18 @@ test('K3: bare /factory and unknown subcommands give help and write nothing', ()
   }
   assert.match(parseFactoryLine('frobnicate /workspace/x').error, /未知子命令/)
   assert.match(factoryHelp(), /\/factory add/)
-  assert.match(factoryHelp(), /auto-delivery \(L4\) may commit, push and open a draft PR/, 'help states what L4 does by itself')
-  assert.match(factoryHelp(), /merging and marking done always need you/, 'help states what still needs a human')
+  const help = factoryHelp()
+  // V4 intent: no tiers; default full speed, narrowing only in settings,
+  // machine build/PR, human merge, then the card completes automatically.
+  assert.match(help, /full speed by default/i, 'help states the default full-speed mode')
+  assert.match(help, /stage rules can be narrowed in project settings/i, 'help says narrowing lives in project settings')
+  assert.match(help, /build commits and pushes/i, 'help states the build writes the branch')
+  assert.match(help, /reviewer opens a draft PR/i, 'help states the reviewer opens the draft PR')
+  assert.match(help, /you merge/i, 'help keeps merge with the human')
+  assert.match(help, /completes automatically after the merge/i, 'help states merge-triggered auto completion')
+  for (const old of [/auto-delivery/i, /\(L4\)/i, /marking done|mark done|mark-done/i]) {
+    assert.doesNotMatch(help, old, `help no longer says ${old}`)
+  }
 })
 
 test('K2: /factory add with no path is VALID and means the session cwd (not an error)', () => {

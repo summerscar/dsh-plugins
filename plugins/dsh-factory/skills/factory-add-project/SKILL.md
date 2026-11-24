@@ -1,7 +1,7 @@
 ---
 user-invocable: true
 name: factory-add-project
-description: Add a git repository to the factory as a project when the user says things like "把这个项目加进 factory", "添加工作区", "把这个仓库注册成项目", or invokes /factory-add-project or /factory add — inspect the path, ask about the session mode; stage rules stay full-auto by default with ask_user_question, propose a config from objective signals, and create the project with factory_create_project. This is the only factory skill a human can invoke directly. Not for working on cards (triage/plan/build/review) or for git operations that need human approval.
+description: Add a git repository to the factory as a project when the user says things like "把这个项目加进 factory", "添加工作区", "把这个仓库注册成项目", or invokes /factory-add-project or /factory add — inspect the path, ask only about the session workMode with ask_user_question, leave stage rules at their full-auto defaults, propose a config from objective signals, and create the project with factory_create_project. This is the only factory skill a human can invoke directly. Not for working on cards (triage/plan/build/review) or for git operations that need human approval.
 whenToUse: The user wants to register a repository/workspace as a new factory project, or a /factory-add-project (or /factory add) command hands you a path.
 ---
 
@@ -49,24 +49,23 @@ Build the arguments for `factory_create_project`:
 
 No lock file, manifest or package manager is universal — two repositories with identical files can legitimately want different setup commands. When the repository's own conventions say nothing and you must propose something, say plainly that it is your inference and let the user decide.
 
-## 4. Ask the two per-project settings
+## 4. Ask the one per-project setting
 
-Before creating anything, call the DSH built-in `ask_user_question` tool ONCE with both questions in a single request:
+Before creating anything, call the DSH built-in `ask_user_question` tool ONCE with a single question:
 
 - `id: "workMode"`, `question: "这个项目的会话使用哪种工作模式？"`, options labeled `workspace-write` (workspace-only writes, escalation asks you), `full-access` (no per-file confirmation), `auto-review` (full access plus a model review of every tool call; only when the experimental plugin is enabled). If auto-review is unavailable, omit that option rather than offering a choice that cannot be honored.
-- `id: "autonomy"`, `question: "这个项目的自动化程度？"`, options labeled `L0` (fully manual), `L1` (you approve, no auto dispatch), `L2` (you approve, auto dispatch), `L3` (machine approves plans, stops at review), `L4` (auto delivery, draft PR only). Put the tradeoff in each option's `description`. Explain that L0/L1 are the safe defaults and L4 only acts when all seven hard checks hold.
 
-Read `answers[].selected` for each id. Map the work-mode label directly to the `workMode` argument. Map the autonomy label: `L0`→`manual`, `L1`→`you-approve` with `autoDispatch: false`, `L2`→`you-approve` with `autoDispatch: true`, `L3`→`machine-approve`, `L4`→`auto-delivery`; pass the result as the `autonomy` level argument (`L0`–`L4`) plus `autoDispatch` when it is `L2`. If an answer is skipped (`selected` empty and no `custom`), keep the safe defaults `workspace-write` and `L0` — a skipped question is not consent to a broader mode, and you must not ask it a second time. If `custom` text is given, map it only when it clearly names one of the options; otherwise report the ambiguity and do not create.
+Read `answers[].selected` for that id and map the label directly to the `workMode` argument. **Do not ask about autonomy, L0–L4, autoDispatch, auto-delivery or a delivery tier.** Those stored tier fields were removed from project creation; the tool schema has no `autonomy` or `autoDispatch` parameter and will reject them. Stage rules are not a creation-time question either: `factory_create_project` starts every phase with `autoStart` and `autoApprove` on, and a person may narrow individual stages later in project settings. If the answer is skipped (`selected` empty and no `custom`), keep the safe default `workspace-write`; a skipped question is not consent to a broader mode, and you must not ask it a second time. If `custom` text is given, map it only when it clearly names one of the options; otherwise report the ambiguity and do not create.
 
 ## 5. Show the proposal, then create
 
-Present what you found — the tool's facts plus what you read from the repository — and your proposed `name`, `rootPath`, `copyFiles`, `postCreate`, `workMode` and `autonomy`, and explain briefly why you proposed each. Once they agree, call `factory_create_project` with those arguments, including `workMode: <mode>` and `autonomy: <level>` (and `autoDispatch: true` for L2). The tool persists both settings at creation. Showing the config first is the contract of both tools — a proposal is not an authorization to skip it.
+Present what you found — the tool's facts plus what you read from the repository — and your proposed `name`, `rootPath`, `copyFiles`, `postCreate` and `workMode`, and explain briefly why you proposed each. State that stage rules will start full auto and can be narrowed later in project settings. Once they agree, call `factory_create_project` with those arguments, including `workMode: <mode>`; do not pass `autonomy`, `autoDispatch`, `phaseRules` or any tier field. The tool persists `workMode` and the full-auto stage rules at creation. Showing the config first is the contract of both tools — a proposal is not an authorization to skip it.
 
 If inspection or creation fails — non-existent path, not a directory, no `.git`, an invalid `copyFiles` entry — report the tool's error **verbatim**. Do not guess a corrected path, do not create the directory or repository, do not retry with a different path, and do not invent a fallback config. A path inside the DSH data root is **not** a failure: create the project as proposed and relay the returned `warning` to the user.
 
 ## 6. Report
 
-Say what was created (name and id, and the root path), which config you proposed and the evidence behind each choice, the work mode and autonomy level the user chose, and anything you deliberately left unset. If the user declines or a check failed, say so plainly and leave state unchanged.
+Say what was created (name and id, and the root path), which config you proposed and the evidence behind each choice, the work mode the user chose, and that stage rules begin full auto and may be narrowed later in project settings. Mention anything you deliberately left unset. If the user declines or a check failed, say so plainly and leave state unchanged.
 
 ## Rules
 
@@ -75,4 +74,5 @@ Say what was created (name and id, and the root path), which config you proposed
 - **No baked-in commands.** The plugin ships no default setup command and no preferred package manager.
 - **Absolute, real, existing git root.** Let the validator decide; never auto-correct a bad path.
 - **Errors verbatim.** A validation failure ends the run; it is not a prompt to improvise.
+- **No tier question.** Autonomy levels, `autoDispatch` and auto-delivery were removed from creation; never ask about them or pass them to the tool. Stage rules start full auto and are narrowed later in project settings, not in the add-project flow.
 - **This skill only registers a project.** It does not dispatch cards or perform any git write.
