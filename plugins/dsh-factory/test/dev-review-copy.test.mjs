@@ -49,6 +49,6 @@ test('Dev-Copy: stage purpose names the four switchable gates and explains the l
   assert.doesNotMatch(JSON.stringify(en), /advanced rules only narrow it/)
 })
 
-test('Dev-Build: build marker is .59 for real-machine distinction', () => {
-  assert.match(indexSource, /export const BUILD = 'factory-2026-11-20\.59'/)
+test('Dev-Build: build marker is .60 for real-machine distinction', () => {
+  assert.match(indexSource, /export const BUILD = 'factory-2026-11-20\.60'/)
 })

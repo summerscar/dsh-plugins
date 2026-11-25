@@ -442,6 +442,8 @@ window.__ModuleLoader__.load({
       stageConfigTitle: "自动化流程",
       stageConfigPurpose: "默认全速自动。只有这 4 个勾选可取消，取消后该段停下等人：收件箱-自动启动、规划-自动批准、自审-自动启动、PR 评审-自动启动。其余勾选固定开启、置灰不可改——这些阶段当前没有可单独关闭的自动步骤。",
       stageRuleLockedHint: "该阶段目前没有可单独关闭的自动步骤，此勾选固定开启、不可修改。",
+      autoIntakeLabel: "自动拉取 issue",
+      stageAutoIntakeHint: "issue 拉取由「远端 GitHub 仓库」绑定决定：绑定后引擎每轮都会拉取，暂停本项目也不停；此勾选固定开启、不可修改。",
       stageDefaultBadge: "默认：全速自动",
       autoStartLabel: "自动启动",
       autoApproveLabel: "自动批准",
@@ -811,6 +813,8 @@ window.__ModuleLoader__.load({
       stageConfigTitle: "Automation workflow",
       stageConfigPurpose: "Full auto by default. Only four checkboxes can be turned off, pausing that stage for a human: Inbox auto-start, Planning auto-approve, Self-review auto-start, PR review auto-start. The rest are fixed on and greyed out — those stages currently have no separately switchable automatic step.",
       stageRuleLockedHint: "This stage has no separately switchable automatic step; this checkbox is fixed on and cannot be changed.",
+      autoIntakeLabel: "Auto issue intake",
+      stageAutoIntakeHint: "Issue intake follows the GitHub repo binding: once bound, the engine pulls every tick, even while the project is paused; this checkbox is fixed on and cannot be changed.",
       stageDefaultBadge: "Default: full auto",
       autoStartLabel: "Auto-start",
       autoApproveLabel: "Auto-approve",
@@ -1974,21 +1978,29 @@ window.__ModuleLoader__.load({
         h('div', { key: 'title', style: { fontSize: 13, fontWeight: 650 } }, t('stageConfigTitle')),
         h('div', { key: 'purpose', style: { fontSize: 12, color: T.mutedInk, lineHeight: 1.6 } }, t('stageConfigPurpose')),
         h('span', { key: 'badge', style: { alignSelf: 'flex-start', padding: '3px 9px', borderRadius: 999, background: T.accentWash, color: T.accentInk, fontSize: 11, fontWeight: 650 } }, t('stageDefaultBadge')),
-        ...stages.map(([key, label]) => h('div', { key, style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12 } }, [
-          h('span', { key: 'name', style: { minWidth: 72 } }, t(label)),
-          ['autoStart', 'autoApprove'].map((action) => {
-            const locked = !editableRules.has(`${key}:${action}`)
-            const hint = locked ? { title: t('stageRuleLockedHint') } : {}
-            return h('label', { key: action, style: { display: 'inline-flex', gap: 4, alignItems: 'center' }, ...hint }, [
-              h('input', {
-                key: 'input', type: 'checkbox',
-                checked: locked ? true : rules?.[key]?.[action] !== false,
-                ...(locked ? { disabled: true, ...hint } : { onChange: (event) => setRules({ ...rules, [key]: { ...(rules[key] ?? {}), [action]: event.target.checked } }) }),
-              }),
-              h('span', { key: 'text' }, t(action === 'autoStart' ? 'autoStartLabel' : 'autoApproveLabel')),
-            ])
-          }),
-        ])),
+        ...stages.map(([key, label]) => {
+          // Intake is display-only: the engine reads the repo binding, not a
+          // phaseRules field, so autoIntake never enters rules/normalize/PATCH.
+          const actions = key === 'inbox' ? ['autoIntake', 'autoStart', 'autoApprove'] : ['autoStart', 'autoApprove']
+          return h('div', { key, style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12 } }, [
+            h('span', { key: 'name', style: { minWidth: 72 } }, t(label)),
+            actions.map((action) => {
+              const locked = action === 'autoIntake' || !editableRules.has(`${key}:${action}`)
+              const lockedHint = { title: t('stageRuleLockedHint') }
+              const hint = locked
+                ? (action === 'autoIntake' ? { title: t('stageAutoIntakeHint') } : lockedHint)
+                : {}
+              return h('label', { key: action, style: { display: 'inline-flex', gap: 4, alignItems: 'center' }, ...hint }, [
+                h('input', {
+                  key: 'input', type: 'checkbox',
+                  checked: locked ? true : rules?.[key]?.[action] !== false,
+                  ...(locked ? { disabled: true, ...hint } : { onChange: (event) => setRules({ ...rules, [key]: { ...(rules[key] ?? {}), [action]: event.target.checked } }) }),
+                }),
+                h('span', { key: 'text' }, t(action === 'autoIntake' ? 'autoIntakeLabel' : action === 'autoStart' ? 'autoStartLabel' : 'autoApproveLabel')),
+              ])
+            }),
+          ])
+        }),
         h('div', { key: 'safety', style: { marginTop: 6, padding: '8px 10px', borderRadius: T.radiusSm, background: T.accentWash, fontSize: 11, lineHeight: 1.6 } }, [
           h('div', { key: 'h', style: { fontWeight: 700 } }, t('stageSafetyTitle')),
           h('div', { key: 'b' }, t('writeBoundaryNotice')),

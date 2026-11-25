@@ -82,13 +82,16 @@ function apiFetch(payload) {
   } })
 }
 
-// V4.59 — render the REAL StageConfigSection with a small hook shim, so the
+// V4.60 — render the REAL StageConfigSection with a small hook shim, so the
 // assertions observe rendered checkbox props and the actual PATCH body rather
 // than source identifiers. The 4 engine-readable rules are the only editable
-// ones; the other 8 must be fixed-on and inert.
+// ones; the other 9 checkboxes (8 locked rules + the display-only intake item)
+// must be fixed-on and inert. `RULE_ACTIONS` stays the persisted-rule set so
+// the payload assertions below prove intake never enters phaseRules.
 const STAGE_KEYS = ['inbox', 'triage', 'plan', 'build', 'self-review', 'pr-review']
 const STAGE_LABELS = ['stageInbox', 'stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview']
 const RULE_ACTIONS = ['autoStart', 'autoApprove']
+const CHECKBOX_ACTIONS = [...RULE_ACTIONS, 'autoIntake']
 const EDITABLE_RULES = new Set([
   'inbox:autoStart', 'plan:autoApprove', 'self-review:autoStart', 'pr-review:autoStart',
 ])
@@ -152,7 +155,7 @@ function stageBoxes(tree) {
   const out = []
   for (const row of stageRows(tree)) {
     for (const label of flattenStage(row)) {
-      if (!RULE_ACTIONS.includes(label.props?.key)) continue
+      if (!CHECKBOX_ACTIONS.includes(label.props?.key)) continue
       const input = flattenStage(label).find((n) => n.props?.type === 'checkbox')
       if (!input) continue
       out.push({ stage: row.props.key, action: label.props.key, input, label })
@@ -254,7 +257,7 @@ test('naming: tier level and badge names are gone; stage-rule keys are mirrored 
   })()
   // Every legacy tier key: zero survivors, in both languages.
   for (const k of ['lvManual', 'lvYouApprove', 'lvMachineApprove', 'badgeManual', 'badgeYouApprove', 'badgeMachineApprove',
-    'lvL0', 'lvL1', 'lvL2', 'lvL3', 'lvL4', 'leL0End', 'leL4End', 'autoDispatchLabel']) {
+    'lvL0', 'lvL1', 'lvL2', 'lvL3', 'lvL4', 'leL0End', 'leL4End', 'autoDispatchLabel', 'stageInboxIntakeNote']) {
     assert.equal(k in zh, false, `zh ${k} deleted`)
     assert.equal(k in en, false, `en ${k} deleted`)
   }
@@ -265,8 +268,8 @@ test('naming: tier level and badge names are gone; stage-rule keys are mirrored 
     assert.equal(typeof en[k], 'string', `en has ${k}`)
     assert.doesNotMatch(en[k], /Assisted|L[0-4]/i, `${k} en is plain language`)
   }
-  // V4.59: new keys are present in all four carriers with identical values.
-  const newKeys = ['stageInbox', 'stageRuleLockedHint', 'stageConfigPurpose']
+  // Stage-rule keys are present in all four carriers with identical values.
+  const newKeys = ['stageInbox', 'stageRuleLockedHint', 'stageConfigPurpose', 'autoIntakeLabel', 'stageAutoIntakeHint']
   for (const k of newKeys) {
     assert.equal(zh[k], zhLocale[k], `zh inline mirrors locale: ${k}`)
     assert.equal(en[k], enLocale[k], `en inline mirrors locale: ${k}`)
@@ -277,6 +280,21 @@ test('naming: tier level and badge names are gone; stage-rule keys are mirrored 
   assert.equal(en.stageInbox, 'Inbox', 'en stageInbox value')
   assert.equal(zh.stageRuleLockedHint, '该阶段目前没有可单独关闭的自动步骤，此勾选固定开启、不可修改。', 'zh locked hint')
   assert.equal(en.stageRuleLockedHint, 'This stage has no separately switchable automatic step; this checkbox is fixed on and cannot be changed.', 'en locked hint')
+  // V4.60 display-only intake copy: finalized label, binding-driven hint, and
+  // no self-contradictory promise that a fixed checkbox can stop intake.
+  assert.equal(zh.autoIntakeLabel, '自动拉取 issue', 'zh intake label copy')
+  assert.equal(en.autoIntakeLabel, 'Auto issue intake', 'en intake label copy')
+  assert.match(zh.stageAutoIntakeHint, /远端 GitHub 仓库.*绑定/, 'zh intake hint ties intake to the repo binding')
+  assert.match(zh.stageAutoIntakeHint, /暂停本项目也不停/, 'zh intake hint says pausing the project does not stop intake')
+  assert.match(en.stageAutoIntakeHint, /GitHub repo binding/i, 'en intake hint ties intake to the repo binding')
+  assert.match(en.stageAutoIntakeHint, /even while the project is paused/i, 'en intake hint says pausing does not stop intake')
+  for (const [name, dict] of [['inline zh', zh], ['inline en', en], ['locale zh', zhLocale], ['locale en', enLocale]]) {
+    for (const [key, value] of Object.entries(dict)) {
+      if (typeof value !== 'string') continue
+      assert.doesNotMatch(value, /与这个勾选无关|取消勾选即停止拉取/, `${name}.${key} has no self-contradictory intake claim`)
+      assert.doesNotMatch(value, /regardless of this checkbox|uncheck(ing)?[^.;]{0,24}(stop|disable)[^.;]{0,12}(intake|pull)/i, `${name}.${key} has no fake uncheck-stops-intake promise`)
+    }
+  }
   // V4.59: the advanced fold is still gone; the narrowing contract now lives
   // in a named set of four editable rules plus fixed-on greyed-out rules.
   for (const k of ['whenAdvancedTitle', 'whenAdvancedHint', 'whenNoNarrow']) {
@@ -330,7 +348,7 @@ test('P4-3 save() PATCHes phaseRules and adopts the server read-back', async () 
   assert.equal(after.find((b) => `${b.stage}:${b.action}` === 'triage:autoStart').input.props.checked, true, 'a locked rule stays checked regardless of server value')
 })
 
-test('V4.59 stage rules render six ordered rows; only four rules are editable', () => {
+test('V4.60 stage rules render six ordered rows with 13 checkboxes: 4 editable, 9 fixed-on', () => {
   const view = renderStageRules(allRules(false))
   const tree = view.render()
   const rows = stageRows(tree)
@@ -338,22 +356,49 @@ test('V4.59 stage rules render six ordered rows; only four rules are editable', 
   const labels = rows.map((r) => flattenStage(r).find((n) => n.props?.key === 'name')?.kids?.[0])
   assert.deepEqual(labels, STAGE_LABELS, 'each row uses its own stage label key')
   const boxes = stageBoxes(tree)
-  assert.equal(boxes.length, 12, '6 stages × 2 checkboxes')
-  for (const { stage, action, input, label } of boxes) {
-    const editable = EDITABLE_RULES.has(`${stage}:${action}`)
-    const titled = input.props.title === 'stageRuleLockedHint' || label.props.title === 'stageRuleLockedHint'
-    if (editable) {
-      assert.equal(input.props.checked, false, `${stage}:${action} follows the saved false rule`)
-      assert.notEqual(input.props.disabled, true, `${stage}:${action} is not disabled`)
-      assert.equal(typeof input.props.onChange, 'function', `${stage}:${action} can be changed`)
-      assert.equal(titled, false, `${stage}:${action} has no locked tooltip`)
-    } else {
-      assert.equal(input.props.checked, true, `${stage}:${action} is shown checked even when stored false`)
-      assert.equal(input.props.disabled, true, `${stage}:${action} is disabled`)
-      assert.equal(input.props.onChange, undefined, `${stage}:${action} has no change handler`)
-      assert.equal(titled, true, `${stage}:${action} carries stageRuleLockedHint`)
-    }
+  assert.equal(boxes.length, 13, 'inbox shows three checkboxes, the other five show two')
+  const editable = boxes.filter((b) => typeof b.input.props.onChange === 'function')
+  const fixed = boxes.filter((b) => b.input.props.disabled === true)
+  assert.equal(editable.length, 4, 'only four engine-backed gates are editable')
+  assert.equal(fixed.length, 9, 'eight locked rules + intake are fixed-on')
+  for (const { stage, action, input, label } of fixed) {
+    assert.equal(input.props.checked, true, `${stage}:${action} is always checked`)
+    assert.equal(input.props.onChange, undefined, `${stage}:${action} has no change handler`)
+    const expectedHint = action === 'autoIntake' ? 'stageAutoIntakeHint' : 'stageRuleLockedHint'
+    assert.ok(
+      input.props.title === expectedHint || label.props.title === expectedHint,
+      `${stage}:${action} carries ${expectedHint}`,
+    )
   }
+  for (const { stage, action, input } of editable) {
+    assert.ok(EDITABLE_RULES.has(`${stage}:${action}`), `${stage}:${action} is one of the four engine-backed gates`)
+    assert.equal(input.props.checked, false, `${stage}:${action} follows the saved false rule`)
+  }
+})
+
+test('V4.60 inbox order is intake → auto-start → auto-approve; intake is display-only', async () => {
+  const view = renderStageRules(allRules(false))
+  const tree = view.render()
+  const boxes = stageBoxes(tree).filter((b) => b.stage === 'inbox')
+  assert.deepEqual(boxes.map((b) => b.action), ['autoIntake', 'autoStart', 'autoApprove'], 'inbox order is fixed')
+  const [intake, autoStart, autoApprove] = boxes
+  assert.equal(intake.input.props.checked, true, 'intake is shown checked')
+  assert.equal(intake.input.props.disabled, true, 'intake cannot be unchecked')
+  assert.equal(intake.input.props.onChange, undefined, 'intake has no change handler')
+  assert.equal(intake.input.props.title, 'stageAutoIntakeHint', 'intake input points to the binding hint')
+  assert.equal(intake.label.props.title, 'stageAutoIntakeHint', 'intake label points to the binding hint')
+  assert.equal(typeof autoStart.input.props.onChange, 'function', 'inbox auto-start stays editable')
+  assert.equal(autoStart.input.props.title, undefined, 'inbox auto-start has no locked hint')
+  assert.equal(autoApprove.input.props.disabled, true, 'inbox auto-approve is fixed on')
+  assert.equal(autoApprove.input.props.title, 'stageRuleLockedHint', 'inbox auto-approve keeps the generic locked hint')
+  findButton(tree, 'save').props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(view.calls.length, 1, 'save sends one PATCH')
+  const payload = view.calls[0].body.phaseRules
+  for (const stage of STAGE_KEYS) assert.equal('autoIntake' in payload[stage], false, `${stage} payload has no autoIntake`)
+  const after = stageBoxes(view.render())
+  assert.equal(after.length, 13, 'no checkbox is lost or added on read-back')
+  assert.equal(after.filter((b) => b.input.props.disabled === true).length, 9, 'intake stays fixed-on after save/read-back')
 })
 
 test('V4.59 only the four editable rules can be turned off and saved; locked rules normalize to true', () => {

@@ -249,7 +249,7 @@ test('B4 no L0–L4 slider or level copy; stage rules are checkboxes in all four
   assert.match(clientSrc, /StageConfigSection/, 'the stage-rule section replaced the slider')
   for (const k of ['stageInbox', 'stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview',
     'stageConfigTitle', 'stageConfigPurpose', 'stageRuleLockedHint', 'stageDefaultBadge', 'autoStartLabel', 'autoApproveLabel',
-    'resetDefault', 'stageSaved']) {
+    'autoIntakeLabel', 'stageAutoIntakeHint', 'resetDefault', 'stageSaved']) {
     assert.equal(typeof zh[k], 'string', `zh locale has ${k}`)
     assert.equal(typeof en[k], 'string', `en locale has ${k}`)
   }
@@ -284,11 +284,14 @@ test('B4 no L0–L4 slider or level copy; stage rules are checkboxes in all four
 // ==============================================================================
 
 test('B5 pause/takeover copy is clean; backend pause/takeover/release unchanged', () => {
-  assert.doesNotMatch(clientSrc, /takeHint/, 'fake take entry removed from PauseSection')
   assert.match(clientSrc, /t\('pauseScopeNote'\)/, 'scope note rendered')
   assert.match(clientSrc, /t\('pauseTitle'\)/, 'pauseTitle label rendered')
   const pauseSection = clientSrc.slice(clientSrc.indexOf('function PauseSection'), clientSrc.indexOf('function GlobalTokenSetting'))
   assert.ok(pauseSection.length > 0, 'PauseSection boundaries found')
+  // The removed fake entry was an element keyed `takeHint` inside PauseSection.
+  // Match that exact token in that section only: the stage-rule hint key
+  // `stageAutoIntakeHint` embeds the same letters but is a different key.
+  assert.doesNotMatch(pauseSection, /\btakeHint\b/, 'fake take entry removed from PauseSection')
   assert.equal((pauseSection.match(/role: 'switch'/g) ?? []).length, 1, 'exactly one switch in PauseSection')
   assert.doesNotMatch(pauseSection, /h\(Button|resumeProject/, 'no pause/resume action button left')
   // CardActions takeover/release still present (takeover only on the card).
@@ -316,7 +319,7 @@ test('B6 tier keys are deleted residue-free and stage-rule keys exist in all fou
     'axisTitle', 'axisHint', 'currentLevel', 'ariaLevel', 'autoEndLabel', 'machineLabel', 'youLabel',
     ...[0, 1, 2, 3, 4].flatMap((n) => [`lvL${n}`, `leL${n}End`, `leL${n}M`, `leL${n}Y`]),
     'l2Title', 'l2Body', 'enableL2', 'autoDispatchLabel', 'autoDispatchHint', 'saveLevel',
-    'leManualM', 'leYouApproveM', 'leMachineApproveM']
+    'leManualM', 'leYouApproveM', 'leMachineApproveM', 'stageInboxIntakeNote']
   for (const k of new Set(deleted)) {
     assert.equal(k in inline.zh, false, `inline zh ${k} deleted`)
     assert.equal(k in inline.en, false, `inline en ${k} deleted`)
@@ -330,7 +333,8 @@ test('B6 tier keys are deleted residue-free and stage-rule keys exist in all fou
   assert.equal(Object.keys(zh).length - 1, Object.keys(inline.zh).length, 'locale = UI + meta')
   // The new stage keys are present and mirrored in all four carriers.
   for (const k of ['stageInbox', 'stageTriage', 'stagePlan', 'stageBuild', 'stageSelfReview', 'stagePrReview',
-    'stageConfigTitle', 'stageConfigPurpose', 'stageRuleLockedHint', 'writeBoundaryNotice', 'writeBoundaryDetail']) {
+    'stageConfigTitle', 'stageConfigPurpose', 'stageRuleLockedHint', 'writeBoundaryNotice', 'writeBoundaryDetail',
+    'autoIntakeLabel', 'stageAutoIntakeHint']) {
     assert.equal(typeof inline.zh[k], 'string', `inline zh has ${k}`)
     assert.equal(typeof inline.en[k], 'string', `inline en has ${k}`)
     assert.equal(inline.zh[k], zh[k], `${k} inline=locale zh`)
@@ -340,6 +344,21 @@ test('B6 tier keys are deleted residue-free and stage-rule keys exist in all fou
   assert.equal(inline.en.stageInbox, 'Inbox', 'inline en stageInbox value')
   assert.equal(inline.zh.stageRuleLockedHint, '该阶段目前没有可单独关闭的自动步骤，此勾选固定开启、不可修改。', 'inline zh locked hint')
   assert.equal(inline.en.stageRuleLockedHint, 'This stage has no separately switchable automatic step; this checkbox is fixed on and cannot be changed.', 'inline en locked hint')
+  // V4.60 intake copy: finalized wording, byte-identical across four carriers,
+  // tied to the repo binding and honest that pausing the project cannot stop it.
+  assert.equal(inline.zh.autoIntakeLabel, '自动拉取 issue', 'inline zh intake label')
+  assert.equal(inline.en.autoIntakeLabel, 'Auto issue intake', 'inline en intake label')
+  assert.match(zh.stageAutoIntakeHint, /远端 GitHub 仓库.*绑定/, 'zh intake hint ties intake to the repo binding')
+  assert.match(zh.stageAutoIntakeHint, /暂停本项目也不停/, 'zh intake hint says pausing the project does not stop intake')
+  assert.match(en.stageAutoIntakeHint, /GitHub repo binding/i, 'en intake hint ties intake to the repo binding')
+  assert.match(en.stageAutoIntakeHint, /even while the project is paused/i, 'en intake hint says pausing does not stop intake')
+  for (const [name, dict] of [['inline zh', inline.zh], ['inline en', inline.en], ['locale zh', zh], ['locale en', en]]) {
+    for (const [key, value] of Object.entries(dict)) {
+      if (typeof value !== 'string') continue
+      assert.doesNotMatch(value, /与这个勾选无关|取消勾选即停止拉取/, `${name}.${key} has no self-contradictory intake claim`)
+      assert.doesNotMatch(value, /regardless of this checkbox|uncheck(ing)?[^.;]{0,24}(stop|disable)[^.;]{0,12}(intake|pull)/i, `${name}.${key} has no fake uncheck-stops-intake promise`)
+    }
+  }
 })
 
 // ==============================================================================

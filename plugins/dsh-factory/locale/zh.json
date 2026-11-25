@@ -350,6 +350,8 @@
   "stageConfigTitle": "自动化流程",
   "stageConfigPurpose": "默认全速自动。只有这 4 个勾选可取消，取消后该段停下等人：收件箱-自动启动、规划-自动批准、自审-自动启动、PR 评审-自动启动。其余勾选固定开启、置灰不可改——这些阶段当前没有可单独关闭的自动步骤。",
   "stageRuleLockedHint": "该阶段目前没有可单独关闭的自动步骤，此勾选固定开启、不可修改。",
+  "autoIntakeLabel": "自动拉取 issue",
+  "stageAutoIntakeHint": "issue 拉取由「远端 GitHub 仓库」绑定决定：绑定后引擎每轮都会拉取，暂停本项目也不停；此勾选固定开启、不可修改。",
   "stageDefaultBadge": "默认：全速自动",
   "autoStartLabel": "自动启动",
   "autoApproveLabel": "自动批准",
